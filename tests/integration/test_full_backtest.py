@@ -42,6 +42,9 @@ class RealisticDataProvider:
         mask = (df["date"] >= start) & (df["date"] <= end)
         return df[mask].reset_index(drop=True)
 
+    async def get_stock_list(self) -> list[dict]:
+        return [{"code": c, "name": c} for c in self._data.keys()]
+
 
 class BuyAndHoldAgent:
     def __init__(self):
@@ -51,7 +54,7 @@ class BuyAndHoldAgent:
 
     async def on_day(self, bus, current_date: date) -> None:
         if not self._bought:
-            result = await bus.place_order(
+            result = bus.place_order(
                 agent_id=self.agent_id, stock_code="600519",
                 side="buy", quantity=100,
             )
@@ -69,10 +72,10 @@ class DataQueryAgent:
         self.klines_received = 0
 
     async def on_day(self, bus, current_date: date) -> None:
-        bars = await bus.get_daily_bars("600519", days=5)
+        bars = bus.get_daily_bars("600519", days=5)
         if not bars.empty:
             self.klines_received += len(bars)
-        price_info = await bus.get_stock_price("600519")
+        price_info = bus.get_stock_price("600519")
         if price_info:
             self.prices_seen.append(price_info["close"])
 

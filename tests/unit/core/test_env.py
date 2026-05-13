@@ -17,6 +17,9 @@ class FakeData:
             "low": [95.0]*10, "close": [101.0]*10, "volume": [10000]*10,
         })
 
+    async def get_stock_list(self):
+        return [{"code": "test", "name": "test"}]
+
 
 class DummyAgent:
     def __init__(self, agent_id="test"):

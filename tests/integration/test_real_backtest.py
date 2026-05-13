@@ -77,7 +77,7 @@ class TestBuyAndHoldReal:
 
             async def on_day(self, bus, current_date):
                 if not self._bought:
-                    r = await bus.place_order(agent_id="moutai_bh", stock_code="600519", side="buy", quantity=100)
+                    r = bus.place_order(agent_id="moutai_bh", stock_code="600519", side="buy", quantity=100)
                     if r.get("success"):
                         self._bought = True
 
@@ -108,13 +108,13 @@ class TestMultiStockPortfolio:
             async def on_day(self, bus, current_date):
                 self._day += 1
                 if self._day == 2:
-                    await bus.place_order(agent_id="multi", stock_code="600519", side="buy", quantity=100)
-                    await bus.place_order(agent_id="multi", stock_code="000001", side="buy", quantity=1000)
-                    await bus.place_order(agent_id="multi", stock_code="300750", side="buy", quantity=100)
+                    bus.place_order(agent_id="multi", stock_code="600519", side="buy", quantity=100)
+                    bus.place_order(agent_id="multi", stock_code="000001", side="buy", quantity=1000)
+                    bus.place_order(agent_id="multi", stock_code="300750", side="buy", quantity=100)
                 if self._day == 60:
-                    await bus.place_order(agent_id="multi", stock_code="600519", side="sell", quantity=100)
-                    await bus.place_order(agent_id="multi", stock_code="000001", side="sell", quantity=1000)
-                    await bus.place_order(agent_id="multi", stock_code="300750", side="sell", quantity=100)
+                    bus.place_order(agent_id="multi", stock_code="600519", side="sell", quantity=100)
+                    bus.place_order(agent_id="multi", stock_code="000001", side="sell", quantity=1000)
+                    bus.place_order(agent_id="multi", stock_code="300750", side="sell", quantity=100)
 
         result = env_2024h1.run(MultiTrader())
         trades = result.agent_data["multi"]["trades"]
@@ -145,8 +145,8 @@ class TestTPlus1Real:
             async def on_day(self, bus, current_date):
                 self._day += 1
                 if self._day == 2:
-                    await bus.place_order(agent_id="t1_test", stock_code="600519", side="buy", quantity=100)
-                    r = await bus.place_order(agent_id="t1_test", stock_code="600519", side="sell", quantity=100)
+                    bus.place_order(agent_id="t1_test", stock_code="600519", side="buy", quantity=100)
+                    r = bus.place_order(agent_id="t1_test", stock_code="600519", side="sell", quantity=100)
                     self.sell_results.append(r)
 
         agent = SameDaySeller()
@@ -172,7 +172,7 @@ class TestEventsReal:
             _bought = False
             async def on_day(self, b, d):
                 if not self._bought:
-                    await b.place_order(agent_id="evt", stock_code="600519", side="buy", quantity=100)
+                    b.place_order(agent_id="evt", stock_code="600519", side="buy", quantity=100)
                     self._bought = True
 
         env = TradingEnv(
@@ -242,9 +242,9 @@ class TestBenchmarkComparisonReal:
             async def on_day(self, bus, d):
                 self._day += 1
                 if self._day == 5:
-                    await bus.place_order(agent_id="active", stock_code="600519", side="buy", quantity=200)
+                    bus.place_order(agent_id="active", stock_code="600519", side="buy", quantity=200)
                 if self._day == 80:
-                    await bus.place_order(agent_id="active", stock_code="600519", side="sell", quantity=200)
+                    bus.place_order(agent_id="active", stock_code="600519", side="sell", quantity=200)
 
         class PassiveAgent:
             agent_id = "passive"
@@ -275,11 +275,11 @@ class TestLongBacktest:
             async def on_day(self, bus, d):
                 self._day += 1
                 if self._day % 20 == 5 and not self._holding:
-                    r = await bus.place_order(agent_id="freq", stock_code="000001", side="buy", quantity=1000)
+                    r = bus.place_order(agent_id="freq", stock_code="000001", side="buy", quantity=1000)
                     if r.get("success"):
                         self._holding = True
                 elif self._day % 20 == 15 and self._holding:
-                    r = await bus.place_order(agent_id="freq", stock_code="000001", side="sell", quantity=1000)
+                    r = bus.place_order(agent_id="freq", stock_code="000001", side="sell", quantity=1000)
                     if r.get("success"):
                         self._holding = False
 

@@ -1,12 +1,13 @@
-"""BacktestEngine — TradingBus 模式: Agent 自主查询一切数据。
+"""BacktestEngine — 回测启动时一次性加载全市场数据，回测过程中纯内存读取。
 
-直接从源项目 backend/arena/trading_bus.py 迁移设计。
-Engine 提供数据服务 → Agent 自主查询和操作。
+设计原则：
+1. 初始化时全量加载（一次 I/O）
+2. 回测过程中零 I/O — 所有数据从内存 dict 查询
+3. TradingBus 只是 全局数据 + 日期隔离 的视图
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from dataclasses import dataclass, field
 from datetime import date, timedelta
@@ -26,9 +27,10 @@ TWO_PLACES = Decimal("0.01")
 
 
 class DataProvider(Protocol):
-    """Data backend for the engine."""
+    """Data backend protocol."""
 
     async def get_daily_bars(self, stock_code: str, start: date, end: date) -> pd.DataFrame: ...
+    async def get_stock_list(self) -> list[dict]: ...
 
 
 @dataclass
@@ -46,27 +48,59 @@ class EngineResult:
     agent_data: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
-class TradingBus:
-    """交易总线 — Agent 通过此对象获取数据和执行交易。
+class MarketData:
+    """全市场数据容器 — 回测启动时一次性加载，回测过程中只读。"""
 
-    Agent 在 on_day(bus, date) 中调用 bus 的方法。
+    def __init__(self) -> None:
+        self._data: dict[str, pd.DataFrame] = {}
+
+    async def load_all(self, provider: DataProvider, start: date, end: date) -> None:
+        """一次性加载全市场所有股票的全部数据。"""
+        stocks = await provider.get_stock_list()
+        logger.info("Loading market data: %d stocks...", len(stocks))
+        load_start = start - timedelta(days=365)
+        for stock in stocks:
+            code = stock["code"]
+            df = await provider.get_daily_bars(code, load_start, end)
+            if df is not None and not df.empty:
+                self._data[code] = df
+        logger.info("Market data loaded: %d stocks in memory", len(self._data))
+
+    def get(self, stock_code: str) -> pd.DataFrame:
+        return self._data.get(stock_code, pd.DataFrame())
+
+    def all_codes(self) -> list[str]:
+        return list(self._data.keys())
+
+    def __len__(self) -> int:
+        return len(self._data)
+
+    def __contains__(self, code: str) -> bool:
+        return code in self._data
+
+
+class TradingBus:
+    """交易总线 — 对全局 MarketData 做日期隔离视图 + 交易执行。
+
+    不做任何 I/O，所有数据从内存中的 MarketData 读取。
     """
 
     def __init__(
         self,
-        data_provider: DataProvider | None,
+        market_data: MarketData,
         profile: MarketProfile,
         portfolio: Portfolio,
         event_bus: EventBus,
     ) -> None:
-        self._data = data_provider
+        self._market = market_data
         self._profile = profile
         self._portfolio = portfolio
         self._event_bus = event_bus
         self._current_date: date | None = None
-        self._daily_cache: dict[str, pd.DataFrame] = {}
         self._traded_today: set[str] = set()
         self.trade_history: list[dict] = []
+        self._day_index: int = 0
+        self._total_days: int = 0
 
     @property
     def current_date(self) -> date | None:
@@ -76,21 +110,25 @@ class TradingBus:
     def portfolio(self) -> PortfolioView:
         return PortfolioView(self._portfolio)
 
+    @property
+    def market(self) -> MarketData:
+        return self._market
+
     def _set_date(self, d: date) -> None:
         self._current_date = d
         self._traded_today = set()
 
-    async def get_daily_bars(self, stock_code: str, days: int = 20) -> pd.DataFrame:
-        """获取日K线（严格日期隔离：不含当天）。"""
-        df = await self._ensure_daily(stock_code)
+    def get_daily_bars(self, stock_code: str, days: int = 20) -> pd.DataFrame:
+        """获取日K线（严格日期隔离：不含当天）。纯内存读取。"""
+        df = self._market.get(stock_code)
         if df.empty:
             return df
         filtered = df[df["date"] < self._current_date]
         return filtered.tail(days)
 
-    async def get_stock_price(self, stock_code: str) -> dict | None:
-        """获取最新价格（截止到 current_date 前一天的收盘价）。"""
-        df = await self._ensure_daily(stock_code)
+    def get_stock_price(self, stock_code: str) -> dict | None:
+        """获取最新价格（前一个交易日的收盘价）。"""
+        df = self._market.get(stock_code)
         if df.empty:
             return None
         filtered = df[df["date"] < self._current_date]
@@ -106,9 +144,9 @@ class TradingBus:
             "change_pct": round(change_pct, 2),
         }
 
-    async def get_execution_price(self, stock_code: str, window: str = "open") -> Decimal | None:
-        """获取成交价格。window='open'=开盘价, 'close'=收盘价。"""
-        df = await self._ensure_daily(stock_code)
+    def get_execution_price(self, stock_code: str, window: str = "open") -> Decimal | None:
+        """获取当天成交价。window='open'=开盘价, 'close'=收盘价。"""
+        df = self._market.get(stock_code)
         if df.empty:
             return None
         today = df[df["date"] == self._current_date]
@@ -118,7 +156,7 @@ class TradingBus:
         col = "open" if window == "open" else "close"
         return Decimal(str(row[col])).quantize(TWO_PLACES)
 
-    async def place_order(
+    def place_order(
         self,
         agent_id: str,
         stock_code: str,
@@ -127,16 +165,16 @@ class TradingBus:
         stock_name: str = "",
         reasoning: str = "",
     ) -> dict:
-        """执行交易订单。"""
+        """执行交易订单。纯内存操作。"""
         if stock_code in self._traded_today:
             return {"success": False, "error": f"{stock_code} 今天已交易过"}
 
-        price = await self.get_execution_price(stock_code, "open")
+        price = self.get_execution_price(stock_code, "open")
         if price is None:
             return {"success": False, "error": f"{stock_code} 无法获取成交价"}
 
         # 涨跌停检查
-        df = await self._ensure_daily(stock_code)
+        df = self._market.get(stock_code)
         if not df.empty:
             prev_data = df[df["date"] < self._current_date]
             if not prev_data.empty:
@@ -151,7 +189,7 @@ class TradingBus:
             if side == "buy":
                 qty = self._profile.round_lot(quantity)
                 if qty <= 0:
-                    return {"success": False, "error": f"买入数量不足1手"}
+                    return {"success": False, "error": "买入数量不足1手"}
                 trade = self._portfolio.buy(stock_code, stock_name or stock_code, price, qty, self._current_date)
             elif side == "sell":
                 pos = self._portfolio.positions.get(stock_code)
@@ -175,23 +213,9 @@ class TradingBus:
         self._event_bus.emit("order_placed", trade=trade, agent_id=agent_id)
         return {"success": True, "trade": trade}
 
-    async def _ensure_daily(self, stock_code: str) -> pd.DataFrame:
-        if stock_code in self._daily_cache:
-            return self._daily_cache[stock_code]
-        if self._data is None:
-            return pd.DataFrame()
-        # Fetch a wide range to cover the entire backtest + history
-        start = self._current_date - timedelta(days=365)
-        end = self._current_date + timedelta(days=365)
-        df = await self._data.get_daily_bars(stock_code, start, end)
-        if df is not None and not df.empty:
-            self._daily_cache[stock_code] = df
-            return df
-        return pd.DataFrame()
-
 
 class BacktestEngine:
-    """Core engine: progresses through trading days, dispatches agents."""
+    """回测引擎：启动时全量加载数据，逐日驱动 Agent。"""
 
     def __init__(
         self,
@@ -222,17 +246,20 @@ class BacktestEngine:
         else:
             trading_days = self._calendar.get_trading_days(start_date, end_date)
 
-        # 为每个 agent 创建独立 portfolio + bus
+        # ===== 一次性全量加载全市场数据 =====
+        market_data = MarketData()
+        if self._data_provider:
+            await market_data.load_all(self._data_provider, start_date, end_date)
+
+        # 为每个 agent 创建独立 portfolio + bus（共享同一份 market_data）
         buses: dict[str, TradingBus] = {}
         portfolios: dict[str, Portfolio] = {}
-        trade_histories: dict[str, list[dict]] = {}
 
         for agent in agents:
             portfolio = Portfolio(self._config.initial_cash)
             portfolios[agent.agent_id] = portfolio
-            trade_histories[agent.agent_id] = []
             buses[agent.agent_id] = TradingBus(
-                data_provider=self._data_provider,
+                market_data=market_data,
                 profile=self._profile,
                 portfolio=portfolio,
                 event_bus=self._event_bus,
@@ -254,9 +281,13 @@ class BacktestEngine:
                 except Exception:
                     logger.exception("Agent %s error on %s", agent.agent_id, current_date)
 
-                # 记录权益
+                # 日终：用收盘价记录权益
                 portfolio = portfolios[agent.agent_id]
-                prices = await self._get_prices(portfolio, current_date, bus)
+                prices: dict[str, Decimal] = {}
+                for code in portfolio.positions:
+                    p = bus.get_execution_price(code, "close")
+                    if p:
+                        prices[code] = p
                 portfolio.record_equity(current_date, prices)
 
             self._event_bus.emit("day_end", date=current_date)
@@ -281,17 +312,8 @@ class BacktestEngine:
 
         return result
 
-    async def _get_prices(self, portfolio: Portfolio, trade_date: date, bus: TradingBus) -> dict[str, Decimal]:
-        prices: dict[str, Decimal] = {}
-        for code in portfolio.positions:
-            price = await bus.get_execution_price(code, "close")
-            if price:
-                prices[code] = price
-        return prices
-
     @staticmethod
     def _check_knowledge_cutoff(end_date: date) -> None:
-        """Warn if backtest period exceeds known LLM knowledge cutoff dates."""
         KNOWN_CUTOFFS = {
             "deepseek-chat": date(2024, 7, 1),
             "gpt-4o": date(2024, 10, 1),
@@ -301,11 +323,10 @@ class BacktestEngine:
         for model, cutoff in KNOWN_CUTOFFS.items():
             if end_date > cutoff:
                 logger.warning(
-                    "LLM_KNOWLEDGE_CUTOFF_WARNING: 回测结束日 %s 超过 %s 的知识截止日 %s — "
-                    "LLM 可能「知道未来」，回测结果可能偏乐观",
+                    "LLM_KNOWLEDGE_CUTOFF_WARNING: 回测结束日 %s 超过 %s 的知识截止日 %s",
                     end_date, model, cutoff,
                 )
 
 
-# Legacy compatibility aliases
+# Legacy alias
 MarketDataProvider = DataProvider

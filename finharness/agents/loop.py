@@ -94,7 +94,7 @@ class AgentLoop:
         elif ctx._bus is not None:
             close_prices = {}
             for code in list(ctx.execution_price.keys()) + list(ctx.portfolio.positions.keys()):
-                cp = await ctx._bus.get_execution_price(code, "close")
+                cp = ctx._bus.get_execution_price(code, "close")
                 if cp:
                     close_prices[code] = cp
             if close_prices:

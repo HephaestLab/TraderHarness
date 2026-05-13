@@ -38,7 +38,7 @@ async def handle_place_order(params: dict, ctx: ToolContext) -> dict:
     price = ctx.execution_price.get(code)
     if price is None and ctx._bus is not None:
         window = "open" if ctx.current_phase == "open_window" else "close"
-        price = await ctx._bus.get_execution_price(code, window)
+        price = ctx._bus.get_execution_price(code, window)
     if price is None:
         return {"success": False, "error": f"{code} 无法获取成交价（当天可能无交易数据）"}
 

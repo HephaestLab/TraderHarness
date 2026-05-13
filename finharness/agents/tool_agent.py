@@ -112,52 +112,36 @@ class ToolAgent:
             memory=self._memory,
         )
 
-        # 种子股票池：代表性蓝筹（确保每天晨报有数据）
-        self._seed_codes = {"600519", "000001", "300750", "000858", "601318"}
         # 自选股（Agent 通过 add_watchlist 工具动态管理，跨天持久）
         self._watchlist_codes: set[str] = set()
 
         self.day_results: list[DayResult] = []
 
     async def on_day(self, bus, current_date: date) -> None:
-        """TradingBus 模式：总线通知新交易日。"""
-        from finharness.core.portfolio import Portfolio
+        """TradingBus 模式：总线通知新交易日。
 
+        数据已在回测启动时全量加载到 bus.market (MarketData)。
+        这里只构建 ToolContext 视图，不做任何 I/O。
+        """
         portfolio = bus._portfolio
 
         initial = portfolio.cash + sum(
             p.avg_cost * p.quantity for p in portfolio.positions.values()
         )
 
-        # 全市场预加载：加载所有有数据的股票最近2天（用于板块统计）
-        all_stocks = await bus._data.get_stock_list() if bus._data else []
-        preloaded_daily = {}
-        for stock in all_stocks:
-            code = stock["code"]
-            bars = await bus.get_daily_bars(code, days=3)
-            if bars is not None and not bars.empty:
-                preloaded_daily[code] = bars
+        # 直接引用全局数据 — 全市场所有股票已在内存中
+        # preloaded_daily 直接映射 bus.market 中所有数据（日期隔离由 tool handler 负责）
+        preloaded_daily = {code: bus.market.get(code) for code in bus.market.all_codes()}
 
-        # 持仓+种子+自选 加载更长历史（供 Agent 分析趋势）
-        detail_codes = set(portfolio.positions.keys())
-        detail_codes.update(self._seed_codes)
-        detail_codes.update(self._watchlist_codes)
-        for code in detail_codes:
-            bars = await bus.get_daily_bars(code, days=120)
-            if bars is not None and not bars.empty:
-                preloaded_daily[code] = bars
-
-        # 获取执行价
+        # 执行价：持仓 + 自选股
+        price_codes = set(portfolio.positions.keys()) | self._watchlist_codes
         open_prices = {}
-        for code in preload_codes:
-            op = await bus.get_execution_price(code, "open")
+        close_prices = {}
+        for code in price_codes:
+            op = bus.get_execution_price(code, "open")
             if op:
                 open_prices[code] = op
-
-        # 收盘价（尾盘窗口用）
-        close_prices = {}
-        for code in preload_codes:
-            cp = await bus.get_execution_price(code, "close")
+            cp = bus.get_execution_price(code, "close")
             if cp:
                 close_prices[code] = cp
 
@@ -175,15 +159,14 @@ class ToolAgent:
             _bus=bus,
         )
 
-        # 传递回测进度
-        if hasattr(bus, '_day_index') and hasattr(bus, '_total_days'):
-            self._loop.remaining_trading_days = bus._total_days - bus._day_index - 1
-            self._loop.total_trading_days = bus._total_days
+        # 回测进度
+        self._loop.remaining_trading_days = bus._total_days - bus._day_index - 1
+        self._loop.total_trading_days = bus._total_days
 
         result = await self._loop.run_day(current_date, ctx)
         self.day_results.append(result)
 
-        # 持久化自选股到 agent 级别（跨天保持）
+        # 持久化自选股
         watchlist_from_ctx = ctx.tool_call_cache.get("watchlist", {})
         if watchlist_from_ctx:
             self._watchlist_codes = set(watchlist_from_ctx.keys())

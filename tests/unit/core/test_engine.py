@@ -30,6 +30,9 @@ class FakeDataProvider:
         mask = (self._df["date"] >= start) & (self._df["date"] <= end)
         return self._df[mask].reset_index(drop=True)
 
+    async def get_stock_list(self) -> list[dict]:
+        return [{"code": "600519", "name": "600519"}]
+
 
 class DummyAgent:
     def __init__(self, agent_id: str = "dummy"):
@@ -49,7 +52,7 @@ class BuyOnceAgent:
 
     async def on_day(self, bus, current_date: date) -> None:
         if not self._bought:
-            result = await bus.place_order(
+            result = bus.place_order(
                 agent_id=self.agent_id,
                 stock_code="600519",
                 side="buy",

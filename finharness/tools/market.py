@@ -16,16 +16,18 @@ logger = logging.getLogger(__name__)
 
 
 async def _ensure_daily_data(code: str, ctx: ToolContext) -> pd.DataFrame | None:
-    """确保日K数据已加载。优先用 bus，否则返回 preloaded。"""
+    """获取日K数据。全量数据已在回测启动时加载到 preloaded_daily。"""
     if code in ctx.preloaded_daily:
-        return ctx.preloaded_daily[code]
-
-    if ctx._bus is not None:
-        df = await ctx._bus.get_daily_bars(code, days=250)
+        df = ctx.preloaded_daily[code]
         if df is not None and not df.empty:
+            return df
+
+    # Fallback: 从 bus.market 直接取（bus.market 也是同一份内存数据）
+    if ctx._bus is not None:
+        df = ctx._bus.market.get(code)
+        if not df.empty:
             ctx.preloaded_daily[code] = df
             return df
-        return None
 
     return None
 
