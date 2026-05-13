@@ -20,8 +20,9 @@ from finharness.tools.market import GET_KLINE, GET_STOCK_PRICE, GET_STOCK_INFO
 from finharness.tools.portfolio import GET_PORTFOLIO, GET_POSITION
 from finharness.tools.trading import PLACE_ORDER
 from finharness.tools.control import FINISH_DAY
-from finharness.tools.analysis import GET_MARKET_OVERVIEW, SCREEN_STOCKS
+from finharness.tools.analysis import GET_MARKET_OVERVIEW, SCREEN_STOCKS, GET_SECTOR_SUMMARY
 from finharness.tools.filesystem import READ_FILE, WRITE_FILE, LIST_FILES
+from finharness.tools.scripting import RUN_SCRIPT
 
 logger = logging.getLogger(__name__)
 
@@ -88,12 +89,14 @@ class ToolAgent:
         self._registry.register(GET_STOCK_INFO)
         self._registry.register(GET_MARKET_OVERVIEW)
         self._registry.register(SCREEN_STOCKS)
+        self._registry.register(GET_SECTOR_SUMMARY)
         self._registry.register(GET_PORTFOLIO)
         self._registry.register(GET_POSITION)
         self._registry.register(PLACE_ORDER)
         self._registry.register(READ_FILE)
         self._registry.register(WRITE_FILE)
         self._registry.register(LIST_FILES)
+        self._registry.register(RUN_SCRIPT)
         self._registry.register(FINISH_DAY)
 
         self._memory = DailyMemory(agent_id=agent_id, storage_dir=memory_dir)

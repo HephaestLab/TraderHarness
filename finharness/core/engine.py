@@ -211,9 +211,16 @@ class BacktestEngine:
         start_date: date,
         end_date: date,
         breakpoints: list[date] | None = None,
+        warmup_days: int = 0,
     ) -> EngineResult:
         breakpoints_set = set(breakpoints) if breakpoints else set()
-        trading_days = self._calendar.get_trading_days(start_date, end_date)
+
+        if warmup_days > 0:
+            warmup_start = start_date - timedelta(days=int(warmup_days * 1.5))
+            all_days = self._calendar.get_trading_days(warmup_start, end_date)
+            trading_days = [d for d in all_days if d >= start_date]
+        else:
+            trading_days = self._calendar.get_trading_days(start_date, end_date)
 
         # 为每个 agent 创建独立 portfolio + bus
         buses: dict[str, TradingBus] = {}

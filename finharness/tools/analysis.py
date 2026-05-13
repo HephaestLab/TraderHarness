@@ -85,3 +85,47 @@ SCREEN_STOCKS = ToolDefinition(
     },
     handler=handle_screen_stocks,
 )
+
+
+async def handle_get_sector_summary(params: dict, ctx: ToolContext) -> dict:
+    """获取板块内股票详情。"""
+    # Without industry data, group by price range as proxy
+    stocks = []
+    for code, df in ctx.preloaded_daily.items():
+        if df.empty:
+            continue
+        filtered = df[df["date"] < ctx.current_date]
+        if len(filtered) < 2:
+            continue
+        last = filtered.iloc[-1]
+        prev = filtered.iloc[-2]
+        close = float(last["close"])
+        change = (close - float(prev["close"])) / float(prev["close"]) * 100
+        stocks.append({"code": code, "close": round(close, 2), "change_pct": round(change, 2)})
+
+    if not stocks:
+        return {"error": "无数据"}
+
+    stocks.sort(key=lambda x: -x["change_pct"])
+    avg_change = sum(s["change_pct"] for s in stocks) / len(stocks)
+    return {
+        "avg_change_pct": round(avg_change, 2),
+        "stocks": stocks[:20],
+        "top_gainers": stocks[:3],
+        "top_losers": stocks[-3:] if len(stocks) > 3 else [],
+        "total": len(stocks),
+    }
+
+
+GET_SECTOR_SUMMARY = ToolDefinition(
+    name="get_sector_summary",
+    description="查看板块详情：板块内股票涨跌幅排名",
+    parameters={
+        "type": "object",
+        "properties": {
+            "sector": {"type": "string", "description": "板块名称"},
+        },
+        "required": ["sector"],
+    },
+    handler=handle_get_sector_summary,
+)
