@@ -258,8 +258,11 @@ class AgentLoop:
         else:
             lines.append(f"\n当前空仓 | 可用资金: {cash:,.0f}元")
 
-        # 板块/全市场昨日涨跌概览
+        # 板块涨跌概览（按行业聚合）
+        from finharness.data.stock_registry_loader import get_stock_industry
         sector_changes: dict[str, list[float]] = {}
+        total_up = 0
+        total_down = 0
         for code, df in ctx.preloaded_daily.items():
             if df.empty:
                 continue
@@ -269,25 +272,31 @@ class AgentLoop:
             last = float(filtered.iloc[-1]["close"])
             prev = float(filtered.iloc[-2]["close"])
             change = (last - prev) / prev * 100
-            sector = "全市场"
-            if sector not in sector_changes:
-                sector_changes[sector] = []
-            sector_changes[sector].append(change)
+            if change > 0:
+                total_up += 1
+            elif change < 0:
+                total_down += 1
+            industry = get_stock_industry(code)
+            if industry not in sector_changes:
+                sector_changes[industry] = []
+            sector_changes[industry].append(change)
 
         if sector_changes:
-            all_changes = sector_changes.get("全市场", [])
-            if all_changes:
-                avg = sum(all_changes) / len(all_changes)
-                up_count = sum(1 for c in all_changes if c > 0)
-                down_count = sum(1 for c in all_changes if c < 0)
-                lines.append(f"\n昨日全市场: 平均{avg:+.2f}% | 上涨{up_count}只 下跌{down_count}只")
-                top5 = sorted(enumerate(all_changes), key=lambda x: -x[1])[:5]
-                codes_list = list(ctx.preloaded_daily.keys())
-                if top5:
-                    lines.append("  涨幅前5:")
-                    for idx, chg in top5:
-                        if idx < len(codes_list):
-                            lines.append(f"    {codes_list[idx]}: {chg:+.2f}%")
+            total_stocks = total_up + total_down + sum(1 for code, df in ctx.preloaded_daily.items()
+                                                       if not df.empty and len(df[df["date"] < ctx.current_date]) >= 2
+                                                       and float(df[df["date"] < ctx.current_date].iloc[-1]["close"]) == float(df[df["date"] < ctx.current_date].iloc[-2]["close"]))
+            lines.append(f"\n昨日全市场({len(ctx.preloaded_daily)}只): 上涨{total_up} 下跌{total_down}")
+            sector_avg = {s: sum(v) / len(v) for s, v in sector_changes.items() if len(v) >= 3}
+            sorted_sectors = sorted(sector_avg.items(), key=lambda x: -x[1])
+            if sorted_sectors:
+                top_n = min(5, len(sorted_sectors))
+                lines.append("\n昨日板块涨幅前5:")
+                for s, c in sorted_sectors[:top_n]:
+                    lines.append(f"  ▲ {s}: {c:+.2f}%")
+                if len(sorted_sectors) > 5:
+                    lines.append("昨日板块跌幅前5:")
+                    for s, c in sorted_sectors[-min(5, len(sorted_sectors)):]:
+                        lines.append(f"  ▼ {s}: {c:+.2f}%")
 
         # 自选股行情
         watchlist = ctx.tool_call_cache.get("watchlist", {})

@@ -129,25 +129,21 @@ class ToolAgent:
             p.avg_cost * p.quantity for p in portfolio.positions.values()
         )
 
-        # 预加载：持仓股 + 种子股 + 自选股
-        preload_codes = set(portfolio.positions.keys())
-        preload_codes.update(self._seed_codes)
-        watchlist = self._loop._context.messages  # 从上一天的 tool_call_cache 获取自选股
-        # 自选股持久化在 agent 级别
-        preload_codes.update(self._watchlist_codes)
+        # 全市场预加载：加载所有有数据的股票最近2天（用于板块统计）
+        all_stocks = await bus._data.get_stock_list() if bus._data else []
         preloaded_daily = {}
-        for code in preload_codes:
-            bars = await bus.get_daily_bars(code, days=120)
+        for stock in all_stocks:
+            code = stock["code"]
+            bars = await bus.get_daily_bars(code, days=3)
             if bars is not None and not bars.empty:
                 preloaded_daily[code] = bars
 
-        # 全市场采样：从 data provider 随机取 50 只用于板块概览
-        all_stocks = await bus._data.get_stock_list() if bus._data else []
-        import random
-        sample_codes = [s["code"] for s in all_stocks if s["code"] not in preload_codes]
-        random.shuffle(sample_codes)
-        for code in sample_codes[:50]:
-            bars = await bus.get_daily_bars(code, days=5)
+        # 持仓+种子+自选 加载更长历史（供 Agent 分析趋势）
+        detail_codes = set(portfolio.positions.keys())
+        detail_codes.update(self._seed_codes)
+        detail_codes.update(self._watchlist_codes)
+        for code in detail_codes:
+            bars = await bus.get_daily_bars(code, days=120)
             if bars is not None and not bars.empty:
                 preloaded_daily[code] = bars
 
