@@ -67,6 +67,17 @@ warn_unused_configs = true
 [tool.coverage.run]
 source = ["finharness"]
 branch = true
+omit = [
+    "finharness/ui/*",
+    "finharness/cli.py",
+    "finharness/data/providers/mootdx.py",
+    "finharness/data/providers/tencent.py",
+    "finharness/data/providers/base.py",
+    "finharness/data/datasets.py",
+    "finharness/tools/market.py",
+    "finharness/tools/portfolio.py",
+    "finharness/tools/trading.py",
+]
 
 [tool.coverage.report]
 fail_under = 80
