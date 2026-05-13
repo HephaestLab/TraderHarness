@@ -55,15 +55,19 @@ class LLMClient:
         tools: list[dict] | None = None,
         temperature: float | None = None,
     ) -> dict:
-        """Send chat completion request. Returns the response message dict."""
-        if self.cache_enabled:
+        """Send chat completion request. Returns the response message dict.
+
+        Note: tool-based calls are NOT cached (agentic conversations are stateful).
+        Only plain chat (no tools) is cached.
+        """
+        if self.cache_enabled and not tools:
             cached = self._cache_get(messages, tools)
             if cached is not None:
                 return cached
 
         response = await self._call_with_retry(messages, tools, temperature)
 
-        if self.cache_enabled:
+        if self.cache_enabled and not tools:
             self._cache_put(messages, tools, response)
 
         return response

@@ -29,6 +29,23 @@ class ContextManager:
     def add_message(self, message: dict) -> None:
         self._messages.append(message)
 
+    def get_api_messages(self) -> list[dict]:
+        """Return messages safe for the OpenAI API (no orphan tool messages)."""
+        result = []
+        has_pending_tool_calls = False
+        for msg in self._messages:
+            if msg.get("role") == "assistant" and msg.get("tool_calls"):
+                has_pending_tool_calls = True
+                result.append(msg)
+            elif msg.get("role") == "tool":
+                if has_pending_tool_calls:
+                    result.append(msg)
+                # else: skip orphan tool message
+            else:
+                has_pending_tool_calls = False
+                result.append(msg)
+        return result
+
     def reset(self) -> None:
         self._messages = []
 
@@ -47,7 +64,10 @@ class ContextManager:
         return self.estimate_tokens() > self.max_context_tokens * self.compression_threshold
 
     async def compress(self, llm_client=None) -> None:
-        """压缩早期的 tool call/result 对为摘要。"""
+        """压缩早期的 tool call/result 对为摘要。
+
+        确保不会把 tool_calls assistant 和 tool response 分开。
+        """
         if len(self._messages) < 10:
             return
 
@@ -57,8 +77,20 @@ class ContextManager:
         if len(non_system) <= 6:
             return
 
-        to_compress = non_system[:-6]
-        to_keep = non_system[-6:]
+        # Find safe split point: don't split in the middle of a tool interaction
+        split_idx = len(non_system) - 6
+        # Walk forward to ensure we don't start to_keep with a 'tool' message
+        while split_idx < len(non_system) and non_system[split_idx].get("role") == "tool":
+            split_idx -= 1
+        # Also don't split right after an assistant with tool_calls (keep the tool responses together)
+        if split_idx > 0 and non_system[split_idx - 1].get("role") == "assistant" and non_system[split_idx - 1].get("tool_calls"):
+            split_idx -= 1
+
+        if split_idx <= 0:
+            return
+
+        to_compress = non_system[:split_idx]
+        to_keep = non_system[split_idx:]
 
         compress_text = []
         for msg in to_compress:

@@ -142,7 +142,7 @@ class AgentLoop:
                 await self._context.compress()
 
             response = await self.llm_client.chat(
-                messages=self._context.messages,
+                messages=self._context.get_api_messages(),
                 tools=tools_schema,
             )
 
@@ -204,7 +204,7 @@ class AgentLoop:
 
         tools_schema = [finish_tool.to_openai_schema()]
         response = await self.llm_client.chat(
-            messages=self._context.messages,
+            messages=self._context.get_api_messages(),
             tools=tools_schema,
         )
 

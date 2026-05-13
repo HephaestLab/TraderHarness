@@ -238,6 +238,7 @@ class BacktestEngine:
                 event_bus=self._event_bus,
             )
 
+        self._check_knowledge_cutoff(end_date)
         self._event_bus.emit("run_start", start_date=start_date, end_date=end_date)
 
         for day_idx, current_date in enumerate(trading_days):
@@ -285,6 +286,23 @@ class BacktestEngine:
             if price:
                 prices[code] = price
         return prices
+
+    @staticmethod
+    def _check_knowledge_cutoff(end_date: date) -> None:
+        """Warn if backtest period exceeds known LLM knowledge cutoff dates."""
+        KNOWN_CUTOFFS = {
+            "deepseek-chat": date(2024, 7, 1),
+            "gpt-4o": date(2024, 10, 1),
+            "gpt-4-turbo": date(2024, 4, 1),
+            "claude-3.5-sonnet": date(2024, 4, 1),
+        }
+        for model, cutoff in KNOWN_CUTOFFS.items():
+            if end_date > cutoff:
+                logger.warning(
+                    "LLM_KNOWLEDGE_CUTOFF_WARNING: 回测结束日 %s 超过 %s 的知识截止日 %s — "
+                    "LLM 可能「知道未来」，回测结果可能偏乐观",
+                    end_date, model, cutoff,
+                )
 
 
 # Legacy compatibility aliases
