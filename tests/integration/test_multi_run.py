@@ -1,8 +1,9 @@
 """Integration test — multi-run statistical analysis."""
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
+import pandas as pd
 import pytest
 
 from finharness.core.env import TradingEnv, EnvConfig
@@ -10,11 +11,12 @@ from finharness.metrics.performance import calculate_metrics
 
 
 class FakeData:
-    def get_price(self, code, d):
-        return Decimal("100.00")
-
-    def get_prev_close(self, code, d):
-        return Decimal("99.00")
+    async def get_daily_bars(self, stock_code, start, end):
+        dates = [date(2024, 3, 4) + timedelta(days=i) for i in range(10)]
+        return pd.DataFrame({
+            "date": dates, "open": [100.0]*10, "high": [105.0]*10,
+            "low": [95.0]*10, "close": [101.0]*10, "volume": [10000]*10,
+        })
 
 
 class NoopAgent:
@@ -22,13 +24,12 @@ class NoopAgent:
         self.agent_id = aid
         self.name = "Noop"
 
-    async def on_day(self, env, current_date):
+    async def on_day(self, bus, current_date):
         pass
 
 
 class TestMultiRun:
     def test_multiple_runs_produce_results(self):
-        """Simulate --runs N by running the same config multiple times."""
         results = []
         for i in range(3):
             env = TradingEnv(
@@ -37,7 +38,7 @@ class TestMultiRun:
                     end_date=date(2024, 3, 8),
                     initial_cash=Decimal("1000000"),
                 ),
-                market_data=FakeData(),
+                data_provider=FakeData(),
             )
             agent = NoopAgent(f"run_{i}")
             result = env.run(agent)
@@ -46,12 +47,10 @@ class TestMultiRun:
             results.append(metrics)
 
         assert len(results) == 3
-        # All noop agents should have 0 return
         for m in results:
             assert m.total_return_pct == 0.0
 
     def test_statistical_aggregation(self):
-        """Verify we can compute mean ± std across runs."""
         returns = [5.0, 8.0, 3.0, 7.0, 6.0]
         mean = sum(returns) / len(returns)
         variance = sum((r - mean) ** 2 for r in returns) / (len(returns) - 1)

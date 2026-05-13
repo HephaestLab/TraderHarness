@@ -1,60 +1,86 @@
-"""ContextManager — token estimation and automatic context compression."""
+"""上下文管理器 — token 估算 + 自动压缩。
+
+直接从源项目 backend/agents/agentic/context_manager.py 迁移。
+"""
 
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 class ContextManager:
-    """Manages conversation context with token budget awareness."""
+    """管理 agentic 对话的 messages 列表，提供 token 估算和压缩。"""
 
-    def __init__(self, max_context_tokens: int = 60_000) -> None:
-        self._max_tokens = max_context_tokens
+    def __init__(
+        self,
+        max_context_tokens: int = 60000,
+        compression_threshold: float = 0.75,
+    ) -> None:
+        self.max_context_tokens = max_context_tokens
+        self.compression_threshold = compression_threshold
         self._messages: list[dict] = []
 
     @property
     def messages(self) -> list[dict]:
-        return list(self._messages)
-
-    @property
-    def estimated_tokens(self) -> int:
-        return sum(self._estimate_message_tokens(m) for m in self._messages)
+        return self._messages
 
     def add_message(self, message: dict) -> None:
         self._messages.append(message)
-        if self.estimated_tokens > self._max_tokens:
-            self._compress()
 
     def reset(self) -> None:
         self._messages = []
 
-    def get_messages_for_api(self) -> list[dict]:
-        return [self._clean_message(m) for m in self._messages]
+    def estimate_tokens(self) -> int:
+        total_chars = 0
+        for msg in self._messages:
+            content = msg.get("content", "")
+            if content:
+                total_chars += len(content)
+            for tc in msg.get("tool_calls", []):
+                args = tc.get("function", {}).get("arguments", "")
+                total_chars += len(args)
+        return int(total_chars * 0.7)
 
-    def _compress(self) -> None:
-        if len(self._messages) <= 3:
+    def needs_compression(self) -> bool:
+        return self.estimate_tokens() > self.max_context_tokens * self.compression_threshold
+
+    async def compress(self, llm_client=None) -> None:
+        """压缩早期的 tool call/result 对为摘要。"""
+        if len(self._messages) < 10:
             return
+
         system_msgs = [m for m in self._messages if m.get("role") == "system"]
-        other_msgs = [m for m in self._messages if m.get("role") != "system"]
-        keep_recent = other_msgs[-6:] if len(other_msgs) > 6 else other_msgs
-        self._messages = system_msgs + keep_recent
+        non_system = [m for m in self._messages if m.get("role") != "system"]
 
-    @staticmethod
-    def _estimate_message_tokens(message: dict) -> int:
-        content = message.get("content", "") or ""
-        tool_calls = message.get("tool_calls", [])
-        text_len = len(content)
-        for tc in tool_calls:
-            text_len += len(tc.get("function", {}).get("arguments", ""))
-        return text_len // 4 + 4
+        if len(non_system) <= 6:
+            return
 
-    @staticmethod
-    def _clean_message(message: dict) -> dict:
-        clean = {"role": message["role"]}
-        if message.get("content"):
-            clean["content"] = message["content"]
-        if message.get("tool_calls"):
-            clean["tool_calls"] = message["tool_calls"]
-        if message.get("tool_call_id"):
-            clean["tool_call_id"] = message["tool_call_id"]
-        if message.get("name"):
-            clean["name"] = message["name"]
-        return clean
+        to_compress = non_system[:-6]
+        to_keep = non_system[-6:]
+
+        compress_text = []
+        for msg in to_compress:
+            role = msg.get("role", "")
+            content = msg.get("content", "")
+            if role == "assistant" and msg.get("tool_calls"):
+                tools = [tc.get("function", {}).get("name", "?") for tc in msg["tool_calls"]]
+                compress_text.append(f"[调用工具: {', '.join(tools)}]")
+            elif role == "tool":
+                preview = content[:100] + "..." if len(content) > 100 else content
+                compress_text.append(f"[工具结果: {preview}]")
+            elif content:
+                preview = content[:150] + "..." if len(content) > 150 else content
+                compress_text.append(f"[{role}: {preview}]")
+
+        summary_content = "=== 前序分析摘要（已压缩）===\n" + "\n".join(compress_text)
+
+        self._messages = system_msgs + [
+            {"role": "user", "content": summary_content}
+        ] + to_keep
+
+        logger.info(
+            "context_compressed: compressed=%d remaining=%d est_tokens=%d",
+            len(to_compress), len(self._messages), self.estimate_tokens(),
+        )

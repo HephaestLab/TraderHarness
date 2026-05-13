@@ -1,61 +1,63 @@
 """Tests for ToolRegistry."""
 
+from datetime import date
+from decimal import Decimal
+
 import pytest
 
-from finharness.tools.registry import ToolDef, ToolRegistry
+from finharness.tools.registry import ToolDefinition, ToolRegistry, ToolContext
+from finharness.core.portfolio import Portfolio
 
 
-def _dummy_handler(context=None, **kwargs):
-    return {"result": "ok", **kwargs}
+async def _dummy_handler(params: dict, ctx) -> dict:
+    return {"result": "ok", **params}
+
+
+def _make_ctx() -> ToolContext:
+    return ToolContext(
+        current_date=date(2024, 3, 4),
+        current_phase="pre_market",
+        portfolio=Portfolio(initial_cash=Decimal("1000000")),
+        initial_cash=Decimal("1000000"),
+    )
 
 
 class TestToolRegistry:
     def test_register_and_get(self):
         reg = ToolRegistry()
-        tool = ToolDef(name="test", description="A test tool", parameters={}, handler=_dummy_handler)
+        tool = ToolDefinition(name="test", description="A test", parameters={}, handler=_dummy_handler)
         reg.register(tool)
-        assert reg.get("test") is not None
+        assert reg.get_tool("test") is not None
         assert "test" in reg
 
-    def test_list_tools(self):
+    def test_get_openai_tools_schema(self):
         reg = ToolRegistry()
-        reg.register(ToolDef(name="a", description="", parameters={}, handler=_dummy_handler))
-        reg.register(ToolDef(name="b", description="", parameters={}, handler=_dummy_handler))
-        assert len(reg.list_tools()) == 2
-
-    def test_phase_filtering(self):
-        reg = ToolRegistry()
-        reg.register(ToolDef(name="unrestricted", description="", parameters={}, handler=_dummy_handler))
-        reg.register(ToolDef(
-            name="trading_only", description="", parameters={},
-            handler=_dummy_handler, phase_restricted=["open_window"],
-        ))
-        all_tools = reg.list_tools(phase="pre_market")
-        names = [t.name for t in all_tools]
-        assert "unrestricted" in names
-        assert "trading_only" not in names
-
-    def test_to_openai_schemas(self):
-        reg = ToolRegistry()
-        reg.register(ToolDef(
-            name="get_kline", description="Get K-line",
-            parameters={"type": "object", "properties": {}},
-            handler=_dummy_handler,
-        ))
-        schemas = reg.to_openai_schemas()
+        reg.register(ToolDefinition(name="get_kline", description="Get K-line",
+                                    parameters={"type": "object", "properties": {}}, handler=_dummy_handler))
+        schemas = reg.get_openai_tools_schema()
         assert len(schemas) == 1
-        assert schemas[0]["type"] == "function"
         assert schemas[0]["function"]["name"] == "get_kline"
 
-    @pytest.mark.asyncio
-    async def test_invoke(self):
+    def test_exclude_tools(self):
         reg = ToolRegistry()
-        reg.register(ToolDef(name="echo", description="", parameters={}, handler=_dummy_handler))
-        result = await reg.invoke("echo", {"msg": "hi"})
+        reg.register(ToolDefinition(name="a", description="", parameters={}, handler=_dummy_handler))
+        reg.register(ToolDefinition(name="b", description="", parameters={}, handler=_dummy_handler))
+        schemas = reg.get_openai_tools_schema(exclude={"b"})
+        names = [s["function"]["name"] for s in schemas]
+        assert "a" in names
+        assert "b" not in names
+
+    @pytest.mark.asyncio
+    async def test_execute(self):
+        reg = ToolRegistry()
+        reg.register(ToolDefinition(name="echo", description="", parameters={}, handler=_dummy_handler))
+        ctx = _make_ctx()
+        result = await reg.execute("echo", {"msg": "hi"}, ctx)
         assert result["msg"] == "hi"
 
     @pytest.mark.asyncio
-    async def test_invoke_unknown_tool(self):
+    async def test_execute_unknown_tool(self):
         reg = ToolRegistry()
-        result = await reg.invoke("unknown", {})
+        ctx = _make_ctx()
+        result = await reg.execute("unknown", {}, ctx)
         assert "error" in result

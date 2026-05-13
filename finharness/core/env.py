@@ -9,7 +9,7 @@ from decimal import Decimal
 from typing import Any
 
 from finharness.core.calendar import TradingCalendar
-from finharness.core.engine import BacktestEngine, EngineConfig, EngineResult, MarketDataProvider
+from finharness.core.engine import BacktestEngine, EngineConfig, EngineResult, DataProvider
 from finharness.core.events import EventBus
 from finharness.core.market_profile import AShareProfile
 
@@ -22,16 +22,6 @@ class EnvConfig:
     warmup_days: int = 0
 
 
-class _DefaultMarketData:
-    """Placeholder market data that returns None (no data)."""
-
-    def get_price(self, stock_code: str, trade_date: date) -> Decimal | None:
-        return None
-
-    def get_prev_close(self, stock_code: str, trade_date: date) -> Decimal | None:
-        return None
-
-
 class TradingEnv:
     """Top-level environment wrapping the backtest engine.
 
@@ -41,11 +31,11 @@ class TradingEnv:
     def __init__(
         self,
         config: EnvConfig | None = None,
-        market_data: Any | None = None,
+        data_provider: Any | None = None,
         event_bus: EventBus | None = None,
     ) -> None:
         self._config = config or EnvConfig()
-        self._market_data = market_data or _DefaultMarketData()
+        self._data_provider = data_provider
         self._event_bus = event_bus or EventBus()
 
     def run(self, agents: Any, breakpoints: list[date] | None = None) -> EngineResult:
@@ -55,7 +45,7 @@ class TradingEnv:
     async def run_async(
         self, agents: Any, breakpoints: list[date] | None = None
     ) -> EngineResult:
-        """Asynchronous entry point for advanced users."""
+        """Asynchronous entry point."""
         if not isinstance(agents, list):
             agents = [agents]
 
@@ -66,7 +56,7 @@ class TradingEnv:
         )
         engine = BacktestEngine(
             config=engine_config,
-            market_data=self._market_data,
+            data_provider=self._data_provider,
             event_bus=self._event_bus,
         )
 

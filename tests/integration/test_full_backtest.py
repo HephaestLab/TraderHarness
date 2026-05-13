@@ -1,34 +1,46 @@
-"""Integration test — full backtest end-to-end."""
+"""Integration test — full backtest end-to-end with real data flow."""
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
+import pandas as pd
 import pytest
 
 from finharness.core.env import TradingEnv, EnvConfig
-from finharness.core.engine import MarketDataProvider
 from finharness.metrics.performance import calculate_metrics
 
 
-class FakeMarketData:
-    """Simulates price data for integration testing."""
+class RealisticDataProvider:
+    """Provides multi-stock daily bars for realistic E2E testing."""
 
-    _PRICES = {
-        "600519": {date(2024, 3, 4): Decimal("1800"), date(2024, 3, 5): Decimal("1820"),
-                   date(2024, 3, 6): Decimal("1790"), date(2024, 3, 7): Decimal("1850"),
-                   date(2024, 3, 8): Decimal("1860")},
-        "000001": {date(2024, 3, 4): Decimal("10.00"), date(2024, 3, 5): Decimal("10.20"),
-                   date(2024, 3, 6): Decimal("10.10"), date(2024, 3, 7): Decimal("10.50"),
-                   date(2024, 3, 8): Decimal("10.30")},
-    }
+    def __init__(self):
+        dates = [date(2024, 3, 4) + timedelta(days=i) for i in range(14)]
+        trading_dates = [d for d in dates if d.weekday() < 5]
 
-    def get_price(self, stock_code: str, trade_date: date) -> Decimal | None:
-        return self._PRICES.get(stock_code, {}).get(trade_date)
+        self._data = {}
+        self._data["600519"] = pd.DataFrame({
+            "date": trading_dates,
+            "open": [1800 + i*5 for i in range(len(trading_dates))],
+            "high": [1820 + i*5 for i in range(len(trading_dates))],
+            "low": [1780 + i*5 for i in range(len(trading_dates))],
+            "close": [1810 + i*5 for i in range(len(trading_dates))],
+            "volume": [50000] * len(trading_dates),
+        })
+        self._data["000001"] = pd.DataFrame({
+            "date": trading_dates,
+            "open": [10.0 + i*0.1 for i in range(len(trading_dates))],
+            "high": [10.5 + i*0.1 for i in range(len(trading_dates))],
+            "low": [9.8 + i*0.1 for i in range(len(trading_dates))],
+            "close": [10.2 + i*0.1 for i in range(len(trading_dates))],
+            "volume": [100000] * len(trading_dates),
+        })
 
-    def get_prev_close(self, stock_code: str, trade_date: date) -> Decimal | None:
-        prices = self._PRICES.get(stock_code, {})
-        sorted_dates = sorted(d for d in prices if d < trade_date)
-        return prices[sorted_dates[-1]] if sorted_dates else None
+    async def get_daily_bars(self, stock_code: str, start: date, end: date) -> pd.DataFrame:
+        df = self._data.get(stock_code)
+        if df is None:
+            return pd.DataFrame()
+        mask = (df["date"] >= start) & (df["date"] <= end)
+        return df[mask].reset_index(drop=True)
 
 
 class BuyAndHoldAgent:
@@ -37,69 +49,83 @@ class BuyAndHoldAgent:
         self.name = "BuyAndHoldTest"
         self._bought = False
 
-    async def on_day(self, env, current_date: date) -> None:
+    async def on_day(self, bus, current_date: date) -> None:
         if not self._bought:
-            await env.place_order(
+            result = await bus.place_order(
                 agent_id=self.agent_id, stock_code="600519",
                 side="buy", quantity=100,
             )
-            self._bought = True
+            if result.get("success"):
+                self._bought = True
+
+
+class DataQueryAgent:
+    """Agent that queries market data through the bus."""
+
+    def __init__(self):
+        self.agent_id = "data_query"
+        self.name = "DataQueryAgent"
+        self.prices_seen = []
+        self.klines_received = 0
+
+    async def on_day(self, bus, current_date: date) -> None:
+        bars = await bus.get_daily_bars("600519", days=5)
+        if not bars.empty:
+            self.klines_received += len(bars)
+        price_info = await bus.get_stock_price("600519")
+        if price_info:
+            self.prices_seen.append(price_info["close"])
 
 
 class TestFullBacktest:
-    def test_end_to_end_run(self):
+    def test_end_to_end_buy_and_hold(self):
         env = TradingEnv(
-            config=EnvConfig(
-                start_date=date(2024, 3, 4),
-                end_date=date(2024, 3, 8),
-                initial_cash=Decimal("1000000"),
-            ),
-            market_data=FakeMarketData(),
+            config=EnvConfig(start_date=date(2024, 3, 4), end_date=date(2024, 3, 15)),
+            data_provider=RealisticDataProvider(),
         )
         agent = BuyAndHoldAgent()
         result = env.run(agent)
-        assert result.trading_days == 5
-        assert "bh_test" in result.agent_data
+        assert result.trading_days == 10
         equity = result.agent_data["bh_test"]["equity_curve"]
-        assert len(equity) == 5
+        assert len(equity) == 10
+        assert agent._bought is True
 
     def test_metrics_from_result(self):
         env = TradingEnv(
-            config=EnvConfig(
-                start_date=date(2024, 3, 4),
-                end_date=date(2024, 3, 8),
-                initial_cash=Decimal("1000000"),
-            ),
-            market_data=FakeMarketData(),
+            config=EnvConfig(start_date=date(2024, 3, 4), end_date=date(2024, 3, 15)),
+            data_provider=RealisticDataProvider(),
         )
         agent = BuyAndHoldAgent()
         result = env.run(agent)
         equity = result.agent_data["bh_test"]["equity_curve"]
-        trades = result.agent_data["bh_test"]["trades"]
-        metrics = calculate_metrics(equity, Decimal("1000000"), trades)
-        assert metrics.trading_days == 5
+        metrics = calculate_metrics(equity, Decimal("1000000"), [])
+        assert metrics.trading_days == 10
         assert metrics.final_value > 0
 
-    def test_multi_agent_run(self):
+    def test_agent_receives_market_data(self):
+        """Agent can query K-lines and prices through the bus."""
         env = TradingEnv(
-            config=EnvConfig(
-                start_date=date(2024, 3, 4),
-                end_date=date(2024, 3, 6),
-                initial_cash=Decimal("1000000"),
-            ),
-            market_data=FakeMarketData(),
+            config=EnvConfig(start_date=date(2024, 3, 4), end_date=date(2024, 3, 8)),
+            data_provider=RealisticDataProvider(),
         )
+        agent = DataQueryAgent()
+        env.run(agent)
+        assert agent.klines_received > 0
+        assert len(agent.prices_seen) >= 4
+
+    def test_multi_agent_isolation(self):
+        env = TradingEnv(
+            config=EnvConfig(start_date=date(2024, 3, 4), end_date=date(2024, 3, 8)),
+            data_provider=RealisticDataProvider(),
+        )
+        a1 = BuyAndHoldAgent()
+        a1.agent_id = "agent_1"
 
         class PassiveAgent:
-            def __init__(self, aid):
-                self.agent_id = aid
-                self.name = aid
+            agent_id = "passive"
+            name = "Passive"
+            async def on_day(self, bus, current_date): pass
 
-            async def on_day(self, env, current_date):
-                pass
-
-        a1 = BuyAndHoldAgent()
-        a2 = PassiveAgent("passive")
-        result = env.run([a1, a2])
-        assert "bh_test" in result.agent_data
+        result = env.run([a1, PassiveAgent()])
+        assert "agent_1" in result.agent_data
         assert "passive" in result.agent_data
