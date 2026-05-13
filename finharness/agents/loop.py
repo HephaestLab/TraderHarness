@@ -289,11 +289,32 @@ class AgentLoop:
                         if idx < len(codes_list):
                             lines.append(f"    {codes_list[idx]}: {chg:+.2f}%")
 
+        # 自选股行情
+        watchlist = ctx.tool_call_cache.get("watchlist", {})
+        if watchlist:
+            lines.append("\n自选股追踪:")
+            for code, reason in watchlist.items():
+                wl_str = f"  {code}"
+                if reason:
+                    wl_str += f" ({reason})"
+                daily = ctx.preloaded_daily.get(code)
+                if daily is not None and not daily.empty:
+                    filtered = daily[daily["date"] < ctx.current_date]
+                    if not filtered.empty:
+                        last_close = float(filtered.iloc[-1]["close"])
+                        wl_str += f" 最新{last_close:.2f}"
+                        if len(filtered) >= 2:
+                            prev_close = float(filtered.iloc[-2]["close"])
+                            chg = (last_close - prev_close) / prev_close * 100
+                            wl_str += f" {chg:+.2f}%"
+                lines.append(wl_str)
+
         # 可用工具提示
         lines.append("\n可用工具: get_kline(K线), get_stock_price(最新价), get_stock_info(基本面), "
                      "screen_stocks(选股), get_market_overview(大盘), "
                      "get_portfolio(持仓), get_position(个股持仓), "
-                     "read_file/write_file(笔记)")
+                     "add_watchlist/remove_watchlist(自选股), "
+                     "read_file/write_file(笔记), run_script(执行脚本)")
 
         return "\n".join(lines)
 

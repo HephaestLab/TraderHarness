@@ -23,6 +23,7 @@ from finharness.tools.control import FINISH_DAY
 from finharness.tools.analysis import GET_MARKET_OVERVIEW, SCREEN_STOCKS, GET_SECTOR_SUMMARY
 from finharness.tools.filesystem import READ_FILE, WRITE_FILE, LIST_FILES
 from finharness.tools.scripting import RUN_SCRIPT
+from finharness.tools.watchlist import ADD_WATCHLIST, REMOVE_WATCHLIST, GET_WATCHLIST
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +98,9 @@ class ToolAgent:
         self._registry.register(WRITE_FILE)
         self._registry.register(LIST_FILES)
         self._registry.register(RUN_SCRIPT)
+        self._registry.register(ADD_WATCHLIST)
+        self._registry.register(REMOVE_WATCHLIST)
+        self._registry.register(GET_WATCHLIST)
         self._registry.register(FINISH_DAY)
 
         self._memory = DailyMemory(agent_id=agent_id, storage_dir=memory_dir)
@@ -108,8 +112,10 @@ class ToolAgent:
             memory=self._memory,
         )
 
-        # 种子股票池：Agent 持仓 + 代表性蓝筹（确保每天晨报有数据）
+        # 种子股票池：代表性蓝筹（确保每天晨报有数据）
         self._seed_codes = {"600519", "000001", "300750", "000858", "601318"}
+        # 自选股（Agent 通过 add_watchlist 工具动态管理，跨天持久）
+        self._watchlist_codes: set[str] = set()
 
         self.day_results: list[DayResult] = []
 
@@ -123,12 +129,25 @@ class ToolAgent:
             p.avg_cost * p.quantity for p in portfolio.positions.values()
         )
 
-        # 预加载持仓股+种子股的日线数据（供晨报使用）
+        # 预加载：持仓股 + 种子股 + 自选股
         preload_codes = set(portfolio.positions.keys())
         preload_codes.update(self._seed_codes)
+        watchlist = self._loop._context.messages  # 从上一天的 tool_call_cache 获取自选股
+        # 自选股持久化在 agent 级别
+        preload_codes.update(self._watchlist_codes)
         preloaded_daily = {}
         for code in preload_codes:
             bars = await bus.get_daily_bars(code, days=120)
+            if bars is not None and not bars.empty:
+                preloaded_daily[code] = bars
+
+        # 全市场采样：从 data provider 随机取 50 只用于板块概览
+        all_stocks = await bus._data.get_stock_list() if bus._data else []
+        import random
+        sample_codes = [s["code"] for s in all_stocks if s["code"] not in preload_codes]
+        random.shuffle(sample_codes)
+        for code in sample_codes[:50]:
+            bars = await bus.get_daily_bars(code, days=5)
             if bars is not None and not bars.empty:
                 preloaded_daily[code] = bars
 
@@ -167,3 +186,8 @@ class ToolAgent:
 
         result = await self._loop.run_day(current_date, ctx)
         self.day_results.append(result)
+
+        # 持久化自选股到 agent 级别（跨天保持）
+        watchlist_from_ctx = ctx.tool_call_cache.get("watchlist", {})
+        if watchlist_from_ctx:
+            self._watchlist_codes = set(watchlist_from_ctx.keys())
