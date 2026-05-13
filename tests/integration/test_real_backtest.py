@@ -50,7 +50,7 @@ class TestDataAvailability:
     @pytest.mark.asyncio
     async def test_all_stocks_available(self, provider):
         stocks = await provider.get_stock_list()
-        assert len(stocks) >= 300, f"Expected 300+ stocks, got {len(stocks)}"
+        assert len(stocks) >= 1000, f"Expected 1000+ stocks, got {len(stocks)}"
 
     @pytest.mark.asyncio
     async def test_moutai_has_full_history(self, provider):
