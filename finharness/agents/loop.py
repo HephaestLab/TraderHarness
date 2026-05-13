@@ -258,19 +258,23 @@ class AgentLoop:
         else:
             lines.append(f"\n当前空仓 | 可用资金: {cash:,.0f}元")
 
-        # 板块涨跌概览（按行业聚合）
+        # 板块涨跌概览（按行业聚合）— 优化：用 bisect 避免 DataFrame boolean indexing
+        import bisect
         from finharness.data.stock_registry_loader import get_stock_industry
         sector_changes: dict[str, list[float]] = {}
         total_up = 0
         total_down = 0
         for code, df in ctx.preloaded_daily.items():
-            if df.empty:
+            if df is None or df.empty or len(df) < 2:
                 continue
-            filtered = df[df["date"] < ctx.current_date]
-            if len(filtered) < 2:
+            dates = df["date"].tolist()
+            idx = bisect.bisect_left(dates, ctx.current_date)
+            if idx < 2:
                 continue
-            last = float(filtered.iloc[-1]["close"])
-            prev = float(filtered.iloc[-2]["close"])
+            last = float(df.iloc[idx - 1]["close"])
+            prev = float(df.iloc[idx - 2]["close"])
+            if prev == 0:
+                continue
             change = (last - prev) / prev * 100
             if change > 0:
                 total_up += 1
@@ -282,10 +286,7 @@ class AgentLoop:
             sector_changes[industry].append(change)
 
         if sector_changes:
-            total_stocks = total_up + total_down + sum(1 for code, df in ctx.preloaded_daily.items()
-                                                       if not df.empty and len(df[df["date"] < ctx.current_date]) >= 2
-                                                       and float(df[df["date"] < ctx.current_date].iloc[-1]["close"]) == float(df[df["date"] < ctx.current_date].iloc[-2]["close"]))
-            lines.append(f"\n昨日全市场({len(ctx.preloaded_daily)}只): 上涨{total_up} 下跌{total_down}")
+            lines.append(f"\n昨日全市场({total_up + total_down}只): 上涨{total_up} 下跌{total_down}")
             sector_avg = {s: sum(v) / len(v) for s, v in sector_changes.items() if len(v) >= 3}
             sorted_sectors = sorted(sector_avg.items(), key=lambda x: -x[1])
             if sorted_sectors:

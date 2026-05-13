@@ -56,6 +56,30 @@ class MarketData:
 
     async def load_all(self, provider: DataProvider, start: date, end: date) -> None:
         """一次性加载全市场所有股票的全部数据。"""
+        from pathlib import Path
+
+        # 快速路径：如果 provider 是 ParquetProvider，直接批量读取所有文件（不逐个 await）
+        if hasattr(provider, '_data_dir'):
+            data_dir = Path(provider._data_dir)
+            if data_dir.exists():
+                files = list(data_dir.glob("*.parquet"))
+                logger.info("Loading market data: %d parquet files (fast path)...", len(files))
+                for f in files:
+                    try:
+                        df = pd.read_parquet(f)
+                        if "date" in df.columns:
+                            if pd.api.types.is_datetime64_any_dtype(df["date"]):
+                                df["date"] = df["date"].dt.date
+                            else:
+                                df["date"] = pd.to_datetime(df["date"]).dt.date
+                        if not df.empty:
+                            self._data[f.stem] = df
+                    except Exception:
+                        pass
+                logger.info("Market data loaded: %d stocks in memory", len(self._data))
+                return
+
+        # 通用路径：逐个从 provider 加载
         stocks = await provider.get_stock_list()
         logger.info("Loading market data: %d stocks...", len(stocks))
         load_start = start - timedelta(days=365)
