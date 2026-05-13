@@ -92,6 +92,9 @@ async def handle_place_order(params: dict, ctx: ToolContext) -> dict:
     trade["date"] = str(ctx.current_date)
     ctx.trade_results.append(trade)
     ctx.traded_today.add(code)
+    # Also record to bus.trade_history so EngineResult collects it
+    if ctx._bus is not None:
+        ctx._bus.trade_history.append(trade)
 
     portfolio_after = {
         "cash": round(float(ctx.portfolio.cash), 2),
