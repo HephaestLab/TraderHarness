@@ -66,6 +66,7 @@ class TradingBus:
         self._current_date: date | None = None
         self._daily_cache: dict[str, pd.DataFrame] = {}
         self._traded_today: set[str] = set()
+        self.trade_history: list[dict] = []
 
     @property
     def current_date(self) -> date | None:
@@ -160,7 +161,9 @@ class TradingBus:
                 qty = min(quantity, sellable) if quantity > 0 else sellable
                 if qty <= 0:
                     return {"success": False, "error": f"{stock_code} T+1限制"}
+                avg_cost = pos.avg_cost
                 trade = self._portfolio.sell(stock_code, price, qty, self._current_date)
+                trade["pnl"] = float(trade["net_income"]) - float(avg_cost * qty)
             else:
                 return {"success": False, "error": f"无效操作: {side}"}
         except ValueError as e:
@@ -168,6 +171,7 @@ class TradingBus:
 
         trade["signal_reasoning"] = reasoning
         self._traded_today.add(stock_code)
+        self.trade_history.append(trade)
         self._event_bus.emit("order_placed", trade=trade, agent_id=agent_id)
         return {"success": True, "trade": trade}
 
@@ -176,8 +180,10 @@ class TradingBus:
             return self._daily_cache[stock_code]
         if self._data is None:
             return pd.DataFrame()
+        # Fetch a wide range to cover the entire backtest + history
         start = self._current_date - timedelta(days=365)
-        df = await self._data.get_daily_bars(stock_code, start, self._current_date)
+        end = self._current_date + timedelta(days=365)
+        df = await self._data.get_daily_bars(stock_code, start, end)
         if df is not None and not df.empty:
             self._daily_cache[stock_code] = df
             return df
@@ -257,9 +263,10 @@ class BacktestEngine:
         )
         for agent in agents:
             portfolio = portfolios[agent.agent_id]
+            bus = buses[agent.agent_id]
             result.agent_data[agent.agent_id] = {
                 "equity_curve": portfolio.equity_curve,
-                "trades": trade_histories[agent.agent_id],
+                "trades": bus.trade_history,
             }
 
         return result
