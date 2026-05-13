@@ -247,6 +247,8 @@ class BacktestEngine:
             for agent in agents:
                 bus = buses[agent.agent_id]
                 bus._set_date(current_date)
+                bus._day_index = day_idx
+                bus._total_days = len(trading_days)
                 try:
                     await agent.on_day(bus, current_date)
                 except Exception:

@@ -108,6 +108,9 @@ class ToolAgent:
             memory=self._memory,
         )
 
+        # 种子股票池：Agent 持仓 + 代表性蓝筹（确保每天晨报有数据）
+        self._seed_codes = {"600519", "000001", "300750", "000858", "601318"}
+
         self.day_results: list[DayResult] = []
 
     async def on_day(self, bus, current_date: date) -> None:
@@ -120,26 +123,47 @@ class ToolAgent:
             p.avg_cost * p.quantity for p in portfolio.positions.values()
         )
 
-        # 获取所有持仓+种子股的执行价
-        codes = set(portfolio.positions.keys())
+        # 预加载持仓股+种子股的日线数据（供晨报使用）
+        preload_codes = set(portfolio.positions.keys())
+        preload_codes.update(self._seed_codes)
+        preloaded_daily = {}
+        for code in preload_codes:
+            bars = await bus.get_daily_bars(code, days=120)
+            if bars is not None and not bars.empty:
+                preloaded_daily[code] = bars
+
+        # 获取执行价
         open_prices = {}
-        for code in codes:
+        for code in preload_codes:
             op = await bus.get_execution_price(code, "open")
             if op:
                 open_prices[code] = op
+
+        # 收盘价（尾盘窗口用）
+        close_prices = {}
+        for code in preload_codes:
+            cp = await bus.get_execution_price(code, "close")
+            if cp:
+                close_prices[code] = cp
 
         ctx = ToolContext(
             current_date=current_date,
             current_phase="pre_market",
             portfolio=portfolio,
             initial_cash=initial,
-            preloaded_daily={},
+            preloaded_daily=preloaded_daily,
             execution_price=open_prices,
+            close_prices=close_prices,
             workspace_root=self.agent_id,
             max_position_pct=self.max_position_pct,
             max_positions=self.max_positions,
             _bus=bus,
         )
+
+        # 传递回测进度
+        if hasattr(bus, '_day_index') and hasattr(bus, '_total_days'):
+            self._loop.remaining_trading_days = bus._total_days - bus._day_index - 1
+            self._loop.total_trading_days = bus._total_days
 
         result = await self._loop.run_day(current_date, ctx)
         self.day_results.append(result)

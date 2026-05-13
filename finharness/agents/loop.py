@@ -224,31 +224,76 @@ class AgentLoop:
 
     @staticmethod
     def _build_morning_brief(ctx: ToolContext) -> str:
-        """从已有数据生成晨报。"""
+        """从已有数据生成晨报。包含持仓涨跌、总收益率、板块概览。"""
         lines = ["=== 市场晨报 ==="]
 
+        # 总资产与收益率
         prices = ctx.execution_price if ctx.execution_price else {}
         total_value = float(ctx.portfolio.total_value(prices)) if prices else float(ctx.portfolio.cash)
         initial = float(ctx.initial_cash)
         return_pct = ((total_value - initial) / initial * 100) if initial > 0 else 0.0
         lines.append(f"\n总资产: {total_value:,.0f}元 | 累计收益: {return_pct:+.2f}%")
 
+        # 持仓概况 + 昨日涨跌 + 浮盈
         positions = ctx.portfolio.positions
         cash = float(ctx.portfolio.cash)
         if positions:
             lines.append(f"持仓: {len(positions)}只 | 可用资金: {cash:,.0f}元")
             for code, pos in positions.items():
+                change_str = ""
+                daily = ctx.preloaded_daily.get(code)
+                if daily is not None and not daily.empty:
+                    filtered = daily[daily["date"] < ctx.current_date]
+                    if len(filtered) >= 2:
+                        last_close = float(filtered.iloc[-1]["close"])
+                        prev_close = float(filtered.iloc[-2]["close"])
+                        pct = (last_close - prev_close) / prev_close * 100
+                        change_str = f" 昨日{pct:+.2f}%"
                 pnl_str = ""
                 price = prices.get(code)
                 if price:
                     pnl = (float(price) - float(pos.avg_cost)) / float(pos.avg_cost) * 100
                     pnl_str = f" 浮盈{pnl:+.1f}%"
-                lines.append(f"  {code}: {pos.quantity}股, 成本{float(pos.avg_cost):.2f}{pnl_str}")
+                lines.append(f"  {code}: {pos.quantity}股, 成本{float(pos.avg_cost):.2f}{change_str}{pnl_str}")
         else:
             lines.append(f"\n当前空仓 | 可用资金: {cash:,.0f}元")
 
+        # 板块/全市场昨日涨跌概览
+        sector_changes: dict[str, list[float]] = {}
+        for code, df in ctx.preloaded_daily.items():
+            if df.empty:
+                continue
+            filtered = df[df["date"] < ctx.current_date]
+            if len(filtered) < 2:
+                continue
+            last = float(filtered.iloc[-1]["close"])
+            prev = float(filtered.iloc[-2]["close"])
+            change = (last - prev) / prev * 100
+            sector = "全市场"
+            if sector not in sector_changes:
+                sector_changes[sector] = []
+            sector_changes[sector].append(change)
+
+        if sector_changes:
+            all_changes = sector_changes.get("全市场", [])
+            if all_changes:
+                avg = sum(all_changes) / len(all_changes)
+                up_count = sum(1 for c in all_changes if c > 0)
+                down_count = sum(1 for c in all_changes if c < 0)
+                lines.append(f"\n昨日全市场: 平均{avg:+.2f}% | 上涨{up_count}只 下跌{down_count}只")
+                top5 = sorted(enumerate(all_changes), key=lambda x: -x[1])[:5]
+                codes_list = list(ctx.preloaded_daily.keys())
+                if top5:
+                    lines.append("  涨幅前5:")
+                    for idx, chg in top5:
+                        if idx < len(codes_list):
+                            lines.append(f"    {codes_list[idx]}: {chg:+.2f}%")
+
+        # 可用工具提示
         lines.append("\n可用工具: get_kline(K线), get_stock_price(最新价), get_stock_info(基本面), "
-                     "get_portfolio(持仓), get_position(个股持仓)")
+                     "screen_stocks(选股), get_market_overview(大盘), "
+                     "get_portfolio(持仓), get_position(个股持仓), "
+                     "read_file/write_file(笔记)")
 
         return "\n".join(lines)
 
