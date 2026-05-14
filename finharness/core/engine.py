@@ -56,58 +56,66 @@ class MarketData:
         self._5min_data: dict[str, pd.DataFrame] = {}
 
     async def load_all(self, provider: DataProvider, start: date, end: date) -> None:
-        """一次性加载全市场所有股票的全部数据。"""
+        """一次性加载全市场数据到内存。
+
+        数据源优先级：
+        1. ParquetProvider（测试用，从指定目录读多个文件）
+        2. MarketDataManager（生产用，单文件 daily.parquet / 5min.parquet）
+        """
         from pathlib import Path
 
-        # 快速路径：如果 provider 是 ParquetProvider，直接批量读取所有文件（不逐个 await）
+        # 路径1：测试/自定义目录（多文件模式）
         if hasattr(provider, '_data_dir'):
             data_dir = Path(provider._data_dir)
-            if data_dir.exists():
-                files = list(data_dir.glob("*.parquet"))
-                logger.info("Loading market data: %d parquet files (fast path)...", len(files))
-                for f in files:
-                    try:
-                        df = pd.read_parquet(f)
-                        if "date" in df.columns:
-                            if pd.api.types.is_datetime64_any_dtype(df["date"]):
-                                df["date"] = df["date"].dt.date
-                            else:
-                                df["date"] = pd.to_datetime(df["date"]).dt.date
-                        if not df.empty:
-                            self._data[f.stem] = df
-                    except Exception:
-                        pass
-                logger.info("Market data loaded: %d stocks in memory", len(self._data))
-
-                # 5分钟线：如果存在 _5min 目录，也加载
+            if data_dir.exists() and len(list(data_dir.glob("*.parquet"))) > 0:
+                self._load_multi_file_dir(data_dir)
                 dir_5min = data_dir.parent / "market_data_5min"
                 if dir_5min.exists():
-                    files_5m = list(dir_5min.glob("*.parquet"))
-                    for f in files_5m:
-                        try:
-                            df = pd.read_parquet(f)
-                            if "date" in df.columns and pd.api.types.is_datetime64_any_dtype(df["date"]):
-                                df["date"] = df["date"].dt.date
-                            elif "date" in df.columns:
-                                df["date"] = pd.to_datetime(df["date"]).dt.date
-                            if not df.empty:
-                                self._5min_data[f.stem] = df
-                        except Exception:
-                            pass
-                    if self._5min_data:
-                        logger.info("5min data loaded: %d stocks", len(self._5min_data))
+                    self._load_multi_file_dir(dir_5min, is_5min=True)
                 return
 
-        # 通用路径：逐个从 provider 加载
-        stocks = await provider.get_stock_list()
-        logger.info("Loading market data: %d stocks...", len(stocks))
-        load_start = start - timedelta(days=365)
-        for stock in stocks:
-            code = stock["code"]
-            df = await provider.get_daily_bars(code, load_start, end)
-            if df is not None and not df.empty:
-                self._data[code] = df
-        logger.info("Market data loaded: %d stocks in memory", len(self._data))
+        # 路径2：单文件缓存（首次从 mootdx 拉取，后续读缓存）
+        from finharness.data.market_data_manager import MarketDataManager
+        manager = MarketDataManager()
+
+        daily_df = manager.load_daily()
+        self._ingest_combined_df(daily_df, is_5min=False)
+
+        if manager.has_5min_cache():
+            min5_df = manager.load_5min()
+            self._ingest_combined_df(min5_df, is_5min=True)
+
+    def _ingest_combined_df(self, df: pd.DataFrame, is_5min: bool = False) -> None:
+        """将合并的 DataFrame（含 stock_code 列）拆分为 per-stock dict。"""
+        if df.empty or "stock_code" not in df.columns:
+            return
+        store = self._5min_data if is_5min else self._data
+        for code, group in df.groupby("stock_code"):
+            store[code] = group.drop(columns=["stock_code"]).reset_index(drop=True)
+        label = "5min" if is_5min else "daily"
+        logger.info("%s data ingested: %d stocks", label, len(store))
+
+    def _load_multi_file_dir(self, directory: "Path", is_5min: bool = False) -> None:
+        """从多文件目录读取（兼容测试 fixtures）。"""
+        from pathlib import Path
+        files = list(Path(directory).glob("*.parquet"))
+        if not files:
+            return
+        store = self._5min_data if is_5min else self._data
+        for f in files:
+            try:
+                df = pd.read_parquet(f)
+                if "date" in df.columns:
+                    if pd.api.types.is_datetime64_any_dtype(df["date"]):
+                        df["date"] = df["date"].dt.date
+                    else:
+                        df["date"] = pd.to_datetime(df["date"]).dt.date
+                if not df.empty:
+                    store[f.stem] = df
+            except Exception:
+                pass
+        label = "5min" if is_5min else "daily"
+        logger.info("%s data loaded: %d stocks from %s", label, len(store), directory)
 
     def get(self, stock_code: str) -> pd.DataFrame:
         return self._data.get(stock_code, pd.DataFrame())
