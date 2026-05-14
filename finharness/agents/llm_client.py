@@ -34,11 +34,16 @@ class LLMClient:
         temperature: float = 0.7,
         max_retries: int = 3,
         cache_enabled: bool = True,
+        replay_recorder: Any | None = None,
+        replay_player: Any | None = None,
     ) -> None:
         self.model = model
         self.temperature = temperature
         self.max_retries = max_retries
         self.cache_enabled = cache_enabled
+        self._recorder = replay_recorder
+        self._player = replay_player
+        self._replay_step: int = 0
 
         self._api_key = api_key or self._resolve_api_key(model)
         self._base_url = base_url or self._resolve_base_url(model)
@@ -60,6 +65,12 @@ class LLMClient:
         Note: tool-based calls are NOT cached (agentic conversations are stateful).
         Only plain chat (no tools) is cached.
         """
+        # Replay mode: return pre-recorded response
+        if self._player:
+            entry = self._player.next_response()
+            if entry and "output" in entry:
+                return entry["output"]
+
         if self.cache_enabled and not tools:
             cached = self._cache_get(messages, tools)
             if cached is not None:
@@ -69,6 +80,15 @@ class LLMClient:
 
         if self.cache_enabled and not tools:
             self._cache_put(messages, tools, response)
+
+        # Record for replay
+        if self._recorder:
+            from datetime import date as _date
+            self._recorder.record(
+                _date.today(), self._replay_step, "llm_call",
+                {"input": messages[-1:], "output": response},
+            )
+            self._replay_step += 1
 
         return response
 

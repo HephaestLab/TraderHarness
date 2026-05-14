@@ -11,8 +11,13 @@ import logging
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
 import pandas as pd
+
+if TYPE_CHECKING:
+    from finharness.core.budget import TokenBudget
+    from finharness.trajectory.collector import TrajectoryCollector
 
 from finharness.tools.registry import ToolRegistry, ToolContext
 from finharness.agents.memory import DailyMemory
@@ -41,6 +46,7 @@ class AgentLoop:
         memory: DailyMemory | None = None,
         max_pre_iterations: int = 10,
         max_window_iterations: int = 3,
+        token_budget: "TokenBudget | None" = None,
     ) -> None:
         self.llm_client = llm_client
         self.registry = tool_registry
@@ -50,6 +56,8 @@ class AgentLoop:
         self.max_window_iterations = max_window_iterations
         self._context = ContextManager(max_context_tokens=60000)
         self._total_tokens: int = 0
+        self._budget = token_budget
+        self.trajectory: "TrajectoryCollector | None" = None
         self.remaining_trading_days: int | None = None
         self.total_trading_days: int | None = None
 
@@ -57,6 +65,9 @@ class AgentLoop:
         """执行一个完整交易日的三阶段循环。"""
         self._context.reset()
         self._total_tokens = 0
+
+        if self.trajectory:
+            self.trajectory.start_day(current_date, {"cash": float(ctx.portfolio.cash)})
 
         self._context.add_message({"role": "system", "content": self.system_prompt})
 
@@ -121,6 +132,12 @@ class AgentLoop:
                 trades=ctx.trade_results,
             )
 
+        if self.trajectory:
+            reward = 0.0
+            if ctx.trade_results:
+                reward = sum(float(t.get("pnl", 0)) for t in ctx.trade_results)
+            self.trajectory.end_day(actions=ctx.trade_results, reward=reward)
+
         return DayResult(
             trades=ctx.trade_results,
             summary=summary,
@@ -138,6 +155,10 @@ class AgentLoop:
         consecutive_errors = 0
 
         for _ in range(max_iter):
+            if self._budget and self._budget.is_exhausted:
+                logger.warning("Token budget exhausted, stopping phase")
+                return
+
             if self._context.needs_compression():
                 await self._context.compress()
 
@@ -153,7 +174,10 @@ class AgentLoop:
 
             usage = response.get("_usage", {})
             if usage:
-                self._total_tokens += usage.get("total_tokens", 0)
+                tokens = usage.get("total_tokens", 0)
+                self._total_tokens += tokens
+                if self._budget:
+                    self._budget.consume(tokens)
 
             if not response.get("tool_calls"):
                 break
@@ -177,6 +201,8 @@ class AgentLoop:
                     ctx.tool_call_cache["finish_day_summary"] = arguments.get("summary", "")
 
                 result = await self.registry.execute(tool_name, arguments, ctx)
+                if self.trajectory:
+                    self.trajectory.record_step(ctx.current_date, "tool_call", {"name": tool_name, "args": arguments, "result": result})
                 self._context.add_message({
                     "role": "tool",
                     "tool_call_id": tc["id"],

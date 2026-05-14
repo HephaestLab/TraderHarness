@@ -65,4 +65,5 @@ class TradingEnv:
             start_date=self._config.start_date,
             end_date=self._config.end_date,
             breakpoints=breakpoints,
+            warmup_days=self._config.warmup_days,
         )
