@@ -35,6 +35,7 @@ class ToolContext:
     trade_results: list[dict] = field(default_factory=list)
     traded_today: set[str] = field(default_factory=set)
     tool_call_cache: dict[str, Any] = field(default_factory=dict)
+    agent_id: str = ""
     workspace_root: str = ""
     max_position_pct: float = 25.0
     max_positions: int = 4

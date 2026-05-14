@@ -71,7 +71,8 @@ async def handle_get_stock_price(params: dict, ctx: ToolContext) -> dict:
 
     last = filtered.iloc[-1]
     prev = filtered.iloc[-2] if len(filtered) >= 2 else last
-    change_pct = (float(last["close"]) - float(prev["close"])) / float(prev["close"]) * 100
+    prev_close = float(prev["close"])
+    change_pct = ((float(last["close"]) - prev_close) / prev_close * 100) if prev_close != 0 else 0.0
 
     return {
         "stock_code": code,

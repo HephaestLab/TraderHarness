@@ -29,7 +29,7 @@ class RandomAgent:
             return
         code = self._rng.choice(self._stock_codes)
         side = self._rng.choice(["buy", "sell"])
-        await env.place_order(
+        env.place_order(
             agent_id=self.agent_id,
             stock_code=code,
             side=side,

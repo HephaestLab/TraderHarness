@@ -160,7 +160,8 @@ class TradingBus:
             return None
         last = filtered.iloc[-1]
         prev = filtered.iloc[-2] if len(filtered) >= 2 else last
-        change_pct = (float(last["close"]) - float(prev["close"])) / float(prev["close"]) * 100
+        prev_close = float(prev["close"])
+        change_pct = ((float(last["close"]) - prev_close) / prev_close * 100) if prev_close != 0 else 0.0
         return {
             "stock_code": stock_code,
             "date": str(last["date"]),
@@ -191,6 +192,8 @@ class TradingBus:
         window: str = "open",
     ) -> dict:
         """执行交易订单。唯一的下单入口 — tool handler 和 simple agent 都调用此方法。"""
+        if self._current_date is None:
+            return {"success": False, "error": "交易日未设置"}
         if stock_code in self._traded_today:
             return {"success": False, "error": f"{stock_code} 今天已交易过"}
 

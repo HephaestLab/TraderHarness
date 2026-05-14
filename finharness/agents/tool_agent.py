@@ -146,6 +146,7 @@ class ToolAgent:
                 close_prices[code] = cp
 
         ctx = ToolContext(
+            agent_id=self.agent_id,
             current_date=current_date,
             current_phase="pre_market",
             portfolio=portfolio,

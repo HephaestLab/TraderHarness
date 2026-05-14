@@ -22,7 +22,8 @@ async def handle_get_market_overview(params: dict, ctx: ToolContext) -> dict:
             continue
         last = filtered.iloc[-1]
         prev = filtered.iloc[-2]
-        change = (float(last["close"]) - float(prev["close"])) / float(prev["close"]) * 100
+        prev_close = float(prev["close"])
+        change = ((float(last["close"]) - prev_close) / prev_close * 100) if prev_close != 0 else 0.0
         sector = "default"
         if sector not in sector_data:
             sector_data[sector] = []
@@ -100,7 +101,8 @@ async def handle_get_sector_summary(params: dict, ctx: ToolContext) -> dict:
         last = filtered.iloc[-1]
         prev = filtered.iloc[-2]
         close = float(last["close"])
-        change = (close - float(prev["close"])) / float(prev["close"]) * 100
+        prev_close = float(prev["close"])
+        change = ((close - prev_close) / prev_close * 100) if prev_close != 0 else 0.0
         stocks.append({"code": code, "close": round(close, 2), "change_pct": round(change, 2)})
 
     if not stocks:

@@ -12,7 +12,7 @@ class FakeEnv:
     def __init__(self):
         self.orders: list[dict] = []
 
-    async def place_order(self, **kwargs):
+    def place_order(self, **kwargs):
         self.orders.append(kwargs)
         return {"success": True}
 

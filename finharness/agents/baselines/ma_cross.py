@@ -43,14 +43,14 @@ class MACrossAgent:
             long_ma = sum(history[-self._long:]) / self._long
 
             if short_ma > long_ma:
-                await env.place_order(
+                env.place_order(
                     agent_id=self.agent_id,
                     stock_code=code,
                     side="buy",
                     quantity=100,
                 )
             elif short_ma < long_ma:
-                await env.place_order(
+                env.place_order(
                     agent_id=self.agent_id,
                     stock_code=code,
                     side="sell",

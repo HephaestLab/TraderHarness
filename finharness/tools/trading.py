@@ -52,7 +52,7 @@ async def handle_place_order(params: dict, ctx: ToolContext) -> dict:
     # 3. 委托 TradingBus 执行（唯一撮合入口）
     window = "open" if ctx.current_phase == "open_window" else "close"
     result = ctx._bus.place_order(
-        agent_id="",
+        agent_id=ctx.agent_id,
         stock_code=code,
         side=action,
         quantity=quantity,

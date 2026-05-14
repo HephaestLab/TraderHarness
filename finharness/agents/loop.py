@@ -69,7 +69,7 @@ class AgentLoop:
         ctx.current_phase = "pre_market"
         morning_brief = self._build_morning_brief(ctx)
         remaining_info = ""
-        if self.remaining_trading_days is not None:
+        if self.remaining_trading_days is not None and self.total_trading_days is not None:
             remaining_info = f"\n回测进度: 第{self.total_trading_days - self.remaining_trading_days}天/{self.total_trading_days}天（剩余{self.remaining_trading_days}个交易日）"
         self._context.add_message({
             "role": "user",

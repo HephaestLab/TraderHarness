@@ -20,7 +20,7 @@ class BuyHoldAgent:
         if not self._stock_codes:
             return
         for code in self._stock_codes:
-            await env.place_order(
+            env.place_order(
                 agent_id=self.agent_id,
                 stock_code=code,
                 side="buy",
