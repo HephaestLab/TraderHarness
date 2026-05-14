@@ -109,20 +109,28 @@ class MarketDataManager:
                 local.api = Quotes.factory(market="std")
             return local.api
 
-        def fetch_one(code):
-            api = get_api()
-            df = api.bars(symbol=code, frequency=9, offset=800)
-            if df is not None and len(df) > 30:
-                return pd.DataFrame({
-                    "stock_code": code,
-                    "date": pd.to_datetime(df.index).date,
-                    "open": df["open"].values,
-                    "high": df["high"].values,
-                    "low": df["low"].values,
-                    "close": df["close"].values,
-                    "volume": (df["volume"] if "volume" in df.columns else df["vol"]).astype(int).values,
-                })
-            return None
+        def fetch_one(code, max_retries=3):
+            for attempt in range(max_retries):
+                try:
+                    api = get_api()
+                    df = api.bars(symbol=code, frequency=9, offset=800)
+                    if df is not None and len(df) > 30:
+                        return pd.DataFrame({
+                            "stock_code": code,
+                            "date": pd.to_datetime(df.index).date,
+                            "open": df["open"].values,
+                            "high": df["high"].values,
+                            "low": df["low"].values,
+                            "close": df["close"].values,
+                            "volume": (df["volume"] if "volume" in df.columns else df["vol"]).astype(int).values,
+                        })
+                    return None
+                except Exception:
+                    if attempt < max_retries - 1:
+                        local.api = None  # force reconnect
+                        time.sleep(0.5 * (attempt + 1))
+                    else:
+                        return None
 
         all_frames = []
         with ThreadPoolExecutor(max_workers=16) as pool:
@@ -174,28 +182,36 @@ class MarketDataManager:
                 local.api = Quotes.factory(market="std")
             return local.api
 
-        def fetch_one_5min(code):
-            api = get_api()
-            page_bars = []
-            for start in range(0, 12000, 800):
-                df = api.bars(symbol=code, frequency=0, offset=800, start=start)
-                if df is None or len(df) == 0:
-                    break
-                page_bars.append(df)
-            if not page_bars:
-                return None
-            combined = pd.concat(page_bars).sort_index()
-            combined = combined[~combined.index.duplicated()]
-            return pd.DataFrame({
-                "stock_code": code,
-                "datetime": pd.to_datetime(combined.index),
-                "date": pd.to_datetime(combined.index).date,
-                "open": combined["open"].values,
-                "high": combined["high"].values,
-                "low": combined["low"].values,
-                "close": combined["close"].values,
-                "volume": (combined["volume"] if "volume" in combined.columns else combined["vol"]).astype(int).values,
-            })
+        def fetch_one_5min(code, max_retries=3):
+            for attempt in range(max_retries):
+                try:
+                    api = get_api()
+                    page_bars = []
+                    for start in range(0, 12000, 800):
+                        df = api.bars(symbol=code, frequency=0, offset=800, start=start)
+                        if df is None or len(df) == 0:
+                            break
+                        page_bars.append(df)
+                    if not page_bars:
+                        return None
+                    combined = pd.concat(page_bars).sort_index()
+                    combined = combined[~combined.index.duplicated()]
+                    return pd.DataFrame({
+                        "stock_code": code,
+                        "datetime": pd.to_datetime(combined.index),
+                        "date": pd.to_datetime(combined.index).date,
+                        "open": combined["open"].values,
+                        "high": combined["high"].values,
+                        "low": combined["low"].values,
+                        "close": combined["close"].values,
+                        "volume": (combined["volume"] if "volume" in combined.columns else combined["vol"]).astype(int).values,
+                    })
+                except Exception:
+                    if attempt < max_retries - 1:
+                        local.api = None
+                        time.sleep(0.5 * (attempt + 1))
+                    else:
+                        return None
 
         all_frames = []
         with ThreadPoolExecutor(max_workers=16) as pool:
