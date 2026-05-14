@@ -125,21 +125,32 @@ class MarketDataManager:
         self._save_metadata("daily", len(all_frames), combined)
         logger.info("Daily cache saved: %d stocks, %d rows, %.0fs", len(all_frames), len(combined), time.time() - t0)
 
-    def fetch_5min(self, codes: list[str] | None = None) -> None:
-        """从 mootdx 拉取5分钟线并存为单个 parquet。"""
-        if codes is None:
-            codes = _DEFAULT_5MIN_CODES
-
+    def fetch_5min(self) -> None:
+        """从 mootdx 拉取全市场 A 股5分钟线并存为单个 parquet。"""
         try:
             from mootdx.quotes import Quotes
         except ImportError:
             raise ImportError("mootdx not installed. Run: pip install finharness[data]")
 
         api = Quotes.factory(market="std")
+        sh = api.stocks(market=1)
+        sz = api.stocks(market=0)
+
+        codes = []
+        for _, row in sh.iterrows():
+            c = str(row["code"]).zfill(6)
+            if c.startswith(("600", "601", "603", "688")):
+                codes.append(c)
+        for _, row in sz.iterrows():
+            c = str(row["code"]).zfill(6)
+            if c.startswith(("000", "001", "002", "003", "300", "301")):
+                codes.append(c)
+
+        logger.info("Fetching 5min bars for %d A-share stocks (pagination)...", len(codes))
         t0 = time.time()
         all_frames = []
 
-        for code in codes:
+        for i, code in enumerate(codes):
             page_bars = []
             for start in range(0, 12000, 800):
                 df = api.bars(symbol=code, frequency=0, offset=800, start=start)
@@ -160,6 +171,8 @@ class MarketDataManager:
                     "volume": (combined["volume"] if "volume" in combined.columns else combined["vol"]).astype(int).values,
                 })
                 all_frames.append(out)
+            if (i + 1) % 200 == 0:
+                logger.info("  5min progress: %d/%d (%.0fs)", i + 1, len(codes), time.time() - t0)
 
         if all_frames:
             combined = pd.concat(all_frames, ignore_index=True)
@@ -179,13 +192,3 @@ class MarketDataManager:
         }
         self.metadata_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
 
-
-_DEFAULT_5MIN_CODES = [
-    "600519", "000858", "601318", "300750", "000001", "600036", "601166", "600276",
-    "000651", "000333", "601857", "601899", "002475", "300308", "688981", "601138",
-    "600900", "601088", "600030", "000002", "600585", "601398", "600000", "600809",
-    "603259", "002230", "300059", "601012", "600887", "000725", "002714", "600048",
-    "601288", "600016", "600104", "601668", "600690", "002304", "600031", "601225",
-    "000568", "601888", "600089", "002352", "601601", "000876", "601336", "600309",
-    "688012", "300124",
-]

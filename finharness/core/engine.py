@@ -81,9 +81,8 @@ class MarketData:
         daily_df = manager.load_daily()
         self._ingest_combined_df(daily_df, is_5min=False)
 
-        if manager.has_5min_cache():
-            min5_df = manager.load_5min()
-            self._ingest_combined_df(min5_df, is_5min=True)
+        min5_df = manager.load_5min()
+        self._ingest_combined_df(min5_df, is_5min=True)
 
     def _ingest_combined_df(self, df: pd.DataFrame, is_5min: bool = False) -> None:
         """将合并的 DataFrame（含 stock_code 列）拆分为 per-stock dict。"""
