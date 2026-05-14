@@ -1,23 +1,19 @@
 """交易执行工具 — place_order。
 
-直接从源项目 backend/agents/agentic/tools/trading_tools.py 迁移。
+薄包装层：做 LLM Agent 特有的前置检查（阶段限制、仓位上限），
+然后委托 TradingBus.place_order() 执行。撮合逻辑只在 TradingBus 一处。
 """
 
 from __future__ import annotations
 
-import logging
-from decimal import Decimal, ROUND_HALF_UP
-
 from finharness.tools.registry import ToolDefinition, ToolContext
 from finharness.core.market_profile import AShareProfile
 
-logger = logging.getLogger(__name__)
-
-TWO_PLACES = Decimal("0.01")
 _PROFILE = AShareProfile()
 
 
 async def handle_place_order(params: dict, ctx: ToolContext) -> dict:
+    # 1. 阶段限制（LLM Agent 特有）
     if ctx.current_phase == "pre_market":
         return {"success": False, "error": "盘前分析阶段不能下单，请在开盘窗口或尾盘窗口下单"}
 
@@ -31,71 +27,49 @@ async def handle_place_order(params: dict, ctx: ToolContext) -> dict:
         return {"success": False, "error": f"无效操作: {action}，必须是 buy 或 sell"}
     if not code:
         return {"success": False, "error": "stock_code 不能为空"}
+    if ctx._bus is None:
+        return {"success": False, "error": "无交易总线"}
 
-    if code in ctx.traded_today:
-        return {"success": False, "error": f"{code} 今天已交易过，禁止同日重复操作"}
+    # 2. 仓位上限检查（LLM Agent 特有）
+    if action == "buy":
+        portfolio = ctx.portfolio
+        if code not in portfolio.positions and len(portfolio.positions) >= ctx.max_positions:
+            return {"success": False, "error": f"持仓只数已达上限({ctx.max_positions}只)，请先减仓再买入新股"}
 
-    price = ctx.execution_price.get(code)
-    if price is None and ctx._bus is not None:
         window = "open" if ctx.current_phase == "open_window" else "close"
         price = ctx._bus.get_execution_price(code, window)
-    if price is None:
-        return {"success": False, "error": f"{code} 无法获取成交价（当天可能无交易数据）"}
+        if price:
+            total_assets = float(portfolio.total_value(ctx.execution_price)) if ctx.execution_price else float(portfolio.cash)
+            buy_value = float(price) * _PROFILE.round_lot(quantity)
+            existing_value = 0.0
+            pos = portfolio.positions.get(code)
+            if pos:
+                existing_value = float(price) * pos.quantity
+            position_after = buy_value + existing_value
+            if total_assets > 0 and (position_after / total_assets * 100) > ctx.max_position_pct:
+                return {"success": False, "error": f"买入后{code}仓位占比{position_after/total_assets*100:.1f}%，超过上限{ctx.max_position_pct:.0f}%"}
 
-    if action == "buy":
-        if code not in ctx.portfolio.positions:
-            if len(ctx.portfolio.positions) >= ctx.max_positions:
-                return {"success": False, "error": f"持仓只数已达上限({ctx.max_positions}只)，请先减仓再买入新股"}
+    # 3. 委托 TradingBus 执行（唯一撮合入口）
+    window = "open" if ctx.current_phase == "open_window" else "close"
+    result = ctx._bus.place_order(
+        agent_id="",
+        stock_code=code,
+        side=action,
+        quantity=quantity,
+        stock_name=stock_name,
+        reasoning=reasoning,
+        window=window,
+    )
 
-        total_assets = float(ctx.portfolio.total_value(ctx.execution_price)) if ctx.execution_price else float(ctx.portfolio.cash)
-        buy_value = float(price) * _PROFILE.round_lot(quantity)
-        existing_value = 0.0
-        pos = ctx.portfolio.positions.get(code)
-        if pos and price:
-            existing_value = float(price) * pos.quantity
-        position_after = buy_value + existing_value
-        if total_assets > 0 and (position_after / total_assets * 100) > ctx.max_position_pct:
-            return {"success": False, "error": f"买入后{code}仓位占比{position_after/total_assets*100:.1f}%，超过上限{ctx.max_position_pct:.0f}%"}
+    if not result.get("success"):
+        return result
 
-    prev_date_data = ctx.preloaded_daily.get(code)
-    if prev_date_data is not None and not prev_date_data.empty:
-        filtered = prev_date_data[prev_date_data["date"] < ctx.current_date]
-        if not filtered.empty:
-            prev_close = Decimal(str(filtered.iloc[-1]["close"])).quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
-            limit_up, limit_down = _PROFILE.price_limits(code, prev_close)
-            if price >= limit_up:
-                return {"success": False, "error": f"{code} 涨停 (涨停价 {limit_up})"}
-            if price <= limit_down:
-                return {"success": False, "error": f"{code} 跌停 (跌停价 {limit_down})"}
-
-    try:
-        if action == "buy":
-            qty = _PROFILE.round_lot(quantity)
-            if qty <= 0:
-                return {"success": False, "error": f"买入数量 {quantity} 不足1手（100股）"}
-            trade = ctx.portfolio.buy(code, stock_name, price, qty, ctx.current_date)
-        else:
-            pos = ctx.portfolio.positions.get(code)
-            if pos is None:
-                return {"success": False, "error": f"未持有 {code}，无法卖出"}
-            sellable = pos.sellable_quantity(ctx.current_date)
-            qty = min(quantity, sellable) if quantity > 0 else sellable
-            if qty <= 0:
-                return {"success": False, "error": f"{code} T+1限制，今日无可卖数量"}
-            trade = ctx.portfolio.sell(code, price, qty, ctx.current_date)
-            if pos.avg_cost:
-                trade["pnl"] = float(trade["net_income"]) - float(pos.avg_cost * qty)
-    except ValueError as e:
-        return {"success": False, "error": str(e)}
-
-    trade["signal_reasoning"] = reasoning
-    trade["date"] = str(ctx.current_date)
+    # 4. 同步到 ToolContext
+    trade = result["trade"]
     ctx.trade_results.append(trade)
     ctx.traded_today.add(code)
-    # Also record to bus.trade_history so EngineResult collects it
-    if ctx._bus is not None:
-        ctx._bus.trade_history.append(trade)
 
+    # 5. 构建友好返回
     portfolio_after = {
         "cash": round(float(ctx.portfolio.cash), 2),
         "positions": [{"code": c, "qty": p.quantity} for c, p in ctx.portfolio.positions.items()],
@@ -105,7 +79,7 @@ async def handle_place_order(params: dict, ctx: ToolContext) -> dict:
     if action == "buy":
         return {
             "success": True, "action": "buy", "stock_code": code,
-            "price": float(price), "quantity": trade["quantity"],
+            "price": float(trade["price"]), "quantity": trade["quantity"],
             "total_cost": float(trade["total_cost"]),
             "remaining_cash": round(float(ctx.portfolio.cash), 2),
             "portfolio_after": portfolio_after,
@@ -113,7 +87,7 @@ async def handle_place_order(params: dict, ctx: ToolContext) -> dict:
     else:
         return {
             "success": True, "action": "sell", "stock_code": code,
-            "price": float(price), "quantity": trade["quantity"],
+            "price": float(trade["price"]), "quantity": trade["quantity"],
             "net_income": float(trade["net_income"]),
             "pnl": round(trade.get("pnl", 0), 2),
             "remaining_cash": round(float(ctx.portfolio.cash), 2),

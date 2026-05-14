@@ -188,12 +188,13 @@ class TradingBus:
         quantity: int,
         stock_name: str = "",
         reasoning: str = "",
+        window: str = "open",
     ) -> dict:
-        """执行交易订单。纯内存操作。"""
+        """执行交易订单。唯一的下单入口 — tool handler 和 simple agent 都调用此方法。"""
         if stock_code in self._traded_today:
             return {"success": False, "error": f"{stock_code} 今天已交易过"}
 
-        price = self.get_execution_price(stock_code, "open")
+        price = self.get_execution_price(stock_code, window)
         if price is None:
             return {"success": False, "error": f"{stock_code} 无法获取成交价"}
 
@@ -205,15 +206,15 @@ class TradingBus:
                 prev_close = Decimal(str(prev_data.iloc[-1]["close"])).quantize(TWO_PLACES)
                 limit_up, limit_down = self._profile.price_limits(stock_code, prev_close)
                 if price >= limit_up:
-                    return {"success": False, "error": f"{stock_code} 涨停"}
+                    return {"success": False, "error": f"{stock_code} 涨停 (涨停价 {limit_up})"}
                 if price <= limit_down:
-                    return {"success": False, "error": f"{stock_code} 跌停"}
+                    return {"success": False, "error": f"{stock_code} 跌停 (跌停价 {limit_down})"}
 
         try:
             if side == "buy":
                 qty = self._profile.round_lot(quantity)
                 if qty <= 0:
-                    return {"success": False, "error": "买入数量不足1手"}
+                    return {"success": False, "error": f"买入数量 {quantity} 不足1手（100股）"}
                 trade = self._portfolio.buy(stock_code, stock_name or stock_code, price, qty, self._current_date)
             elif side == "sell":
                 pos = self._portfolio.positions.get(stock_code)
@@ -222,7 +223,7 @@ class TradingBus:
                 sellable = pos.sellable_quantity(self._current_date)
                 qty = min(quantity, sellable) if quantity > 0 else sellable
                 if qty <= 0:
-                    return {"success": False, "error": f"{stock_code} T+1限制"}
+                    return {"success": False, "error": f"{stock_code} T+1限制，今日无可卖数量"}
                 avg_cost = pos.avg_cost
                 trade = self._portfolio.sell(stock_code, price, qty, self._current_date)
                 trade["pnl"] = float(trade["net_income"]) - float(avg_cost * qty)
@@ -232,6 +233,7 @@ class TradingBus:
             return {"success": False, "error": str(e)}
 
         trade["signal_reasoning"] = reasoning
+        trade["date"] = str(self._current_date)
         self._traded_today.add(stock_code)
         self.trade_history.append(trade)
         self._event_bus.emit("order_placed", trade=trade, agent_id=agent_id)
