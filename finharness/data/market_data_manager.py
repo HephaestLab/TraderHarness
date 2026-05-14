@@ -125,7 +125,7 @@ class MarketDataManager:
             return None
 
         all_frames = []
-        with ThreadPoolExecutor(max_workers=8) as pool:
+        with ThreadPoolExecutor(max_workers=16) as pool:
             futures = {pool.submit(fetch_one, c): c for c in codes}
             done = 0
             for f in as_completed(futures):
@@ -198,7 +198,7 @@ class MarketDataManager:
             })
 
         all_frames = []
-        with ThreadPoolExecutor(max_workers=8) as pool:
+        with ThreadPoolExecutor(max_workers=16) as pool:
             futures = {pool.submit(fetch_one_5min, c): c for c in codes}
             done = 0
             for f in as_completed(futures):
