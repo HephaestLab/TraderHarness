@@ -77,7 +77,10 @@ class MarketDataManager:
         return df
 
     def fetch_daily(self) -> None:
-        """从 mootdx 拉取全市场日线并存为单个 parquet。"""
+        """从 mootdx 拉取全市场日线并存为单个 parquet。8 并发。"""
+        import threading
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
         try:
             from mootdx.quotes import Quotes
         except ImportError:
@@ -97,28 +100,41 @@ class MarketDataManager:
             if c.startswith(("000", "001", "002", "003", "300", "301")):
                 codes.append(c)
 
-        logger.info("Fetching daily bars for %d A-share stocks...", len(codes))
+        logger.info("Fetching daily bars for %d A-share stocks (8 workers)...", len(codes))
         t0 = time.time()
-        all_frames = []
 
-        for i, code in enumerate(codes):
-            try:
-                df = api.bars(symbol=code, frequency=9, offset=800)
-                if df is not None and len(df) > 30:
-                    out = pd.DataFrame({
-                        "stock_code": code,
-                        "date": pd.to_datetime(df.index).date,
-                        "open": df["open"].values,
-                        "high": df["high"].values,
-                        "low": df["low"].values,
-                        "close": df["close"].values,
-                        "volume": (df["volume"] if "volume" in df.columns else df["vol"]).astype(int).values,
-                    })
-                    all_frames.append(out)
-            except Exception:
-                pass
-            if (i + 1) % 500 == 0:
-                logger.info("  %d/%d fetched (%.0fs)", i + 1, len(codes), time.time() - t0)
+        local = threading.local()
+        def get_api():
+            if not hasattr(local, "api"):
+                local.api = Quotes.factory(market="std")
+            return local.api
+
+        def fetch_one(code):
+            api = get_api()
+            df = api.bars(symbol=code, frequency=9, offset=800)
+            if df is not None and len(df) > 30:
+                return pd.DataFrame({
+                    "stock_code": code,
+                    "date": pd.to_datetime(df.index).date,
+                    "open": df["open"].values,
+                    "high": df["high"].values,
+                    "low": df["low"].values,
+                    "close": df["close"].values,
+                    "volume": (df["volume"] if "volume" in df.columns else df["vol"]).astype(int).values,
+                })
+            return None
+
+        all_frames = []
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            futures = {pool.submit(fetch_one, c): c for c in codes}
+            done = 0
+            for f in as_completed(futures):
+                done += 1
+                result = f.result()
+                if result is not None:
+                    all_frames.append(result)
+                if done % 1000 == 0:
+                    logger.info("  daily: %d/%d (%.0fs)", done, len(codes), time.time() - t0)
 
         combined = pd.concat(all_frames, ignore_index=True)
         combined.to_parquet(self.daily_path, index=False)
@@ -126,7 +142,10 @@ class MarketDataManager:
         logger.info("Daily cache saved: %d stocks, %d rows, %.0fs", len(all_frames), len(combined), time.time() - t0)
 
     def fetch_5min(self) -> None:
-        """从 mootdx 拉取全市场 A 股5分钟线并存为单个 parquet。"""
+        """从 mootdx 拉取全市场 A 股5分钟线并存为单个 parquet。8 并发 + 翻页。"""
+        import threading
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
         try:
             from mootdx.quotes import Quotes
         except ImportError:
@@ -146,33 +165,49 @@ class MarketDataManager:
             if c.startswith(("000", "001", "002", "003", "300", "301")):
                 codes.append(c)
 
-        logger.info("Fetching 5min bars for %d A-share stocks (pagination)...", len(codes))
+        logger.info("Fetching 5min bars for %d A-share stocks (8 workers, 15 pages each)...", len(codes))
         t0 = time.time()
-        all_frames = []
 
-        for i, code in enumerate(codes):
+        local = threading.local()
+        def get_api():
+            if not hasattr(local, "api"):
+                local.api = Quotes.factory(market="std")
+            return local.api
+
+        def fetch_one_5min(code):
+            api = get_api()
             page_bars = []
             for start in range(0, 12000, 800):
                 df = api.bars(symbol=code, frequency=0, offset=800, start=start)
                 if df is None or len(df) == 0:
                     break
                 page_bars.append(df)
-            if page_bars:
-                combined = pd.concat(page_bars).sort_index()
-                combined = combined[~combined.index.duplicated()]
-                out = pd.DataFrame({
-                    "stock_code": code,
-                    "datetime": pd.to_datetime(combined.index),
-                    "date": pd.to_datetime(combined.index).date,
-                    "open": combined["open"].values,
-                    "high": combined["high"].values,
-                    "low": combined["low"].values,
-                    "close": combined["close"].values,
-                    "volume": (combined["volume"] if "volume" in combined.columns else combined["vol"]).astype(int).values,
-                })
-                all_frames.append(out)
-            if (i + 1) % 200 == 0:
-                logger.info("  5min progress: %d/%d (%.0fs)", i + 1, len(codes), time.time() - t0)
+            if not page_bars:
+                return None
+            combined = pd.concat(page_bars).sort_index()
+            combined = combined[~combined.index.duplicated()]
+            return pd.DataFrame({
+                "stock_code": code,
+                "datetime": pd.to_datetime(combined.index),
+                "date": pd.to_datetime(combined.index).date,
+                "open": combined["open"].values,
+                "high": combined["high"].values,
+                "low": combined["low"].values,
+                "close": combined["close"].values,
+                "volume": (combined["volume"] if "volume" in combined.columns else combined["vol"]).astype(int).values,
+            })
+
+        all_frames = []
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            futures = {pool.submit(fetch_one_5min, c): c for c in codes}
+            done = 0
+            for f in as_completed(futures):
+                done += 1
+                result = f.result()
+                if result is not None:
+                    all_frames.append(result)
+                if done % 500 == 0:
+                    logger.info("  5min: %d/%d (%.0fs)", done, len(codes), time.time() - t0)
 
         if all_frames:
             combined = pd.concat(all_frames, ignore_index=True)
