@@ -53,6 +53,7 @@ class MarketData:
 
     def __init__(self) -> None:
         self._data: dict[str, pd.DataFrame] = {}
+        self._5min_data: dict[str, pd.DataFrame] = {}
 
     async def load_all(self, provider: DataProvider, start: date, end: date) -> None:
         """一次性加载全市场所有股票的全部数据。"""
@@ -77,6 +78,24 @@ class MarketData:
                     except Exception:
                         pass
                 logger.info("Market data loaded: %d stocks in memory", len(self._data))
+
+                # 5分钟线：如果存在 _5min 目录，也加载
+                dir_5min = data_dir.parent / "market_data_5min"
+                if dir_5min.exists():
+                    files_5m = list(dir_5min.glob("*.parquet"))
+                    for f in files_5m:
+                        try:
+                            df = pd.read_parquet(f)
+                            if "date" in df.columns and pd.api.types.is_datetime64_any_dtype(df["date"]):
+                                df["date"] = df["date"].dt.date
+                            elif "date" in df.columns:
+                                df["date"] = pd.to_datetime(df["date"]).dt.date
+                            if not df.empty:
+                                self._5min_data[f.stem] = df
+                        except Exception:
+                            pass
+                    if self._5min_data:
+                        logger.info("5min data loaded: %d stocks", len(self._5min_data))
                 return
 
         # 通用路径：逐个从 provider 加载
@@ -95,6 +114,14 @@ class MarketData:
 
     def all_codes(self) -> list[str]:
         return list(self._data.keys())
+
+    def get_5min(self, stock_code: str) -> pd.DataFrame:
+        """获取5分钟线数据（如果已加载）。"""
+        return self._5min_data.get(stock_code, pd.DataFrame())
+
+    def load_5min(self, stock_code: str, df: pd.DataFrame) -> None:
+        """手动加载5分钟线数据。"""
+        self._5min_data[stock_code] = df
 
     def __len__(self) -> int:
         return len(self._data)
@@ -149,6 +176,16 @@ class TradingBus:
             return df
         filtered = df[df["date"] < self._current_date]
         return filtered.tail(days)
+
+    def get_5min_bars(self, stock_code: str, target_date: "date | None" = None) -> pd.DataFrame:
+        """获取5分钟K线。如果 MarketData 中有5分钟数据则返回，否则返回空。"""
+        target = target_date or self._current_date
+        df = self._market.get_5min(stock_code)
+        if df.empty:
+            return df
+        if "date" in df.columns:
+            return df[df["date"] == target]
+        return df
 
     def get_stock_price(self, stock_code: str) -> dict | None:
         """获取最新价格（前一个交易日的收盘价）。"""

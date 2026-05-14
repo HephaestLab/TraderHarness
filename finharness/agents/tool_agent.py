@@ -145,6 +145,13 @@ class ToolAgent:
             if cp:
                 close_prices[code] = cp
 
+        # 5分钟窗口数据（如果有）
+        window_minutes: dict[str, pd.DataFrame] = {}
+        for code in set(portfolio.positions.keys()) | self._watchlist_codes:
+            bars_5m = bus.get_5min_bars(code, current_date)
+            if bars_5m is not None and not bars_5m.empty:
+                window_minutes[code] = bars_5m
+
         ctx = ToolContext(
             agent_id=self.agent_id,
             current_date=current_date,
@@ -152,6 +159,7 @@ class ToolAgent:
             portfolio=portfolio,
             initial_cash=initial,
             preloaded_daily=preloaded_daily,
+            window_minutes=window_minutes,
             execution_price=open_prices,
             close_prices=close_prices,
             workspace_root=self.agent_id,
