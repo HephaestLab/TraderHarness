@@ -1,0 +1,17 @@
+---
+description: 工程约定（环境、命名、交付节奏）
+alwaysApply: true
+---
+
+# 工程约定
+
+## 环境
+- OS：Windows + PowerShell。Python 解释器统一用 `.venv\Scripts\python.exe`（不要假设 `python` 在 PATH）。
+- 项目根：`D:\finharness`。包名：`traderharness`。
+- 数据集：`~/.finharness/dataset/`（daily / 5min / announcements / news_cls / dividends / fundamentals）。
+
+## 命名
+项目名存在 `FinHarness` / `TraderHarness` 混用，包名是 `traderharness`。新增对外文案统一前先和作者确认，别再制造第三种叫法。
+
+## 交付节奏
+先把**功能正确性 + 回测质量**做扎实，**产品包装（README / PyPI / CI / UI 美化）放最后**。不要在核心没验证前去抛光外壳。

@@ -1,0 +1,112 @@
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: #1a1a2e;
+  color: #e0e0e0;
+  font-family: "Courier New", monospace;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px;
+  background: #16213e;
+  border-bottom: 1px solid #2a2a4a;
+  flex-shrink: 0;
+}
+
+.tool-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tool-group.right {
+  margin-left: auto;
+}
+
+.tool-group button {
+  height: 28px;
+  min-width: 28px;
+  padding: 0 6px;
+  border: 1px solid #3a3a5c;
+  background: #2a2a4a;
+  color: #e0e0e0;
+  cursor: pointer;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 3px;
+}
+
+.tool-group button:hover {
+  background: #3a3a6a;
+}
+
+.tool-group button.active {
+  background: #4a4a8a;
+  border-color: #7a7aff;
+}
+
+.tool-group label {
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.size-label {
+  font-size: 11px;
+  color: #888;
+  margin-left: 4px;
+}
+
+.furniture-panel {
+  display: flex;
+  gap: 4px;
+  padding: 6px 12px;
+  background: #1c1c3a;
+  border-bottom: 1px solid #2a2a4a;
+  overflow-x: auto;
+  flex-shrink: 0;
+}
+
+.furniture-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 6px;
+  border: 1px solid #3a3a5c;
+  background: #2a2a4a;
+  color: #ccc;
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: 9px;
+  min-width: 56px;
+}
+
+.furniture-item:hover {
+  background: #3a3a6a;
+}
+
+.furniture-item.active {
+  background: #4a4a8a;
+  border-color: #7a7aff;
+}
+
+.furniture-item img {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+}
+
+.canvas-container {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+}

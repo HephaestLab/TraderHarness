@@ -1,0 +1,32 @@
+---
+description: 回测引擎核心不变量（架构红线，改动 engine/tools/sandbox 必须遵守）
+alwaysApply: true
+---
+
+# 回测核心不变量
+
+改动回测引擎、工具或沙箱时，以下不变量**绝不能破**（与 `CLAUDE.md` Design Principles 一致）：
+
+## 零 I/O
+回测启动时一次性把全市场数据预加载到内存；回测过程中**只有 dict 查找，禁止再调数据 API 或读盘**。
+
+## 严格时序遮罩 + 日期匿名化
+- Agent 永远拿不到当天及未来数据；所有数据出口都过遮罩。
+- 日期对 Agent 匿名化：用相对今天的偏移（`DateMasker`，今天=`D+0`，昨天=`D-1`；时刻保留 `HH:MM`）。
+- 沙箱里 DataFrame 的 date 列用整数偏移。开关 `mask_dates`（默认开）。
+
+## 撮合公平（防偷看挑价）
+- Agent 看 5min K 线下单，分钟级撮合。
+- 按当前 sub-window 截断可见 bar：盘前看不到当天任何分钟线；`open_1≤9:50 / open_2≤10:00 / close_1≤14:50 / close_2≤15:00`。
+- **不得让 Agent 看完整窗口再挑个低价成交。**
+
+## 单一下单路径
+`TradingBus.place_order()` 是唯一撮合入口。持续消除冗余 / 双路径。
+
+## 沙箱隔离
+- 高自由度：可任意 `import numpy/pandas/scipy` 自由探索。
+- 但**禁止读原始 dataset**（路径守卫见 `sandbox/guard.py`），数据只能经 `traderharness_api`。
+- **禁止回测套回测**：沙箱只对当前可见数据做分析 / 写策略。
+
+## 其他
+环境确定性（同 action 序列→同结果）；价格不复权（按既定设计）。

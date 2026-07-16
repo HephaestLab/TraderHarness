@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "stock-data": {
+      "command": "uvx",
+      "args": ["stock-data-mcp"],
+      "env": {}
+    }
+  }
+}
