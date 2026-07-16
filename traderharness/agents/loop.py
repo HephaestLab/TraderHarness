@@ -262,10 +262,10 @@ class AgentLoop:
             should_finish = False
             # Partition tool calls: read-only can run concurrently
             read_only_tools = {"get_kline", "get_stock_price", "get_stock_info",
-                              "get_sector_summary", "get_portfolio", "get_position",
+                              "get_market_overview", "get_sector_summary",
+                              "get_portfolio", "get_position",
                               "get_fundamentals", "get_business_segments", "get_valuation",
-                              "get_announcements", "get_news", "get_watchlist",
-                              "read_file", "list_files"}
+                              "get_announcements", "get_news", "get_watchlist"}
 
             import asyncio
             parsed_calls = []
@@ -492,11 +492,11 @@ class AgentLoop:
 
         # 可用工具提示
         lines.append("\n可用工具: get_kline(K线), get_stock_price(最新价), get_stock_info(基本面), "
-                     "screen_stocks(选股), get_sector_summary(板块), "
+                     "get_market_overview(全市场概览), screen_stocks(选股), get_sector_summary(板块), "
                      "get_portfolio(持仓), get_position(个股持仓), "
                      "get_fundamentals(财务指标), get_announcements(公告), get_news(快讯), "
                      "add_watchlist/remove_watchlist(自选股), "
-                     "read_file/write_file/list_files(工作目录), run_python(Python沙箱)")
+                     "execute_code(Python沙箱, 工作目录文件可直接读写)")
 
         return "\n".join(lines)
 
@@ -538,7 +538,6 @@ class AgentLoop:
 
         return "\n".join(lines)
 
-    @staticmethod
     @staticmethod
     def _filter_window_bars(window_data: dict[str, "pd.DataFrame"], start_min: int, end_min: int) -> dict[str, "pd.DataFrame"]:
         """Filter 5-min bars to a specific time range (in minutes since midnight)."""

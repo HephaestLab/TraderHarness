@@ -21,11 +21,11 @@ from traderharness.tools.market import GET_KLINE, GET_STOCK_PRICE, GET_STOCK_INF
 from traderharness.tools.portfolio import GET_PORTFOLIO, GET_POSITION
 from traderharness.tools.trading import PLACE_ORDER
 from traderharness.tools.control import FINISH_DAY
-from traderharness.tools.analysis import SCREEN_STOCKS, GET_SECTOR_SUMMARY
+from traderharness.tools.analysis import SCREEN_STOCKS, GET_SECTOR_SUMMARY, GET_MARKET_OVERVIEW
 from traderharness.tools.fundamentals import GET_FUNDAMENTALS
 from traderharness.tools.news import GET_ANNOUNCEMENTS, GET_NEWS
 from traderharness.tools.watchlist import ADD_WATCHLIST, REMOVE_WATCHLIST, GET_WATCHLIST
-from traderharness.tools.workspace import READ_FILE, WRITE_FILE, LIST_FILES, RUN_PYTHON
+from traderharness.tools.sandbox import EXECUTE_CODE
 from traderharness.tools.business import GET_BUSINESS_SEGMENTS
 from traderharness.tools.valuation import GET_VALUATION
 
@@ -67,6 +67,7 @@ SYSTEM_PROMPT_TEMPLATE = """你是一位A股交易员，正在模拟交易环境
 | get_fundamentals | 查财务指标（ROE/净利润/营收/EPS） |
 | get_business_segments | 查主营业务构成（产品/地区营收占比+毛利率） |
 | get_valuation | 查估值（PE/PB/PS/换手率/是否ST） |
+| get_market_overview | 全市场概览（涨跌家数、板块涨幅/跌幅前5） |
 | get_sector_summary | 板块涨跌排名 |
 | screen_stocks | 条件选股 |
 | get_announcements | 查个股公告 |
@@ -77,10 +78,7 @@ SYSTEM_PROMPT_TEMPLATE = """你是一位A股交易员，正在模拟交易环境
 | add_watchlist | 加入自选股 |
 | remove_watchlist | 移出自选股 |
 | get_watchlist | 查看自选股 |
-| read_file | 读取工作目录中的文件（笔记/策略/分析结果） |
-| write_file | 写文件到工作目录（保存策略/笔记/数据） |
-| list_files | 列出工作目录内容 |
-| run_python | 执行Python代码（通过traderharness_api访问数据，可用numpy/pandas） |
+| execute_code | 执行Python代码（traderharness_api访问数据，numpy/pandas可用；工作目录文件直接open()读写） |
 | finish_day | 结束交易日并写总结 |
 
 ## 环境规则
@@ -153,6 +151,7 @@ class ToolAgent:
         self._registry.register(GET_KLINE)
         self._registry.register(GET_STOCK_PRICE)
         self._registry.register(GET_STOCK_INFO)
+        self._registry.register(GET_MARKET_OVERVIEW)
         self._registry.register(SCREEN_STOCKS)
         self._registry.register(GET_SECTOR_SUMMARY)
         self._registry.register(GET_PORTFOLIO)
@@ -164,10 +163,7 @@ class ToolAgent:
         self._registry.register(ADD_WATCHLIST)
         self._registry.register(REMOVE_WATCHLIST)
         self._registry.register(GET_WATCHLIST)
-        self._registry.register(READ_FILE)
-        self._registry.register(WRITE_FILE)
-        self._registry.register(LIST_FILES)
-        self._registry.register(RUN_PYTHON)
+        self._registry.register(EXECUTE_CODE)
         self._registry.register(GET_BUSINESS_SEGMENTS)
         self._registry.register(GET_VALUATION)
         self._registry.register(FINISH_DAY)
@@ -270,7 +266,8 @@ class ToolAgent:
         if valuation_df is not None and not valuation_df.empty:
             ctx.tool_call_cache["_valuation_data"] = valuation_df
 
-            # P0 + P1 for morning brief
+        # P0 + P1 for morning brief
+        if news_mgr is not None:
             target_codes = set(portfolio.positions.keys()) | self._watchlist_codes
             prev_close = datetime.combine(
                 current_date - timedelta(days=1), datetime.min.time()

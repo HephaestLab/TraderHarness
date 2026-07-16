@@ -23,7 +23,7 @@ class TestHTMLReport:
         html = generate_html_report("TestAgent", metrics, equity, date(2024, 1, 2), date(2024, 4, 2))
         assert "TestAgent" in html
         assert "10.5%" in html
-        assert "FinHarness" in html
+        assert "TraderHarness" in html
 
     def test_save(self, tmp_path):
         html = "<html><body>test</body></html>"

@@ -4,8 +4,7 @@ The sandbox lets the agent run arbitrary Python (numpy/pandas/etc.), but it must
 NOT be able to reach the raw dataset on disk, otherwise every look-ahead /
 date-masking protection is bypassed by a single ``pd.read_parquet(...)``.
 
-This module builds the ``exec`` globals used by both ``run_python`` and
-``execute_code``:
+This module builds the ``exec`` globals used by ``execute_code``:
 
 - ``open`` is replaced by a workspace-scoped variant.
 - ``pandas`` / ``numpy`` file readers are wrapped to reject paths outside the
