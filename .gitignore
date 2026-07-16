@@ -13,3 +13,18 @@ runs/
 .coverage
 htmlcov/
 .ruff_cache/
+node_modules/
+
+# logs & local artifacts
+*.log
+.claude/
+test_cache_benchmark/
+
+# local-only source material & run artifacts (not part of the project)
+assets/
+workspaces/
+momentum-dragon/
+value_investor/
+screenshots/
+test_screenshots/
+pixel_test/
