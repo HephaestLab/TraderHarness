@@ -1,7 +1,7 @@
 """
 Fetch business segment (主营业务构成) data for all A-share stocks.
 Source: AKShare (东方财富)
-Stores as parquet at ~/.finharness/dataset/business_segments.parquet
+Stores as parquet at ~/.traderharness/dataset/business_segments.parquet
 
 Contains: revenue breakdown by product/region for each reporting period.
 Date masking: uses conservative pub_date estimation from report_date.
@@ -15,7 +15,7 @@ from datetime import date, timedelta
 import akshare as ak
 import pandas as pd
 
-DATASET_DIR = Path.home() / ".finharness" / "dataset"
+DATASET_DIR = Path.home() / ".traderharness" / "dataset"
 DATASET_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_PATH = DATASET_DIR / "business_segments.parquet"
 PROGRESS_PATH = DATASET_DIR / "business_segments_progress.json"

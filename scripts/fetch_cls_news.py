@@ -1,6 +1,6 @@
 """
 Fetch 5 years of financial news from CLS (财联社) using reverse-engineered sign.
-Stores as parquet at ~/.finharness/dataset/news_cls.parquet
+Stores as parquet at ~/.traderharness/dataset/news_cls.parquet
 
 Sign algorithm: MD5(SHA1(sorted_query_string))
 Pagination: refresh_type=1 + last_time=previous_last_ctime (goes backward in time)
@@ -16,7 +16,7 @@ from pathlib import Path
 import httpx
 import pandas as pd
 
-DATASET_DIR = Path.home() / ".finharness" / "dataset"
+DATASET_DIR = Path.home() / ".traderharness" / "dataset"
 DATASET_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_PATH = DATASET_DIR / "news_cls.parquet"
 PROGRESS_PATH = DATASET_DIR / "news_cls_progress.json"

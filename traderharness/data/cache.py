@@ -16,7 +16,7 @@ class DataCache:
 
     _TTL_SECONDS = 86400  # 24 hours
 
-    def __init__(self, cache_path: str | Path = ".cache/finharness.db") -> None:
+    def __init__(self, cache_path: str | Path = ".cache/traderharness.db") -> None:
         self._path = Path(cache_path)
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(self._path))

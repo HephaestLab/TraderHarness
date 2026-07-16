@@ -11,7 +11,9 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-DATASET_DIR = Path.home() / ".finharness" / "dataset"
+from traderharness.paths import dataset_dir
+
+DATASET_DIR = dataset_dir()
 
 
 def load_csi300_curve(

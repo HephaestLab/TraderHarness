@@ -1,6 +1,6 @@
 """
 Fetch valuation data (PE/PB/turnover/isST) for all A-share stocks from BaoStock.
-Stores as parquet at ~/.finharness/dataset/valuation.parquet
+Stores as parquet at ~/.traderharness/dataset/valuation.parquet
 
 Fields: stock_code, date, turn, pe_ttm, pb_mrq, ps_ttm, is_st
 """
@@ -13,7 +13,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 import baostock as bs
 import pandas as pd
 
-DATASET_DIR = Path.home() / ".finharness" / "dataset"
+DATASET_DIR = Path.home() / ".traderharness" / "dataset"
 DATASET_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_PATH = DATASET_DIR / "valuation.parquet"
 CHUNK_DIR = DATASET_DIR / "valuation_chunks"

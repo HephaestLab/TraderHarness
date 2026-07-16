@@ -65,7 +65,7 @@ warn_return_any = true
 warn_unused_configs = true
 
 [tool.coverage.run]
-source = ["finharness"]
+source = ["traderharness"]
 branch = true
 omit = [
     "traderharness/ui/*",

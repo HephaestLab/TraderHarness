@@ -7,7 +7,9 @@ from pathlib import Path
 import pandas as pd
 
 
-DATASETS_DIR = Path.home() / ".finharness" / "datasets"
+from traderharness.paths import datasets_dir
+
+DATASETS_DIR = datasets_dir()
 
 
 BUILTIN_DATASETS = {

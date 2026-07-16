@@ -1,7 +1,7 @@
 """
 Fetch 5 years of 5-minute kline data for all A-share stocks using BaoStock.
 4 parallel workers, each with independent BaoStock connection.
-Stores as parquet at ~/.finharness/dataset/5min.parquet
+Stores as parquet at ~/.traderharness/dataset/5min.parquet
 
 Expected: ~5073 stocks × 58000 bars = ~290M rows, ~2-3 GB parquet.
 """
@@ -16,7 +16,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 import baostock as bs
 import pandas as pd
 
-DATASET_DIR = Path.home() / ".finharness" / "dataset"
+DATASET_DIR = Path.home() / ".traderharness" / "dataset"
 DATASET_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_PATH = DATASET_DIR / "5min_full.parquet"
 PROGRESS_PATH = DATASET_DIR / "5min_backfill_progress.json"

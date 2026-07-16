@@ -12,7 +12,7 @@ import baostock as bs
 import pandas as pd
 import pyarrow.parquet as pq
 
-DATASET_DIR = Path.home() / ".finharness" / "dataset"
+DATASET_DIR = Path.home() / ".traderharness" / "dataset"
 CHUNK_DIR_5MIN = DATASET_DIR / "5min_chunks"
 CHUNK_DIR_VAL = DATASET_DIR / "valuation_chunks"
 LOG_PATH = DATASET_DIR / "patch_remaining.log"

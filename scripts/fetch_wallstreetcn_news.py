@@ -1,6 +1,6 @@
 """
 Fetch 5 years of financial news from Wallstreet CN (华尔街见闻).
-Stores as parquet at ~/.finharness/dataset/news_wallstreetcn.parquet
+Stores as parquet at ~/.traderharness/dataset/news_wallstreetcn.parquet
 
 Fields: id, title, content, display_time, tags, symbols, channel
 Timestamp precision: seconds (Unix timestamp)
@@ -17,7 +17,7 @@ from datetime import datetime, date
 from pathlib import Path
 import pandas as pd
 
-DATASET_DIR = Path.home() / ".finharness" / "dataset"
+DATASET_DIR = Path.home() / ".traderharness" / "dataset"
 DATASET_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_PATH = DATASET_DIR / "news_wallstreetcn.parquet"
 PROGRESS_PATH = DATASET_DIR / "news_wallstreetcn_progress.json"

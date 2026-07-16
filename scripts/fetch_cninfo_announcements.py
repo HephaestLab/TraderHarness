@@ -1,6 +1,6 @@
 """
 Fetch 5 years of A-share announcements from cninfo (巨潮资讯).
-Stores as parquet at ~/.finharness/dataset/announcements.parquet
+Stores as parquet at ~/.traderharness/dataset/announcements.parquet
 
 Strategy: 1-day chunks, 3 days fetched in parallel, 10 concurrent pages per day.
 This balances: small chunk size (fewer pages) + multi-day parallelism.
@@ -15,7 +15,7 @@ from datetime import datetime, date, timedelta
 from pathlib import Path
 import pandas as pd
 
-DATASET_DIR = Path.home() / ".finharness" / "dataset"
+DATASET_DIR = Path.home() / ".traderharness" / "dataset"
 DATASET_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_PATH = DATASET_DIR / "announcements.parquet"
 PROGRESS_PATH = DATASET_DIR / "announcements_progress.json"

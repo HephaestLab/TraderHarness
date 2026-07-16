@@ -7,7 +7,7 @@ from pathlib import Path
 import baostock as bs
 import pandas as pd
 
-DATASET_DIR = Path.home() / ".finharness" / "dataset"
+DATASET_DIR = Path.home() / ".traderharness" / "dataset"
 CHUNK_DIR = DATASET_DIR / "5min_chunks"
 START_DATE = "2021-05-15"
 END_DATE = "2026-05-15"

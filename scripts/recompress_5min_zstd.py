@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pyarrow.parquet as pq
 
-CLEAN_DIR = Path.home() / ".finharness" / "dataset" / "5min_clean"
+CLEAN_DIR = Path.home() / ".traderharness" / "dataset" / "5min_clean"
 
 
 def main() -> None:

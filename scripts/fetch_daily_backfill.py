@@ -12,7 +12,7 @@ from pathlib import Path
 import baostock as bs
 import pandas as pd
 
-DATASET_DIR = Path.home() / ".finharness" / "dataset"
+DATASET_DIR = Path.home() / ".traderharness" / "dataset"
 OUTPUT_PATH = DATASET_DIR / "daily.parquet"
 BACKFILL_PATH = DATASET_DIR / "daily_backfill.parquet"
 PROGRESS_PATH = DATASET_DIR / "daily_backfill_progress.json"

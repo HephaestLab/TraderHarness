@@ -407,10 +407,12 @@ class BacktestEngine:
 
         # Load fundamentals, business segments, valuation
         from pathlib import Path
+
+        from traderharness.paths import dataset_dir as default_dataset_dir
         if self._config.dataset_dir:
             dataset_dir = Path(self._config.dataset_dir)
         elif not self._data_provider:
-            dataset_dir = Path.home() / ".finharness" / "dataset"
+            dataset_dir = default_dataset_dir()
         else:
             # Test mode with simple provider — skip heavy data loading
             dataset_dir = None

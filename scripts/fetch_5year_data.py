@@ -1,9 +1,9 @@
 """拉取近 5 年全市场 A 股日线 + 5 分钟线数据（BaoStock）。
 
 输出：
-  ~/.finharness/dataset/daily.parquet   （全市场日线，stock_code 列区分）
-  ~/.finharness/dataset/5min.parquet    （全市场5分钟线）
-  ~/.finharness/dataset/metadata.json   （元信息）
+  ~/.traderharness/dataset/daily.parquet   （全市场日线，stock_code 列区分）
+  ~/.traderharness/dataset/5min.parquet    （全市场5分钟线）
+  ~/.traderharness/dataset/metadata.json   （元信息）
 
 使用 multiprocessing 并行（BaoStock 不支持多线程）。
 """
@@ -21,7 +21,7 @@ import pandas as pd
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
-OUTPUT_DIR = Path.home() / ".finharness" / "dataset"
+OUTPUT_DIR = Path.home() / ".traderharness" / "dataset"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 START_DATE = "2020-01-01"

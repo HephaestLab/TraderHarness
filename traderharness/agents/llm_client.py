@@ -12,7 +12,9 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-_CACHE_DIR = Path.home() / ".finharness" / "llm_cache"
+from traderharness.paths import llm_cache_dir
+
+_CACHE_DIR = llm_cache_dir()
 
 
 class RateLimitError(Exception):
@@ -167,7 +169,7 @@ class LLMClient:
                 api_key=self._api_key, base_url=self._base_url
             )
         except ImportError:
-            raise ImportError("openai not installed. Run: pip install finharness[llm]")
+            raise ImportError("openai not installed. Run: pip install traderharness[llm]")
 
     def _cache_key(self, messages: list[dict], tools: list[dict] | None) -> str:
         content = json.dumps({"messages": messages, "tools": tools, "model": self.model}, sort_keys=True)

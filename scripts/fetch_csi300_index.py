@@ -1,6 +1,6 @@
 """Fetch CSI 300 (沪深300) index daily data from BaoStock.
 
-Stores as parquet at ~/.finharness/dataset/index_300.parquet
+Stores as parquet at ~/.traderharness/dataset/index_300.parquet
 """
 
 import time
@@ -9,7 +9,7 @@ from pathlib import Path
 import baostock as bs
 import pandas as pd
 
-DATASET_DIR = Path.home() / ".finharness" / "dataset"
+DATASET_DIR = Path.home() / ".traderharness" / "dataset"
 DATASET_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_PATH = DATASET_DIR / "index_300.parquet"
 

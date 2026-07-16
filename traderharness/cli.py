@@ -96,7 +96,7 @@ def run(agent: str, start: str, end: str, model: str | None, cash: int):
     agent_obj._trajectory._live_file.parent.mkdir(parents=True, exist_ok=True)
     agent_obj._trajectory._live_file.write_text("[]", encoding="utf-8")
 
-    click.echo(f"Result: ~/.finharness/results/{result_filename}")
+    click.echo(f"Result: ~/.traderharness/results/{result_filename}")
     click.echo(f"Live: {live_file.name}")
     click.echo("Running...")
 

@@ -10,7 +10,9 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-DATASET_DIR = Path.home() / ".finharness" / "dataset"
+from traderharness.paths import dataset_dir
+
+DATASET_DIR = dataset_dir()
 
 POLICY_KEYWORDS = ["央行", "证监会", "国务院", "财政部", "银保监", "发改委", "人民银行"]
 

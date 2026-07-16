@@ -13,7 +13,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 import baostock as bs
 import pandas as pd
 
-DATASET_DIR = Path.home() / ".finharness" / "dataset"
+DATASET_DIR = Path.home() / ".traderharness" / "dataset"
 CHUNK_DIR = DATASET_DIR / "5min_chunks"
 OUTPUT_PATH = DATASET_DIR / "5min_full.parquet"
 PROGRESS_PATH = DATASET_DIR / "5min_backfill_progress.json"

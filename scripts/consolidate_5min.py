@@ -3,7 +3,7 @@
 Background
 ----------
 The 5-year 5min backfill (BaoStock) already fetched ~248M rows / 4743 stocks
-into ~/.finharness/dataset/5min_chunks/ (1432 files), but two problems remain:
+into ~/.traderharness/dataset/5min_chunks/ (1432 files), but two problems remain:
 
 1. Mixed datetime formats across chunks:
    - Format A (correct): "09:35:00"               (8 chars, parsed time)
@@ -17,7 +17,7 @@ into ~/.finharness/dataset/5min_chunks/ (1432 files), but two problems remain:
 
 This script normalizes BOTH datetime formats, drops out-of-session bars, unions
 the 320 missing stocks from the legacy file, and writes a Hive-partitioned
-(year=YYYY) dataset to ~/.finharness/dataset/5min_clean/ for fast pushdown loads.
+(year=YYYY) dataset to ~/.traderharness/dataset/5min_clean/ for fast pushdown loads.
 
 Usage:
     cd D:\\finharness
@@ -35,7 +35,7 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.dataset as pads
 
-DATASET_DIR = Path.home() / ".finharness" / "dataset"
+DATASET_DIR = Path.home() / ".traderharness" / "dataset"
 CHUNK_DIR = DATASET_DIR / "5min_chunks"
 LEGACY_FILE = DATASET_DIR / "5min.parquet"
 CLEAN_DIR = DATASET_DIR / "5min_clean"

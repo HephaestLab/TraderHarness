@@ -6,7 +6,9 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-RESULTS_DIR = Path.home() / ".finharness" / "results"
+from traderharness.paths import results_dir
+
+RESULTS_DIR = results_dir()
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 

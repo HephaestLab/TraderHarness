@@ -17,6 +17,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv()
 
+from traderharness.paths import dataset_dir as _dataset_dir
 from traderharness.results import RESULTS_DIR, list_results
 
 # Inline SVG icons (Lucide-style, 16x16)
@@ -124,7 +125,7 @@ def _page_dashboard():
 
     st.markdown("# DASHBOARD")
 
-    dataset = Path.home() / ".finharness" / "dataset"
+    dataset = _dataset_dir()
     has_daily = (dataset / "daily.parquet").exists()
     has_key = bool(os.environ.get("DEEPSEEK_API_KEY"))
 
@@ -723,7 +724,7 @@ def _render_trade_review(stock_code: str, trades: list, agent_data: dict) -> Non
     import pandas as pd
     from pathlib import Path
 
-    dataset_dir = Path.home() / ".finharness" / "dataset"
+    dataset_dir = _dataset_dir()
     daily_path = dataset_dir / "daily.parquet"
 
     if not daily_path.exists():
@@ -948,7 +949,7 @@ def _page_data():
 
     st.markdown("# DATA")
 
-    dataset = Path.home() / ".finharness" / "dataset"
+    dataset = _dataset_dir()
     files_info = [
         ("daily.parquet", "Daily K-line", True),
         ("5min.parquet", "5-Min Bars", True),

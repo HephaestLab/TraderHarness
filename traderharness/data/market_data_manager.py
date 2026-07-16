@@ -1,7 +1,7 @@
 """MarketDataManager — 第一次回测自动拉取全市场数据并缓存到本地。
 
 存储格式：
-~/.finharness/market_cache/
+~/.traderharness/dataset/
 ├── daily.parquet      # 全市场日线，一个文件，按 stock_code 列区分
 ├── 5min.parquet       # 5分钟线，一个文件
 └── metadata.json      # 拉取时间、股票数、数据范围
@@ -20,9 +20,11 @@ from pathlib import Path
 
 import pandas as pd
 
+from traderharness.paths import dataset_dir
+
 logger = logging.getLogger(__name__)
 
-DEFAULT_CACHE_DIR = Path.home() / ".finharness" / "dataset"
+DEFAULT_CACHE_DIR = dataset_dir()
 
 
 class MarketDataManager:
@@ -170,7 +172,7 @@ class MarketDataManager:
         try:
             from mootdx.quotes import Quotes
         except ImportError:
-            raise ImportError("mootdx not installed. Run: pip install finharness[data]")
+            raise ImportError("mootdx not installed. Run: pip install traderharness[data]")
 
         api = Quotes.factory(market="std")
         sh = api.stocks(market=1)
@@ -243,7 +245,7 @@ class MarketDataManager:
         try:
             from mootdx.quotes import Quotes
         except ImportError:
-            raise ImportError("mootdx not installed. Run: pip install finharness[data]")
+            raise ImportError("mootdx not installed. Run: pip install traderharness[data]")
 
         api = Quotes.factory(market="std")
         sh = api.stocks(market=1)

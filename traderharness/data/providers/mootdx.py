@@ -21,7 +21,7 @@ class MootdxProvider:
                 self._api = Quotes.factory(market="std")
             except ImportError:
                 raise ImportError(
-                    "mootdx not installed. Run: pip install finharness[data]"
+                    "mootdx not installed. Run: pip install traderharness[data]"
                 )
 
     async def get_daily_bars(

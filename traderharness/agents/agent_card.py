@@ -7,7 +7,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Self
 
-DEFAULT_STORAGE_DIR = Path.home() / ".finharness" / "agents"
+from traderharness.paths import agents_dir
+
+DEFAULT_STORAGE_DIR = agents_dir()
 
 
 @dataclass

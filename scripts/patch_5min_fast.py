@@ -20,7 +20,7 @@ from dateutil.relativedelta import relativedelta
 import baostock as bs
 import pandas as pd
 
-DATASET_DIR = Path.home() / ".finharness" / "dataset"
+DATASET_DIR = Path.home() / ".traderharness" / "dataset"
 CHUNK_DIR = DATASET_DIR / "5min_chunks"
 CACHE_PATH = DATASET_DIR / "5min_done_codes.json"
 LOG_PATH = DATASET_DIR / "patch_5min.log"

@@ -1,6 +1,6 @@
 """
 Fetch dividend/bonus/split data for all A-share stocks.
-Stores as parquet at ~/.finharness/dataset/dividends.parquet
+Stores as parquet at ~/.traderharness/dataset/dividends.parquet
 
 Fields: stock_code, ann_date, bonus_shares, transfer_shares, cash_dividend,
         ex_date, record_date, progress
@@ -15,7 +15,7 @@ from pathlib import Path
 import akshare as ak
 import pandas as pd
 
-DATASET_DIR = Path.home() / ".finharness" / "dataset"
+DATASET_DIR = Path.home() / ".traderharness" / "dataset"
 DATASET_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_PATH = DATASET_DIR / "dividends.parquet"
 PROGRESS_PATH = DATASET_DIR / "dividends_progress.json"

@@ -13,7 +13,9 @@ from traderharness.core.portfolio import Portfolio
 
 logger = logging.getLogger(__name__)
 
-DATASET_DIR = Path.home() / ".finharness" / "dataset"
+from traderharness.paths import dataset_dir
+
+DATASET_DIR = dataset_dir()
 TWO_PLACES = Decimal("0.01")
 
 

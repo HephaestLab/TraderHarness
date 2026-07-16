@@ -1,6 +1,6 @@
 """
 Fetch fundamental data for all A-share stocks from BaoStock.
-Stores as parquet at ~/.finharness/dataset/fundamentals.parquet
+Stores as parquet at ~/.traderharness/dataset/fundamentals.parquet
 
 Key: uses pubDate (actual publish date) for historical alignment.
 Agent sees only data published before current_date.
@@ -17,7 +17,7 @@ from pathlib import Path
 import baostock as bs
 import pandas as pd
 
-DATASET_DIR = Path.home() / ".finharness" / "dataset"
+DATASET_DIR = Path.home() / ".traderharness" / "dataset"
 DATASET_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_PATH = DATASET_DIR / "fundamentals.parquet"
 PROGRESS_PATH = DATASET_DIR / "fundamentals_progress.json"

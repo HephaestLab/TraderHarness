@@ -13,7 +13,9 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-_AUDIT_CACHE_DIR = Path.home() / ".finharness" / "prompt_audit_cache"
+from traderharness.paths import prompt_audit_cache_dir
+
+_AUDIT_CACHE_DIR = prompt_audit_cache_dir()
 
 AUDIT_PROMPT = """你是一个 prompt 审计系统。请检查以下交易员角色设定是否包含"未来函数"泄露。
 
