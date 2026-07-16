@@ -4,7 +4,7 @@ from datetime import date
 
 import pytest
 
-from finharness.core.calendar import TradingCalendar
+from traderharness.core.calendar import TradingCalendar
 
 
 class TestTradingCalendar:

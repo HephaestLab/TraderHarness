@@ -1,6 +1,6 @@
 """Tests for ContextManager."""
 
-from finharness.agents.context import ContextManager
+from traderharness.agents.context import ContextManager
 
 
 class TestContextManager:

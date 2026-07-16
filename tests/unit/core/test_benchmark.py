@@ -5,7 +5,7 @@ from decimal import Decimal
 
 import pytest
 
-from finharness.core.benchmark import BuyAndHoldBenchmark
+from traderharness.core.benchmark import BuyAndHoldBenchmark
 
 
 class TestBuyAndHoldBenchmark:

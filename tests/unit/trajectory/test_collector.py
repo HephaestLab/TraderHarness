@@ -4,7 +4,7 @@ from datetime import date
 
 import pytest
 
-from finharness.trajectory.collector import TrajectoryCollector
+from traderharness.trajectory.collector import TrajectoryCollector
 
 
 class TestTrajectoryCollector:

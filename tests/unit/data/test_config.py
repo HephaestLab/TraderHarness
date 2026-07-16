@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from finharness.config.env_config import EnvYAMLConfig, AgentYAMLConfig
+from traderharness.config.env_config import EnvYAMLConfig, AgentYAMLConfig
 
 
 @pytest.fixture

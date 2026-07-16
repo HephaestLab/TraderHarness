@@ -2,7 +2,7 @@
 
 import pytest
 
-from finharness.core.budget import TokenBudget
+from traderharness.core.budget import TokenBudget
 
 
 class TestTokenBudget:

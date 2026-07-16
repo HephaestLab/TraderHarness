@@ -3,7 +3,7 @@
 from datetime import date, timedelta
 from decimal import Decimal
 
-from finharness.metrics.performance import calculate_metrics, PerformanceMetrics
+from traderharness.metrics.performance import calculate_metrics, PerformanceMetrics
 
 
 def _make_curve(start: date, days: int, start_val: float, end_val: float):

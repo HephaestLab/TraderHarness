@@ -2,7 +2,7 @@
 
 import pytest
 
-from finharness.core.events import EventBus
+from traderharness.core.events import EventBus
 
 
 class TestEventBus:

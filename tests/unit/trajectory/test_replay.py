@@ -4,7 +4,7 @@ from datetime import date
 
 import pytest
 
-from finharness.trajectory.replay import ReplayRecorder, ReplayPlayer
+from traderharness.trajectory.replay import ReplayRecorder, ReplayPlayer
 
 
 class TestReplayRecorder:

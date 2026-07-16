@@ -3,8 +3,8 @@
 from datetime import date
 from decimal import Decimal
 
-from finharness.metrics.performance import PerformanceMetrics
-from finharness.metrics.report import generate_html_report, save_html_report
+from traderharness.metrics.performance import PerformanceMetrics
+from traderharness.metrics.report import generate_html_report, save_html_report
 
 
 class TestHTMLReport:

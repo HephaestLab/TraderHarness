@@ -5,7 +5,7 @@ from datetime import date
 import pandas as pd
 import pytest
 
-from finharness.data.cache import DataCache
+from traderharness.data.cache import DataCache
 
 
 @pytest.fixture

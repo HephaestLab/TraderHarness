@@ -2,7 +2,7 @@
 
 from datetime import date
 
-from finharness.agents.memory import DailyMemory
+from traderharness.agents.memory import DailyMemory
 
 
 class TestDailyMemory:
@@ -33,7 +33,9 @@ class TestDailyMemory:
         mem.add(date(2024, 3, 4), "Bought Moutai")
         text = mem.to_prompt_text()
         assert "Bought Moutai" in text
-        assert "2024-03-04" in text
+        # dates are masked to relative labels — real calendar dates must not leak
+        assert "2024-03-04" not in text
+        assert "昨天" in text
 
     def test_persistence(self, tmp_path):
         mem = DailyMemory(agent_id="test", storage_dir=tmp_path)

@@ -4,8 +4,8 @@ from datetime import date
 
 import pytest
 
-from finharness.agents.baselines.buy_hold import BuyHoldAgent
-from finharness.agents.baselines.random_agent import RandomAgent
+from traderharness.agents.baselines.buy_hold import BuyHoldAgent
+from traderharness.agents.baselines.random_agent import RandomAgent
 
 
 class FakeEnv:

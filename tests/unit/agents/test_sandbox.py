@@ -2,8 +2,8 @@
 
 import pytest
 
-from finharness.agents.sandbox.executor import PythonSandbox
-from finharness.agents.sandbox.workspace import AgentWorkspace
+from traderharness.agents.sandbox.executor import PythonSandbox
+from traderharness.agents.sandbox.workspace import AgentWorkspace
 
 
 class TestPythonSandbox:
@@ -75,7 +75,7 @@ class TestAgentWorkspace:
         assert ws.exists("yes.txt") is True
 
     def test_file_count_limit(self, tmp_path):
-        from finharness.agents.sandbox import workspace as ws_mod
+        from traderharness.agents.sandbox import workspace as ws_mod
         old_max = ws_mod.MAX_FILES
         ws_mod.MAX_FILES = 5
         try:

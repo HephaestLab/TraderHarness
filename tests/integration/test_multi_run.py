@@ -6,8 +6,8 @@ from decimal import Decimal
 import pandas as pd
 import pytest
 
-from finharness.core.env import TradingEnv, EnvConfig
-from finharness.metrics.performance import calculate_metrics
+from traderharness.core.env import TradingEnv, EnvConfig
+from traderharness.metrics.performance import calculate_metrics
 
 
 class FakeData:

@@ -6,7 +6,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from finharness.data.providers.parquet import ParquetProvider
+from traderharness.data.providers.parquet import ParquetProvider
 
 
 @pytest.fixture

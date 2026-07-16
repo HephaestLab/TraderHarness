@@ -5,7 +5,7 @@ from decimal import Decimal
 
 import pytest
 
-from finharness.core.portfolio import Portfolio, PortfolioView, Position
+from traderharness.core.portfolio import Portfolio, PortfolioView, Position
 
 
 class TestPosition:

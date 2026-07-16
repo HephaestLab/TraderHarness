@@ -1,6 +1,6 @@
 """Tests for StockRegistry."""
 
-from finharness.data.registry import StockInfo, StockRegistry
+from traderharness.data.registry import StockInfo, StockRegistry
 
 
 class TestStockRegistry:

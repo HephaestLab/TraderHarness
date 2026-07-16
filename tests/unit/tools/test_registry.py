@@ -5,8 +5,8 @@ from decimal import Decimal
 
 import pytest
 
-from finharness.tools.registry import ToolDefinition, ToolRegistry, ToolContext
-from finharness.core.portfolio import Portfolio
+from traderharness.tools.registry import ToolDefinition, ToolRegistry, ToolContext
+from traderharness.core.portfolio import Portfolio
 
 
 async def _dummy_handler(params: dict, ctx) -> dict:

@@ -6,10 +6,10 @@ from decimal import Decimal
 import pandas as pd
 import pytest
 
-from finharness.core.engine import BacktestEngine, EngineConfig, DataProvider
-from finharness.core.events import EventBus
-from finharness.core.calendar import TradingCalendar
-from finharness.core.market_profile import AShareProfile
+from traderharness.core.engine import BacktestEngine, EngineConfig, DataProvider
+from traderharness.core.events import EventBus
+from traderharness.core.calendar import TradingCalendar
+from traderharness.core.market_profile import AShareProfile
 
 
 class FakeDataProvider:

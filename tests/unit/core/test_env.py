@@ -6,7 +6,7 @@ from decimal import Decimal
 import pandas as pd
 import pytest
 
-from finharness.core.env import TradingEnv, EnvConfig
+from traderharness.core.env import TradingEnv, EnvConfig
 
 
 class FakeData:
@@ -64,7 +64,7 @@ class TestTradingEnv:
         assert result.trading_days == 3
 
     def test_custom_event_bus(self):
-        from finharness.core.events import EventBus
+        from traderharness.core.events import EventBus
         bus = EventBus()
         events = []
         bus.on("run_start", lambda **kw: events.append("start"))

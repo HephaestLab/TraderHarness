@@ -4,7 +4,7 @@ from decimal import Decimal
 
 import pytest
 
-from finharness.core.market_profile import (
+from traderharness.core.market_profile import (
     AShareProfile,
     MarketProfile,
 )

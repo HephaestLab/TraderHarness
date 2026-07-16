@@ -3,7 +3,7 @@
 from datetime import date, timedelta
 from decimal import Decimal
 
-from finharness.metrics.comparison import compare_vs_benchmark
+from traderharness.metrics.comparison import compare_vs_benchmark
 
 
 def _curve(start: date, days: int, start_val: float, end_val: float):

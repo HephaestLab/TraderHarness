@@ -11,16 +11,16 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from finharness.core.env import TradingEnv, EnvConfig
-from finharness.core.events import EventBus
-from finharness.data.providers.parquet import ParquetProvider
-from finharness.metrics.performance import calculate_metrics
-from finharness.metrics.comparison import compare_vs_benchmark
-from finharness.tools.registry import ToolContext
-from finharness.tools.market import GET_KLINE, GET_STOCK_PRICE
-from finharness.tools.trading import PLACE_ORDER
-from finharness.tools.analysis import SCREEN_STOCKS, GET_MARKET_OVERVIEW
-from finharness.core.portfolio import Portfolio
+from traderharness.core.env import TradingEnv, EnvConfig
+from traderharness.core.events import EventBus
+from traderharness.data.providers.parquet import ParquetProvider
+from traderharness.metrics.performance import calculate_metrics
+from traderharness.metrics.comparison import compare_vs_benchmark
+from traderharness.tools.registry import ToolContext
+from traderharness.tools.market import GET_KLINE, GET_STOCK_PRICE
+from traderharness.tools.trading import PLACE_ORDER
+from traderharness.tools.analysis import SCREEN_STOCKS, GET_MARKET_OVERVIEW
+from traderharness.core.portfolio import Portfolio
 
 DATA_DIR = Path(__file__).parent.parent / "fixtures" / "market_data"
 
@@ -201,11 +201,12 @@ class TestToolsWithRealData:
             preloaded_daily={"600519": df},
         )
         result = await GET_KLINE.handler({"stock_code": "600519", "days": 60}, ctx)
-        assert "data" in result
+        assert "recent_20" in result
         assert result["count"] == 60
-        # Verify date isolation: no dates >= 2024-06-01
-        for bar in result["data"]:
-            assert bar["date"] < "2024-06-01"
+        # Verify date isolation: bars carry relative labels, never real calendar dates
+        for bar in result["recent_20"]:
+            assert bar["day"].startswith("T-")
+            assert "2024" not in bar["day"]
 
     @pytest.mark.asyncio
     async def test_screen_stocks_real(self, provider):
