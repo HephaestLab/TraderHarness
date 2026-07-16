@@ -5,8 +5,8 @@
 
 from __future__ import annotations
 
-from finharness.tools.registry import ToolDefinition, ToolContext
-from finharness.agents.sandbox.workspace import AgentWorkspace
+from traderharness.tools.registry import ToolDefinition, ToolContext
+from traderharness.agents.sandbox.workspace import AgentWorkspace
 
 
 def _get_workspace(ctx: ToolContext) -> AgentWorkspace:

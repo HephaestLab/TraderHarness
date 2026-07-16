@@ -10,7 +10,7 @@ from datetime import timedelta
 
 import pandas as pd
 
-from finharness.tools.registry import ToolDefinition, ToolContext
+from traderharness.tools.registry import ToolDefinition, ToolContext
 
 logger = logging.getLogger(__name__)
 
@@ -42,12 +42,19 @@ async def handle_get_kline(params: dict, ctx: ToolContext) -> dict:
 
     filtered = df[df["date"] < ctx.current_date].tail(days)
     if filtered.empty:
-        return {"error": f"{code} 在 {ctx.current_date} 之前无数据"}
+        return {"error": f"{code} 在当前交易日之前无数据"}
 
+    # Recent 20 days: return full OHLCV with relative day labels.
+    # Masked: calendar offset "D-N"; unmasked fallback: trading-day "T-N".
+    masker = getattr(ctx, "date_masker", None)
+    recent = filtered.tail(20)
     records = []
-    for _, row in filtered.iterrows():
+    n = len(recent)
+    for i, (_, row) in enumerate(recent.iterrows()):
+        offset = n - i
+        day_label = masker.mask_date(row["date"]) if masker is not None else f"T-{offset}"
         records.append({
-            "date": str(row["date"]),
+            "day": day_label,
             "open": round(float(row["open"]), 2),
             "high": round(float(row["high"]), 2),
             "low": round(float(row["low"]), 2),
@@ -55,7 +62,27 @@ async def handle_get_kline(params: dict, ctx: ToolContext) -> dict:
             "volume": int(row.get("volume", 0)),
         })
 
-    return {"stock_code": code, "count": len(records), "data": records}
+    result = {"stock_code": code, "count": len(filtered), "recent_20": records}
+
+    # If requested more than 20 days, add summary of older period
+    if len(filtered) > 20:
+        older = filtered.iloc[:-20]
+        closes = older["close"].astype(float)
+        volumes = older["volume"].astype(float)
+        result["older_summary"] = {
+            "period_days": len(older),
+            "high": round(float(older["high"].max()), 2),
+            "low": round(float(older["low"].min()), 2),
+            "open_price": round(float(older.iloc[0]["open"]), 2),
+            "close_price": round(float(older.iloc[-1]["close"]), 2),
+            "change_pct": round((float(older.iloc[-1]["close"]) - float(older.iloc[0]["open"])) / float(older.iloc[0]["open"]) * 100, 2),
+            "avg_volume": int(volumes.mean()),
+            "ma5_end": round(float(closes.tail(5).mean()), 2),
+            "ma10_end": round(float(closes.tail(10).mean()), 2),
+            "ma20_end": round(float(closes.tail(20).mean()), 2) if len(closes) >= 20 else None,
+        }
+
+    return result
 
 
 async def handle_get_stock_price(params: dict, ctx: ToolContext) -> dict:
@@ -67,16 +94,19 @@ async def handle_get_stock_price(params: dict, ctx: ToolContext) -> dict:
 
     filtered = df[df["date"] < ctx.current_date]
     if filtered.empty:
-        return {"error": f"{code} 在 {ctx.current_date} 之前无数据"}
+        return {"error": f"{code} 在当前交易日之前无数据"}
 
     last = filtered.iloc[-1]
     prev = filtered.iloc[-2] if len(filtered) >= 2 else last
     prev_close = float(prev["close"])
     change_pct = ((float(last["close"]) - prev_close) / prev_close * 100) if prev_close != 0 else 0.0
 
+    masker = getattr(ctx, "date_masker", None)
+    day_label = masker.mask_date(last["date"]) if masker is not None else "T-1"
+
     return {
         "stock_code": code,
-        "date": str(last["date"]),
+        "day": day_label,
         "open": round(float(last["open"]), 2),
         "high": round(float(last["high"]), 2),
         "low": round(float(last["low"]), 2),
@@ -88,12 +118,21 @@ async def handle_get_stock_price(params: dict, ctx: ToolContext) -> dict:
 
 async def handle_get_stock_info(params: dict, ctx: ToolContext) -> dict:
     code = params.get("stock_code", "")
-    return {"stock_code": code, "name": code, "market": "sh" if code.startswith("6") else "sz"}
+    if not code:
+        return {"error": "stock_code 不能为空"}
+    from traderharness.data.stock_registry_loader import get_stock_info as _get_info
+    info = _get_info(code)
+    return {
+        "stock_code": code,
+        "name": info.get("name", code),
+        "industry": info.get("industry", "未知"),
+        "market": info.get("market", "主板"),
+    }
 
 
 GET_KLINE = ToolDefinition(
     name="get_kline",
-    description="获取某只股票的日K线数据（最多120天）。返回每日的开高低收和成交量。",
+    description="获取日K线。最近20天返回逐日OHLCV；超过20天的部分返回统计摘要（区间高低、涨跌幅、均线）。如需全量原始数据请用execute_code。",
     parameters={
         "type": "object",
         "properties": {
@@ -118,6 +157,8 @@ GET_STOCK_PRICE = ToolDefinition(
     handler=handle_get_stock_price,
 )
 
+from traderharness.tools.dedup import with_dedup
+
 GET_STOCK_INFO = ToolDefinition(
     name="get_stock_info",
     description="查看股票基本信息：名称、所属行业、板块",
@@ -128,5 +169,5 @@ GET_STOCK_INFO = ToolDefinition(
         },
         "required": ["stock_code"],
     },
-    handler=handle_get_stock_info,
+    handler=with_dedup(handle_get_stock_info),
 )

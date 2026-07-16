@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from finharness.tools.registry import ToolDefinition, ToolContext
+from traderharness.tools.registry import ToolDefinition, ToolContext
 
 
 async def handle_finish_day(params: dict, ctx: ToolContext) -> dict:

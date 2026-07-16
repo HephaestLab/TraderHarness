@@ -16,10 +16,12 @@ from typing import Any, Protocol
 
 import pandas as pd
 
-from finharness.core.calendar import TradingCalendar
-from finharness.core.events import EventBus
-from finharness.core.market_profile import AShareProfile, MarketProfile
-from finharness.core.portfolio import Portfolio, PortfolioView
+from traderharness.core.calendar import TradingCalendar
+from traderharness.core.events import EventBus
+from traderharness.core.market_profile import AShareProfile, MarketProfile
+from traderharness.core.portfolio import Portfolio, PortfolioView
+from traderharness.data.dividend_manager import DividendManager
+from traderharness.data.news_data_manager import NewsDataManager
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +40,7 @@ class EngineConfig:
     initial_cash: Decimal = Decimal("1000000")
     profile: MarketProfile | None = None
     calendar: TradingCalendar | None = None
+    dataset_dir: str | None = None
 
 
 @dataclass
@@ -60,7 +63,8 @@ class MarketData:
 
         数据源优先级：
         1. ParquetProvider（测试用，从指定目录读多个文件）
-        2. MarketDataManager（生产用，单文件 daily.parquet / 5min.parquet）
+        2. Simple providers (test/custom) — use get_daily_bars interface
+        3. MarketDataManager（生产用，单文件 daily.parquet / 5min.parquet）
         """
         from pathlib import Path
 
@@ -74,8 +78,27 @@ class MarketData:
                     self._load_multi_file_dir(dir_5min, is_5min=True)
                 return
 
-        # 路径2：单文件缓存（首次从 mootdx 拉取，后续读缓存）
-        from finharness.data.market_data_manager import MarketDataManager
+        # 路径2：Simple test providers without _data_dir and without _use_manager flag
+        if not getattr(provider, '_use_manager', False):
+            stocks = await provider.get_stock_list()
+            for stock_info in stocks:
+                code = stock_info if isinstance(stock_info, str) else stock_info.get("code", "")
+                if not code:
+                    continue
+                df = await provider.get_daily_bars(code, start, end)
+                if df is not None and not df.empty:
+                    if "date" in df.columns:
+                        if pd.api.types.is_datetime64_any_dtype(df["date"]):
+                            df["date"] = df["date"].dt.date
+                        elif not all(isinstance(d, date) for d in df["date"].head(1)):
+                            df["date"] = pd.to_datetime(df["date"]).dt.date
+                    self._data[code] = df
+            if self._data:
+                logger.info("Loaded %d stocks via provider interface", len(self._data))
+                return
+
+        # 路径3：单文件缓存（生产用）
+        from traderharness.data.market_data_manager import MarketDataManager
         manager = MarketDataManager()
 
         daily_df = manager.load_daily()
@@ -159,6 +182,8 @@ class TradingBus:
         self.trade_history: list[dict] = []
         self._day_index: int = 0
         self._total_days: int = 0
+        self._news_manager: NewsDataManager | None = None
+        self._corporate_actions_today: list[dict] = []
 
     @property
     def current_date(self) -> date | None:
@@ -175,6 +200,7 @@ class TradingBus:
     def _set_date(self, d: date) -> None:
         self._current_date = d
         self._traded_today = set()
+        self._corporate_actions_today = []
 
     def get_daily_bars(self, stock_code: str, days: int = 20) -> pd.DataFrame:
         """获取日K线（严格日期隔离：不含当天）。纯内存读取。"""
@@ -214,7 +240,36 @@ class TradingBus:
         }
 
     def get_execution_price(self, stock_code: str, window: str = "open") -> Decimal | None:
-        """获取当天成交价。window='open'=开盘价, 'close'=收盘价。"""
+        """获取当天成交价 — 用子窗口最后一根5分钟bar的收盘价撮合。
+
+        window 值:
+          "open_1": 9:35~9:50 最后bar close
+          "open_2": 9:55~10:00 最后bar close (or "open" legacy)
+          "close_1": 14:35~14:50 最后bar close
+          "close_2": 14:55~15:00 最后bar close (or "close" legacy)
+
+        如果5分钟数据不可用，回退到日线 open/close。
+        """
+        bars_5m = self.get_5min_bars(stock_code)
+        if not bars_5m.empty and "datetime" in bars_5m.columns:
+            minutes = bars_5m["datetime"].dt.hour * 60 + bars_5m["datetime"].dt.minute
+
+            time_ranges = {
+                "open_1": (9 * 60 + 35, 9 * 60 + 50),
+                "open_2": (9 * 60 + 55, 10 * 60),
+                "open": (9 * 60 + 35, 10 * 60),
+                "close_1": (14 * 60 + 35, 14 * 60 + 50),
+                "close_2": (14 * 60 + 55, 15 * 60),
+                "close": (14 * 60 + 35, 15 * 60),
+            }
+
+            t_range = time_ranges.get(window, time_ranges["open"])
+            window_bars = bars_5m[(minutes >= t_range[0]) & (minutes <= t_range[1])]
+
+            if not window_bars.empty:
+                return Decimal(str(window_bars.iloc[-1]["close"])).quantize(TWO_PLACES)
+
+        # Fallback: daily open/close
         df = self._market.get(stock_code)
         if df.empty:
             return None
@@ -222,7 +277,7 @@ class TradingBus:
         if today.empty:
             return None
         row = today.iloc[0]
-        col = "open" if window == "open" else "close"
+        col = "open" if "open" in window else "close"
         return Decimal(str(row[col])).quantize(TWO_PLACES)
 
     def place_order(
@@ -252,10 +307,10 @@ class TradingBus:
             if not prev_data.empty:
                 prev_close = Decimal(str(prev_data.iloc[-1]["close"])).quantize(TWO_PLACES)
                 limit_up, limit_down = self._profile.price_limits(stock_code, prev_close)
-                if price >= limit_up:
-                    return {"success": False, "error": f"{stock_code} 涨停 (涨停价 {limit_up})"}
-                if price <= limit_down:
-                    return {"success": False, "error": f"{stock_code} 跌停 (跌停价 {limit_down})"}
+                if price >= limit_up and side == "buy":
+                    return {"success": False, "error": f"{stock_code} 涨停封板，无法买入 (涨停价 {limit_up})"}
+                if price <= limit_down and side == "sell":
+                    return {"success": False, "error": f"{stock_code} 跌停封板，无法卖出 (跌停价 {limit_down})"}
 
         try:
             if side == "buy":
@@ -280,6 +335,7 @@ class TradingBus:
             return {"success": False, "error": str(e)}
 
         trade["signal_reasoning"] = reasoning
+        trade["window"] = window
         trade["date"] = str(self._current_date)
         self._traded_today.add(stock_code)
         self.trade_history.append(trade)
@@ -302,6 +358,11 @@ class BacktestEngine:
         self._profile = config.profile or AShareProfile()
         self._calendar = config.calendar or TradingCalendar()
 
+        from pathlib import Path
+        dataset_dir = Path(config.dataset_dir) if config.dataset_dir else None
+        self._dividend_manager = DividendManager(dataset_dir=dataset_dir)
+        self._news_manager = NewsDataManager(dataset_dir=dataset_dir)
+
     async def run(
         self,
         agents: list[Any],
@@ -319,10 +380,73 @@ class BacktestEngine:
         else:
             trading_days = self._calendar.get_trading_days(start_date, end_date)
 
-        # ===== 一次性全量加载全市场数据 =====
+        # ===== 一次性加载市场数据（按回测时间段过滤，大幅减少内存和启动时间）=====
+        # warmup: 加载回测开始前 120 个交易日的数据（Agent 需要看历史 K 线）
+        warmup_calendar_days = 180  # ~120 trading days
+        data_start = start_date - timedelta(days=warmup_calendar_days)
+
         market_data = MarketData()
         if self._data_provider:
-            await market_data.load_all(self._data_provider, start_date, end_date)
+            await market_data.load_all(self._data_provider, data_start, end_date)
+        else:
+            from traderharness.data.market_data_manager import MarketDataManager
+            manager = MarketDataManager()
+            daily_df = manager.load_daily(start_date=data_start, end_date=end_date)
+            market_data._ingest_combined_df(daily_df, is_5min=False)
+            if manager.has_5min_cache():
+                min5_df = manager.load_5min(start_date=start_date, end_date=end_date)
+                market_data._ingest_combined_df(min5_df, is_5min=True)
+
+        # Load news, dividend, and fundamentals data (skip if using test provider without dataset_dir)
+        if self._config.dataset_dir or not self._data_provider:
+            self._news_manager.load(start_date=start_date, end_date=end_date)
+            self._dividend_manager.load()
+        else:
+            # Test mode with simple provider — don't load heavy auxiliary data
+            pass
+
+        # Load fundamentals, business segments, valuation
+        from pathlib import Path
+        if self._config.dataset_dir:
+            dataset_dir = Path(self._config.dataset_dir)
+        elif not self._data_provider:
+            dataset_dir = Path.home() / ".finharness" / "dataset"
+        else:
+            # Test mode with simple provider — skip heavy data loading
+            dataset_dir = None
+        if dataset_dir is None:
+            self._fundamentals_df = pd.DataFrame()
+            self._business_segments_df = pd.DataFrame()
+            self._valuation_df = pd.DataFrame()
+        else:
+            fundamentals_path = dataset_dir / "fundamentals.parquet"
+            self._fundamentals_df = pd.DataFrame()
+            if fundamentals_path.exists():
+                self._fundamentals_df = pd.read_parquet(fundamentals_path)
+                logger.info("Fundamentals loaded: %d rows, %d stocks",
+                           len(self._fundamentals_df),
+                           self._fundamentals_df["stock_code"].nunique() if "stock_code" in self._fundamentals_df.columns else 0)
+
+            segments_path = dataset_dir / "business_segments.parquet"
+            self._business_segments_df = pd.DataFrame()
+            if segments_path.exists():
+                self._business_segments_df = pd.read_parquet(segments_path)
+                logger.info("Business segments loaded: %d rows, %d stocks",
+                           len(self._business_segments_df),
+                           self._business_segments_df["stock_code"].nunique() if "stock_code" in self._business_segments_df.columns else 0)
+
+            valuation_path = dataset_dir / "valuation.parquet"
+            self._valuation_df = pd.DataFrame()
+            if valuation_path.exists():
+                self._valuation_df = pd.read_parquet(valuation_path)
+                if "date" in self._valuation_df.columns:
+                    if pd.api.types.is_datetime64_any_dtype(self._valuation_df["date"]):
+                        self._valuation_df["date"] = self._valuation_df["date"].dt.date
+                    else:
+                        self._valuation_df["date"] = pd.to_datetime(self._valuation_df["date"]).dt.date
+                logger.info("Valuation loaded: %d rows, %d stocks",
+                           len(self._valuation_df),
+                           self._valuation_df["stock_code"].nunique() if "stock_code" in self._valuation_df.columns else 0)
 
         # 为每个 agent 创建独立 portfolio + bus（共享同一份 market_data）
         buses: dict[str, TradingBus] = {}
@@ -344,11 +468,27 @@ class BacktestEngine:
         for day_idx, current_date in enumerate(trading_days):
             self._event_bus.emit("day_start", date=current_date)
 
+            # Phase 1: Set date + attach news manager for all agents
             for agent in agents:
                 bus = buses[agent.agent_id]
                 bus._set_date(current_date)
                 bus._day_index = day_idx
                 bus._total_days = len(trading_days)
+                bus._news_manager = self._news_manager
+                bus._fundamentals_df = self._fundamentals_df
+                bus._business_segments_df = self._business_segments_df
+                bus._valuation_df = self._valuation_df
+
+            # Phase 2: Corporate actions (after _set_date, before trading)
+            for agent in agents:
+                portfolio = portfolios[agent.agent_id]
+                actions = self._dividend_manager.process_day(current_date, portfolio)
+                if actions:
+                    buses[agent.agent_id]._corporate_actions_today = actions
+
+            # Phase 3: Agent trading + equity recording
+            for agent in agents:
+                bus = buses[agent.agent_id]
                 try:
                     await agent.on_day(bus, current_date)
                 except Exception:
@@ -378,10 +518,28 @@ class BacktestEngine:
         for agent in agents:
             portfolio = portfolios[agent.agent_id]
             bus = buses[agent.agent_id]
-            result.agent_data[agent.agent_id] = {
+            agent_result = {
                 "equity_curve": portfolio.equity_curve,
                 "trades": bus.trade_history,
             }
+            # Include trajectory if available
+            if hasattr(agent, "trajectory") and agent.trajectory:
+                traj = agent.trajectory
+                agent_result["trajectory"] = {
+                    "days": [{
+                        "date": str(d.date),
+                        "observation": d.observation,
+                        "actions": d.actions,
+                        "reward": d.reward,
+                    } for d in traj.day_records],
+                    "steps": [{
+                        "date": str(s.date),
+                        "step": s.step,
+                        "type": s.type,
+                        "data": s.data,
+                    } for s in traj.step_records],
+                }
+            result.agent_data[agent.agent_id] = agent_result
 
         return result
 

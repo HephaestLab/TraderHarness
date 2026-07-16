@@ -22,7 +22,7 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_CACHE_DIR = Path.home() / ".finharness" / "market_cache"
+DEFAULT_CACHE_DIR = Path.home() / ".finharness" / "dataset"
 
 
 class MarketDataManager:
@@ -41,21 +41,54 @@ class MarketDataManager:
         return self._cache_dir / "5min.parquet"
 
     @property
+    def min5_chunks_dir(self) -> Path:
+        return self._cache_dir / "5min_chunks"
+
+    @property
+    def min5_clean_dir(self) -> Path:
+        """Cleaned, year-partitioned 5min dataset (see scripts/consolidate_5min.py)."""
+        return self._cache_dir / "5min_clean"
+
+    @property
     def metadata_path(self) -> Path:
         return self._cache_dir / "metadata.json"
 
     def has_daily_cache(self) -> bool:
         return self.daily_path.exists()
 
-    def has_5min_cache(self) -> bool:
-        return self.min5_path.exists()
+    def _dir_has_parquet(self, d: Path) -> bool:
+        return d.exists() and any(d.rglob("*.parquet"))
 
-    def load_daily(self) -> pd.DataFrame:
-        """加载日线缓存。返回 DataFrame(stock_code, date, open, high, low, close, volume)。"""
+    def has_5min_cache(self) -> bool:
+        return (
+            self.min5_path.exists()
+            or self._dir_has_parquet(self.min5_clean_dir)
+            or self._dir_has_parquet(self.min5_chunks_dir)
+        )
+
+    def load_daily(self, start_date: "date | None" = None, end_date: "date | None" = None) -> pd.DataFrame:
+        """加载日线缓存。支持时间范围过滤（pyarrow pushdown）。"""
         if not self.has_daily_cache():
             self.fetch_daily()
         logger.info("Loading daily cache: %s", self.daily_path)
-        df = pd.read_parquet(self.daily_path)
+
+        if start_date or end_date:
+            import pyarrow.dataset as ds
+            import pyarrow as pa
+            dataset = ds.dataset(self.daily_path, format="parquet")
+            filters = []
+            if start_date:
+                filters.append(ds.field("date") >= pa.scalar(pd.Timestamp(start_date)))
+            if end_date:
+                filters.append(ds.field("date") <= pa.scalar(pd.Timestamp(end_date)))
+            combined_filter = filters[0]
+            for f in filters[1:]:
+                combined_filter = combined_filter & f
+            table = dataset.to_table(filter=combined_filter)
+            df = table.to_pandas()
+        else:
+            df = pd.read_parquet(self.daily_path)
+
         if "date" in df.columns:
             if pd.api.types.is_datetime64_any_dtype(df["date"]):
                 df["date"] = df["date"].dt.date
@@ -63,17 +96,70 @@ class MarketDataManager:
                 df["date"] = pd.to_datetime(df["date"]).dt.date
         return df
 
-    def load_5min(self) -> pd.DataFrame:
-        """加载5分钟线缓存。"""
+    def load_5min(self, start_date: "date | None" = None, end_date: "date | None" = None) -> pd.DataFrame:
+        """加载5分钟线缓存。
+
+        优先级：5min_clean/（清洗+按年分区的5年全量）> 5min_chunks/（原始分片）
+        > 5min.parquet（近期单文件）。pyarrow dataset 支持目录级 pushdown filter，
+        并对 clean 目录按 year 分区做文件级剪枝，内存与速度都更优。
+        """
         if not self.has_5min_cache():
-            self.fetch_5min()
-        logger.info("Loading 5min cache: %s", self.min5_path)
-        df = pd.read_parquet(self.min5_path)
+            return pd.DataFrame()
+
+        import pyarrow.dataset as ds
+
+        # Prefer cleaned partitioned dataset > raw chunks > single recent file
+        clean = self._dir_has_parquet(self.min5_clean_dir)
+        if clean:
+            dataset = ds.dataset(self.min5_clean_dir, format="parquet", partitioning="hive")
+            logger.info("Loading 5min from clean dir: %s", self.min5_clean_dir)
+        elif self._dir_has_parquet(self.min5_chunks_dir):
+            dataset = ds.dataset(self.min5_chunks_dir, format="parquet")
+            logger.info("Loading 5min from chunks dir: %s", self.min5_chunks_dir)
+        else:
+            dataset = ds.dataset(self.min5_path, format="parquet")
+            logger.info("Loading 5min from single file: %s", self.min5_path)
+
+        filters = []
+        if start_date:
+            filters.append(ds.field("date") >= pd.Timestamp(start_date))
+        if end_date:
+            filters.append(ds.field("date") <= pd.Timestamp(end_date))
+
+        # Directory-level pruning on the year partition (clean dataset only).
+        if clean and (start_date or end_date):
+            y0 = (start_date or end_date).year
+            y1 = (end_date or start_date).year
+            filters.append(ds.field("year").isin(list(range(y0, y1 + 1))))
+
+        if filters:
+            combined_filter = filters[0]
+            for f in filters[1:]:
+                combined_filter = combined_filter & f
+            table = dataset.to_table(filter=combined_filter)
+        else:
+            table = dataset.to_table()
+
+        df = table.to_pandas()
+
+        # Drop the year partition column so downstream schema is unchanged.
+        if "year" in df.columns:
+            df = df.drop(columns=["year"])
+
+        # Normalize datetime column BEFORE converting date to python date.
+        # Chunks have string time ("09:35:00"), single file has full timestamp.
+        if "datetime" in df.columns and "date" in df.columns:
+            sample = df["datetime"].iloc[0] if len(df) > 0 else ""
+            if isinstance(sample, str) and len(sample) <= 8:
+                df["datetime"] = pd.to_datetime(df["date"]) + pd.to_timedelta(df["datetime"])
+
+        # Normalize date column to python date
         if "date" in df.columns:
             if pd.api.types.is_datetime64_any_dtype(df["date"]):
                 df["date"] = df["date"].dt.date
             else:
                 df["date"] = pd.to_datetime(df["date"]).dt.date
+
         return df
 
     def fetch_daily(self) -> None:

@@ -36,11 +36,15 @@ class DayRecord:
 class TrajectoryCollector:
     """Collects both day-level and step-level trajectory data."""
 
-    def __init__(self, agent_id: str) -> None:
+    def __init__(self, agent_id: str, live_file: str | Path | None = None) -> None:
         self.agent_id = agent_id
         self._day_records: list[DayRecord] = []
         self._step_records: list[StepRecord] = []
         self._current_step: int = 0
+        self._live_file = Path(live_file) if live_file else None
+        if self._live_file:
+            self._live_file.parent.mkdir(parents=True, exist_ok=True)
+            self._live_file.write_text("[]", encoding="utf-8")
 
     def start_day(self, trade_date: date, observation: dict) -> None:
         self._current_step = 0
@@ -54,6 +58,25 @@ class TrajectoryCollector:
             data=data,
         ))
         self._current_step += 1
+        self._flush_live(trade_date, step_type, data)
+
+    def _flush_live(self, trade_date: date, step_type: str, data: dict) -> None:
+        if not self._live_file:
+            return
+        try:
+            existing = json.loads(self._live_file.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, FileNotFoundError):
+            existing = []
+        existing.append({
+            "date": str(trade_date),
+            "step": self._current_step - 1,
+            "type": step_type,
+            "data": data,
+        })
+        self._live_file.write_text(
+            json.dumps(existing, ensure_ascii=False, default=str),
+            encoding="utf-8",
+        )
 
     def end_day(self, actions: list[dict], reward: float, done: bool = False) -> None:
         if self._day_records:

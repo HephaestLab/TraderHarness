@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "finharness"
+name = "traderharness"
 version = "0.1.0"
 description = "A realistic LLM-native harness for building, testing, and benchmarking autonomous trading agents"
 readme = "README.md"
@@ -36,15 +36,15 @@ llm = ["openai>=1.58", "tenacity>=8.0", "json-repair>=0.27"]
 data = ["mootdx>=0.11.7"]
 ui = ["streamlit>=1.30", "plotly>=5.18"]
 dev = ["pytest>=7.0", "pytest-cov>=4.0", "pytest-asyncio>=0.21", "ruff>=0.4", "mypy>=1.8"]
-all = ["finharness[llm,data,ui,dev]"]
+all = ["traderharness[llm,data,ui,dev]"]
 
 [project.scripts]
-finharness = "finharness.cli:main"
+traderharness = "traderharness.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/HephaestLab/finharness"
-Repository = "https://github.com/HephaestLab/finharness"
-Issues = "https://github.com/HephaestLab/finharness/issues"
+Homepage = "https://github.com/HephaestLab/traderharness"
+Repository = "https://github.com/HephaestLab/traderharness"
+Issues = "https://github.com/HephaestLab/traderharness/issues"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -68,15 +68,15 @@ warn_unused_configs = true
 source = ["finharness"]
 branch = true
 omit = [
-    "finharness/ui/*",
-    "finharness/cli.py",
-    "finharness/data/providers/mootdx.py",
-    "finharness/data/providers/tencent.py",
-    "finharness/data/providers/base.py",
-    "finharness/data/datasets.py",
-    "finharness/tools/market.py",
-    "finharness/tools/portfolio.py",
-    "finharness/tools/trading.py",
+    "traderharness/ui/*",
+    "traderharness/cli.py",
+    "traderharness/data/providers/mootdx.py",
+    "traderharness/data/providers/tencent.py",
+    "traderharness/data/providers/base.py",
+    "traderharness/data/datasets.py",
+    "traderharness/tools/market.py",
+    "traderharness/tools/portfolio.py",
+    "traderharness/tools/trading.py",
 ]
 
 [tool.coverage.report]

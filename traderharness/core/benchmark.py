@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 
-from finharness.core.portfolio import Portfolio
+from traderharness.core.portfolio import Portfolio
 
 
 class BuyAndHoldBenchmark:

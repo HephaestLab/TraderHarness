@@ -8,10 +8,10 @@ from datetime import date
 from decimal import Decimal
 from typing import Any
 
-from finharness.core.calendar import TradingCalendar
-from finharness.core.engine import BacktestEngine, EngineConfig, EngineResult, DataProvider
-from finharness.core.events import EventBus
-from finharness.core.market_profile import AShareProfile
+from traderharness.core.calendar import TradingCalendar
+from traderharness.core.engine import BacktestEngine, EngineConfig, EngineResult, DataProvider
+from traderharness.core.events import EventBus
+from traderharness.core.market_profile import AShareProfile
 
 
 @dataclass

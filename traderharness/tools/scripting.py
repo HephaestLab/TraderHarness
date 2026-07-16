@@ -9,9 +9,9 @@ import json
 
 import pandas as pd
 
-from finharness.tools.registry import ToolDefinition, ToolContext
-from finharness.agents.sandbox.executor import PythonSandbox
-from finharness.agents.sandbox.workspace import AgentWorkspace
+from traderharness.tools.registry import ToolDefinition, ToolContext
+from traderharness.agents.sandbox.executor import PythonSandbox
+from traderharness.agents.sandbox.workspace import AgentWorkspace
 
 
 def _get_workspace(ctx: ToolContext) -> AgentWorkspace:
@@ -37,7 +37,7 @@ async def handle_run_script(params: dict, ctx: ToolContext) -> dict:
     for var_name, stock_code in (inject_data_spec or {}).items():
         df = ctx.preloaded_daily.get(stock_code)
         if df is not None and not df.empty:
-            filtered = df[df["date"] <= ctx.current_date].copy()
+            filtered = df[df["date"] < ctx.current_date].copy()
             injected[var_name] = filtered
         else:
             injected[var_name] = pd.DataFrame()

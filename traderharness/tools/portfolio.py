@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from finharness.tools.registry import ToolDefinition, ToolContext
+from traderharness.tools.registry import ToolDefinition, ToolContext
 
 
 async def handle_get_portfolio(params: dict, ctx: ToolContext) -> dict:
@@ -54,7 +54,6 @@ async def handle_get_position(params: dict, ctx: ToolContext) -> dict:
         "stock_code": code,
         "quantity": pos.quantity,
         "avg_cost": float(pos.avg_cost),
-        "buy_date": str(pos.buy_date),
         "current_price": current_price,
         "pnl_pct": round(pnl_pct, 2),
         "sellable_quantity": sellable,

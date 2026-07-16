@@ -9,7 +9,7 @@ from typing import Any
 
 from jinja2 import Template
 
-from finharness.metrics.performance import PerformanceMetrics
+from traderharness.metrics.performance import PerformanceMetrics
 
 _REPORT_TEMPLATE = """<!DOCTYPE html>
 <html>

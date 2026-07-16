@@ -1,19 +1,20 @@
-"""分析工具 — screen_stocks, get_market_overview, get_sector_summary。
-
-从源项目 backend/agents/agentic/tools/analysis_tools.py 迁移。
-"""
+"""分析工具 — screen_stocks, get_market_overview, get_sector_summary。"""
 
 from __future__ import annotations
 
 import logging
 
-from finharness.tools.registry import ToolDefinition, ToolContext
+from traderharness.tools.registry import ToolDefinition, ToolContext
+from traderharness.data.stock_registry_loader import get_stock_industry
 
 logger = logging.getLogger(__name__)
 
 
 async def handle_get_market_overview(params: dict, ctx: ToolContext) -> dict:
-    sector_data: dict[str, list[dict]] = {}
+    sector_data: dict[str, list[float]] = {}
+    total_up = 0
+    total_down = 0
+
     for code, df in ctx.preloaded_daily.items():
         if df.empty:
             continue
@@ -23,20 +24,31 @@ async def handle_get_market_overview(params: dict, ctx: ToolContext) -> dict:
         last = filtered.iloc[-1]
         prev = filtered.iloc[-2]
         prev_close = float(prev["close"])
-        change = ((float(last["close"]) - prev_close) / prev_close * 100) if prev_close != 0 else 0.0
-        sector = "default"
-        if sector not in sector_data:
-            sector_data[sector] = []
-        sector_data[sector].append({"code": code, "change_pct": round(change, 2)})
+        if prev_close == 0:
+            continue
+        change = (float(last["close"]) - prev_close) / prev_close * 100
+        if change > 0:
+            total_up += 1
+        elif change < 0:
+            total_down += 1
+
+        industry = get_stock_industry(code)
+        if industry not in sector_data:
+            sector_data[industry] = []
+        sector_data[industry].append(change)
 
     if not sector_data:
-        return {"date": str(ctx.current_date), "sectors": [], "total_stocks": 0}
+        return {"error": "当前交易日无市场数据"}
 
-    sorted_sectors = sorted(sector_data.items(), key=lambda x: -sum(s["change_pct"] for s in x[1]) / len(x[1]))
+    sector_avg = {s: sum(v) / len(v) for s, v in sector_data.items() if len(v) >= 3}
+    sorted_sectors = sorted(sector_avg.items(), key=lambda x: -x[1])
+
     return {
-        "date": str(ctx.current_date),
-        "top_sectors": [{"sector": s, "avg_change_pct": round(sum(st["change_pct"] for st in stocks) / len(stocks), 2)} for s, stocks in sorted_sectors[:5]],
-        "bottom_sectors": [{"sector": s, "avg_change_pct": round(sum(st["change_pct"] for st in stocks) / len(stocks), 2)} for s, stocks in sorted_sectors[-5:]],
+        "total_stocks": total_up + total_down,
+        "up_count": total_up,
+        "down_count": total_down,
+        "top_sectors": [{"sector": s, "avg_change_pct": round(c, 2)} for s, c in sorted_sectors[:5]],
+        "bottom_sectors": [{"sector": s, "avg_change_pct": round(c, 2)} for s, c in sorted_sectors[-5:]],
         "total_sectors": len(sorted_sectors),
     }
 
@@ -44,7 +56,12 @@ async def handle_get_market_overview(params: dict, ctx: ToolContext) -> dict:
 async def handle_screen_stocks(params: dict, ctx: ToolContext) -> dict:
     price_min = params.get("price_min", 0)
     price_max = params.get("price_max", 99999)
-    max_results = min(params.get("max_results", 10), 20)
+    change_pct_min = params.get("change_pct_min")
+    change_pct_max = params.get("change_pct_max")
+    volume_min = params.get("volume_min", 0)
+    industry = params.get("industry", "")
+    sort_by = params.get("sort_by", "change_5d")
+    max_results = min(params.get("max_results", 10), 30)
 
     results = []
     for code, df in ctx.preloaded_daily.items():
@@ -53,47 +70,62 @@ async def handle_screen_stocks(params: dict, ctx: ToolContext) -> dict:
         filtered = df[df["date"] < ctx.current_date]
         if len(filtered) < 5:
             continue
+
+        if industry:
+            stock_industry = get_stock_industry(code)
+            if industry not in stock_industry:
+                continue
+
         last = filtered.iloc[-1]
         close = float(last["close"])
+        volume = int(last.get("volume", 0))
+
         if close < price_min or close > price_max:
             continue
+        if volume < volume_min:
+            continue
+
+        prev = filtered.iloc[-2]
+        prev_close = float(prev["close"])
+        change_1d = ((close - prev_close) / prev_close * 100) if prev_close != 0 else 0.0
+
+        if change_pct_min is not None and change_1d < change_pct_min:
+            continue
+        if change_pct_max is not None and change_1d > change_pct_max:
+            continue
+
         prev_5 = filtered.iloc[-5]
         change_5d = (close - float(prev_5["close"])) / float(prev_5["close"]) * 100
-        results.append({"code": code, "close": round(close, 2), "change_5d_pct": round(change_5d, 2)})
 
-    results.sort(key=lambda x: -x["change_5d_pct"])
+        results.append({
+            "code": code,
+            "close": round(close, 2),
+            "change_1d_pct": round(change_1d, 2),
+            "change_5d_pct": round(change_5d, 2),
+            "volume": volume,
+        })
+
+    sort_key = {"change_5d": "change_5d_pct", "change_1d": "change_1d_pct", "volume": "volume"}.get(sort_by, "change_5d_pct")
+    results.sort(key=lambda x: -x[sort_key])
+
+    if not results:
+        return {"stocks": [], "total_matched": 0, "hint": "无股票满足筛选条件，建议放宽条件"}
+
     return {"stocks": results[:max_results], "total_matched": len(results)}
 
 
-GET_MARKET_OVERVIEW = ToolDefinition(
-    name="get_market_overview",
-    description="查看市场/板块全局概览",
-    parameters={"type": "object", "properties": {"sector": {"type": "string", "description": "可选，只看某个板块"}}, "required": []},
-    handler=handle_get_market_overview,
-)
-
-SCREEN_STOCKS = ToolDefinition(
-    name="screen_stocks",
-    description="按条件筛选股票",
-    parameters={
-        "type": "object",
-        "properties": {
-            "price_min": {"type": "number", "description": "最低价格"},
-            "price_max": {"type": "number", "description": "最高价格"},
-            "max_results": {"type": "integer", "description": "最多返回数量，默认10"},
-        },
-        "required": [],
-    },
-    handler=handle_screen_stocks,
-)
-
-
 async def handle_get_sector_summary(params: dict, ctx: ToolContext) -> dict:
-    """获取板块内股票详情。"""
-    # Without industry data, group by price range as proxy
+    """获取指定板块内股票详情。"""
+    sector = params.get("sector", "")
+    if not sector:
+        return {"error": "请指定板块名称（如：电力设备、医药生物、金融行业）"}
+
     stocks = []
     for code, df in ctx.preloaded_daily.items():
         if df.empty:
+            continue
+        stock_industry = get_stock_industry(code)
+        if sector not in stock_industry:
             continue
         filtered = df[df["date"] < ctx.current_date]
         if len(filtered) < 2:
@@ -106,26 +138,53 @@ async def handle_get_sector_summary(params: dict, ctx: ToolContext) -> dict:
         stocks.append({"code": code, "close": round(close, 2), "change_pct": round(change, 2)})
 
     if not stocks:
-        return {"error": "无数据"}
+        return {"error": f"未找到板块「{sector}」或该板块在当前日期无数据"}
 
     stocks.sort(key=lambda x: -x["change_pct"])
     avg_change = sum(s["change_pct"] for s in stocks) / len(stocks)
     return {
+        "sector": sector,
         "avg_change_pct": round(avg_change, 2),
-        "stocks": stocks[:20],
-        "top_gainers": stocks[:3],
-        "top_losers": stocks[-3:] if len(stocks) > 3 else [],
-        "total": len(stocks),
+        "stock_count": len(stocks),
+        "top_gainers": stocks[:5],
+        "top_losers": stocks[-5:] if len(stocks) > 5 else [],
     }
 
 
-GET_SECTOR_SUMMARY = ToolDefinition(
-    name="get_sector_summary",
-    description="查看板块详情：板块内股票涨跌幅排名",
+GET_MARKET_OVERVIEW = ToolDefinition(
+    name="get_market_overview",
+    description="查看全市场概览：涨跌家数、板块涨幅前5/跌幅前5",
+    parameters={"type": "object", "properties": {}, "required": []},
+    handler=handle_get_market_overview,
+)
+
+SCREEN_STOCKS = ToolDefinition(
+    name="screen_stocks",
+    description="按条件筛选股票：价格、涨跌幅、成交量、行业",
     parameters={
         "type": "object",
         "properties": {
-            "sector": {"type": "string", "description": "板块名称"},
+            "price_min": {"type": "number", "description": "最低价格"},
+            "price_max": {"type": "number", "description": "最高价格"},
+            "change_pct_min": {"type": "number", "description": "最小涨跌幅(%)"},
+            "change_pct_max": {"type": "number", "description": "最大涨跌幅(%)"},
+            "volume_min": {"type": "integer", "description": "最小成交量"},
+            "industry": {"type": "string", "description": "行业名称过滤（如：电力设备）"},
+            "sort_by": {"type": "string", "enum": ["change_5d", "change_1d", "volume"], "description": "排序方式，默认按5日涨幅"},
+            "max_results": {"type": "integer", "description": "最多返回数量，默认10，最大30"},
+        },
+        "required": [],
+    },
+    handler=handle_screen_stocks,
+)
+
+GET_SECTOR_SUMMARY = ToolDefinition(
+    name="get_sector_summary",
+    description="查看指定板块详情：板块内股票涨跌幅排名、平均涨幅",
+    parameters={
+        "type": "object",
+        "properties": {
+            "sector": {"type": "string", "description": "板块名称，如：电力设备、医药生物、金融行业"},
         },
         "required": ["sector"],
     },

@@ -119,6 +119,12 @@ class LLMClient:
                     "role": "assistant",
                     "content": msg.content,
                 }
+
+                # DeepSeek thinking models return reasoning_content
+                reasoning = getattr(msg, "reasoning_content", None)
+                if reasoning:
+                    result["reasoning_content"] = reasoning
+
                 if msg.tool_calls:
                     result["tool_calls"] = [
                         {

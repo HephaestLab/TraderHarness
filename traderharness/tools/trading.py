@@ -6,8 +6,8 @@
 
 from __future__ import annotations
 
-from finharness.tools.registry import ToolDefinition, ToolContext
-from finharness.core.market_profile import AShareProfile
+from traderharness.tools.registry import ToolDefinition, ToolContext
+from traderharness.core.market_profile import AShareProfile
 
 _PROFILE = AShareProfile()
 
@@ -30,6 +30,16 @@ async def handle_place_order(params: dict, ctx: ToolContext) -> dict:
     if ctx._bus is None:
         return {"success": False, "error": "无交易总线"}
 
+    # ST 股禁止交易
+    valuation_data = ctx.tool_call_cache.get("_valuation_data")
+    if valuation_data is not None and not valuation_data.empty:
+        st_check = valuation_data[
+            (valuation_data["stock_code"] == code)
+            & (valuation_data["date"] < ctx.current_date)
+        ]
+        if not st_check.empty and st_check.iloc[-1].get("is_st", False):
+            return {"success": False, "error": f"{code} 为ST股，禁止交易"}
+
     # 2. 仓位上限检查（LLM Agent 特有）
     if action == "buy":
         portfolio = ctx.portfolio
@@ -50,7 +60,7 @@ async def handle_place_order(params: dict, ctx: ToolContext) -> dict:
                 return {"success": False, "error": f"买入后{code}仓位占比{position_after/total_assets*100:.1f}%，超过上限{ctx.max_position_pct:.0f}%"}
 
     # 3. 委托 TradingBus 执行（唯一撮合入口）
-    window = "open" if ctx.current_phase == "open_window" else "close"
+    window = getattr(ctx, "_current_sub_window", None) or ("open" if ctx.current_phase == "open_window" else "close")
     result = ctx._bus.place_order(
         agent_id=ctx.agent_id,
         stock_code=code,
@@ -97,7 +107,7 @@ async def handle_place_order(params: dict, ctx: ToolContext) -> dict:
 
 PLACE_ORDER = ToolDefinition(
     name="place_order",
-    description="下单买入或卖出股票。只能在开盘窗口和尾盘窗口调用。",
+    description="下单买入或卖出股票。只能在开盘窗口和尾盘窗口调用。成交价为当前窗口最后一根5分钟K线的收盘价。",
     parameters={
         "type": "object",
         "properties": {

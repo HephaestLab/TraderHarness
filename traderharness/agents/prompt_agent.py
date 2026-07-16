@@ -7,8 +7,8 @@ from pathlib import Path
 
 import yaml
 
-from finharness.agents.llm_client import LLMClient
-from finharness.agents.tool_agent import ToolAgent
+from traderharness.agents.llm_client import LLMClient
+from traderharness.agents.tool_agent import ToolAgent
 
 
 class PromptAgent(ToolAgent):
@@ -29,6 +29,7 @@ class PromptAgent(ToolAgent):
         initial_cash = Decimal(str(cfg.get("initial_cash", 1_000_000)))
         max_positions = cfg.get("max_positions", 4)
         max_position_pct = cfg.get("max_position_pct", 25.0)
+        mask_dates = cfg.get("mask_dates", True)
 
         if llm_client is None:
             llm_client = LLMClient(model=model)
@@ -41,4 +42,5 @@ class PromptAgent(ToolAgent):
             initial_cash=initial_cash,
             max_positions=max_positions,
             max_position_pct=max_position_pct,
+            mask_dates=mask_dates,
         )

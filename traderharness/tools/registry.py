@@ -14,7 +14,7 @@ from typing import Any, Callable, Awaitable
 
 import pandas as pd
 
-from finharness.core.portfolio import Portfolio
+from traderharness.core.portfolio import Portfolio
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +39,7 @@ class ToolContext:
     workspace_root: str = ""
     max_position_pct: float = 25.0
     max_positions: int = 4
+    date_masker: Any = None
     _bus: Any = field(default=None, repr=False)
     _workspace: Any = field(default=None, repr=False)
 
