@@ -4,8 +4,8 @@ title: "TraderHarness: A Contamination-Resistant Environment for Autonomous Trad
 type: software
 authors:
   - name: HephaestLab
-version: 1.0.0
-date-released: 2026-07-17
+version: 1.1.0
+date-released: 2026-07-19
 license: Apache-2.0
 repository-code: "https://github.com/HephaestLab/TraderHarness"
 url: "https://hephaestlab.github.io/TraderHarness/"

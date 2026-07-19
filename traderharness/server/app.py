@@ -12,6 +12,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from traderharness import __version__
 from traderharness.agents.agent_card import (
     BUILTIN_STORAGE_DIR,
     AgentCard,
@@ -148,7 +149,7 @@ def create_app(
 
     app = FastAPI(
         title="TraderHarness API",
-        version="1.0.0",
+        version=__version__,
         docs_url="/api/docs",
         openapi_url="/api/openapi.json",
     )
