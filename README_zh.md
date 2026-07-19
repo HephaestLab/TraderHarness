@@ -53,7 +53,7 @@ traderharness export sft result.json --output training.jsonl
   <img src="docs/assets/results-workbench.png" alt="TraderHarness 回测结果研究工作台：基准、回撤、K 线、成交与决策证据" width="920">
 </p>
 
-完整契约见[训练数据](docs/training-data.md)；经过筛选的导出数据将以 [traderharness-a-share 数据集](https://huggingface.co/datasets/HephaestLab/traderharness-a-share)的形式发布到 Hugging Face（Phase 2 上线）。
+完整契约见[训练数据](docs/training-data.md)；经过筛选的导出数据发布在 Hugging Face 的 [traderharness-ashare-5y 数据集](https://huggingface.co/datasets/ANTICH/traderharness-ashare-5y)。
 
 ## 研究控制台
 

@@ -79,7 +79,7 @@ def test_full_download_is_verified_and_installed_atomically(tmp_path):
     target = tmp_path / "dataset"
 
     def fake_snapshot_download(*, repo_id, local_dir, repo_type):
-        assert repo_id == "HephaestLab/traderharness-ashare-5y"
+        assert repo_id == "ANTICH/traderharness-ashare-5y"
         assert repo_type == "dataset"
         staging = tmp_path / "dataset.download"
         assert local_dir == str(staging)

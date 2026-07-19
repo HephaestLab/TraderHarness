@@ -12,7 +12,7 @@ from typing import Any
 
 import pandas as pd
 
-FULL_DATASET_REPO = "HephaestLab/traderharness-ashare-5y"
+FULL_DATASET_REPO = "ANTICH/traderharness-ashare-5y"
 
 
 class DatasetIntegrityError(RuntimeError):
@@ -85,9 +85,10 @@ This dataset does not provide investment advice and is not intended for live ord
 
 ## Licensing and provenance
 
-For research use. No warranty. Upstream data rights remain with their owners and may differ by
-field, provider, and jurisdiction. Review the project data documentation and upstream terms before
-redistribution or commercial use.
+Compiled from the maintainers' personal research archive and freely available public internet
+sources. For research use only. No warranty. Upstream data rights remain with their owners and may
+differ by field, provider, and jurisdiction. Review the project data documentation and upstream
+terms before redistribution or commercial use.
 """
 
 

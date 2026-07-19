@@ -68,9 +68,9 @@ agent's stated reasoning, and the exact tool call that produced the fill.
   <img src="docs/assets/results-workbench.png" alt="TraderHarness result research workbench with benchmark, drawdown, K-lines, trades, and decision evidence" width="920">
 </p>
 
-The full contract is in [Training data](docs/training-data.md); curated exports will be published as the
-[traderharness-a-share dataset](https://huggingface.co/datasets/HephaestLab/traderharness-a-share) on Hugging
-Face (rolling out in Phase 2).
+The full contract is in [Training data](docs/training-data.md); curated exports are published as the
+[traderharness-a-share dataset](https://huggingface.co/datasets/ANTICH/traderharness-ashare-5y) on Hugging
+Face.
 
 ## The research console
 
