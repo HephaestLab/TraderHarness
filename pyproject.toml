@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "traderharness"
-version = "1.0.0"
+version = "1.1.0"
 description = "Contamination-resistant A-share backtesting, evaluation, and trajectory generation for autonomous LLM trading agents"
 readme = "README.md"
 license = "Apache-2.0"

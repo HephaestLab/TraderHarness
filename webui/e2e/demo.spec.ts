@@ -22,8 +22,12 @@ test("免密演示可回放事件并保存结果", async ({ page }) => {
   await expect(page).toHaveURL(/\/live\?run=/);
   await expect(page.getByRole("heading", { name: "回测控制室" })).toBeVisible();
   await expect(page.getByText("决策事件流")).toBeVisible();
-  // LiveRun auto-navigates to the completed dossier when the run finishes.
-  await page.waitForURL(/\/results\?file=/, { timeout: 90_000 });
+  // LiveRun no longer auto-navigates; once the run reaches a terminal state a
+  // "查看研究档案 →" button appears and opens the completed dossier on demand.
+  const openDossier = page.getByRole("button", { name: /查看研究档案/ });
+  await expect(openDossier).toBeVisible({ timeout: 90_000 });
+  await openDossier.click();
+  await expect(page).toHaveURL(/\/results\?file=/);
   await expect(page.getByRole("heading", { name: "回测研究档案", level: 1 })).toBeVisible();
   await expect(page.locator(".dossier-tabs button", { hasText: "逐笔复盘" })).toBeVisible();
 
