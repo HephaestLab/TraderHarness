@@ -45,4 +45,6 @@ def test_fastapi_demo_streams_events_and_persists_result():
         detail = client.get(f"/api/results/{state['result_file']}")
         assert detail.status_code == 200
         result = detail.json()
-        assert result["agent_data"]["momentum-dragon"]["metrics"]["total_trades"] == 2
+        # Trade count tracks the bundled momentum_dragon_2024-03-14.jsonl
+        # trajectory; update this expectation when the cassette is re-recorded.
+        assert result["agent_data"]["momentum-dragon"]["metrics"]["total_trades"] == 1

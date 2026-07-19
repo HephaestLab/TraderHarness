@@ -22,6 +22,7 @@ class _ManagedRun:
     id: str
     runner: Any
     created_at: str
+    seq: int = 0
     agents: list[str] = field(default_factory=list)
     status: str = "running"
     events: list[dict[str, Any]] = field(default_factory=list)
@@ -50,6 +51,9 @@ class RunManager:
         self._runner_factory = runner_factory or self._build_runner
         self._runs: dict[str, _ManagedRun] = {}
         self._lock = threading.RLock()
+        # Monotonic tiebreak for list(): datetime.now() can return identical
+        # timestamps for back-to-back starts on coarse-tick platforms.
+        self._seq = 0
 
     def start(self, request: RunRequest) -> dict[str, Any]:
         run_id = uuid.uuid4().hex
@@ -61,6 +65,8 @@ class RunManager:
             agents=list(request.agents),
         )
         with self._lock:
+            self._seq += 1
+            managed.seq = self._seq
             self._runs[run_id] = managed
         threading.Thread(
             target=self._pump,
@@ -79,8 +85,12 @@ class RunManager:
     def list(self) -> list[dict[str, Any]]:
         """Newest-first public state for every run owned by this manager."""
         with self._lock:
-            runs = [managed.public() for managed in self._runs.values()]
-        return sorted(runs, key=lambda item: item["created_at"], reverse=True)
+            runs = sorted(
+                self._runs.values(),
+                key=lambda managed: (managed.created_at, managed.seq),
+                reverse=True,
+            )
+        return [managed.public() for managed in runs]
 
     def cancel(self, run_id: str) -> bool:
         with self._lock:
