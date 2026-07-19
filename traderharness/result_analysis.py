@@ -356,7 +356,7 @@ def build_comparison(agents: dict[str, dict[str, Any]]) -> dict[str, Any] | None
                 "trade_count": len(agent.get("trades") or []),
             }
         )
-    rows.sort(key=lambda row: row["total_return_pct"], reverse=True)
+    rows.sort(key=lambda row: _number(row["total_return_pct"]), reverse=True)
     for rank, row in enumerate(rows, start=1):
         row["rank"] = rank
     return {
