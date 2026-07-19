@@ -1,0 +1,18 @@
+services:
+  traderharness:
+    build:
+      context: .
+      target: runtime
+    image: ghcr.io/hephaestlab/traderharness:latest
+    ports:
+      - "127.0.0.1:${TRADERHARNESS_PORT:-8000}:8000"
+    environment:
+      DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:-}"
+      DEEPSEEK_BASE_URL: "${DEEPSEEK_BASE_URL:-}"
+      TRADERHARNESS_HOME: /data
+    volumes:
+      - ~/.traderharness:/data
+    restart: unless-stopped
+    init: true
+    security_opt:
+      - no-new-privileges:true

@@ -26,14 +26,20 @@ import types
 from pathlib import Path
 from typing import Any
 
-from traderharness.tools.registry import ToolDefinition, ToolContext
 from traderharness.agents.sandbox.api import build_api_module
+from traderharness.tools.registry import ToolContext, ToolDefinition
 
 SANDBOX_TIMEOUT = 60
 
 BLOCKED_IMPORTS = {
-    "traderharness", "backtrader", "vnpy", "zipline", "qlib",
-    "pyalgotrade", "bt", "finrl",
+    "traderharness",
+    "backtrader",
+    "vnpy",
+    "zipline",
+    "qlib",
+    "pyalgotrade",
+    "bt",
+    "finrl",
 }
 
 
@@ -109,6 +115,7 @@ async def handle_execute_code(params: dict, ctx: ToolContext) -> dict:
 
         sys.stdout = stdout_capture
         from traderharness.agents.sandbox.guard import build_sandbox_globals
+
         exec_globals = build_sandbox_globals(fake_module, ctx.workspace_root)
 
         def _run():

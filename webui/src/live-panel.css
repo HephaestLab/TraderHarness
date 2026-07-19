@@ -1,0 +1,247 @@
+/* LiveRun 实时运行页 v2 布局与实时绩效面板样式。
+   所有类名带 lp- 前缀，避免与全局 styles.css 冲突。
+   字号底线：正文 ≥11px，辅助 ≥9px。 */
+
+.live-layout-v2 {
+  align-items: start;
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(0, 1fr) 340px;
+}
+
+.live-layout-v2 .office-floor {
+  height: min(720px, calc(100vh - 260px));
+  min-height: 480px;
+}
+
+.lp-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+@media (max-width: 1100px) {
+  .live-layout-v2 { grid-template-columns: 1fr; }
+  .live-layout-v2 .office-floor { height: 480px; min-height: 360px; }
+}
+
+/* ---------- 实时绩效面板 ---------- */
+
+.lp-panel { padding: 16px 18px; }
+
+.lp-head { align-items: center; display: flex; justify-content: space-between; gap: 10px; }
+.lp-head h2 { font-size: 15px; letter-spacing: -0.02em; margin: 4px 0 0; }
+
+.lp-status-chip {
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 99px;
+  color: var(--muted);
+  display: inline-flex;
+  font-size: 9px;
+  gap: 5px;
+  padding: 3px 10px;
+  white-space: nowrap;
+}
+.lp-status-chip.running { border-color: var(--green); color: var(--green); }
+.lp-status-chip.failed { border-color: var(--red); color: var(--red); }
+.lp-status-chip.done { border-color: var(--blue); color: var(--blue); }
+
+.lp-progress-block { margin-top: 14px; }
+
+.lp-progress-facts {
+  align-items: baseline;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+.lp-progress-facts strong { font-size: 12px; font-weight: 700; }
+.lp-progress-facts small { color: var(--muted); font-size: 9px; }
+
+.lp-progress-track {
+  background: var(--panel-2);
+  border-radius: 99px;
+  height: 6px;
+  margin-top: 8px;
+  overflow: hidden;
+}
+.lp-progress-track i {
+  background: linear-gradient(90deg, var(--green), #6fd0e8);
+  border-radius: 99px;
+  display: block;
+  height: 100%;
+  transition: width 0.45s ease;
+}
+
+.lp-rate { color: var(--muted); display: block; font-size: 9px; margin-top: 8px; }
+
+/* ---------- 智能体净值行 ---------- */
+
+.lp-agents { display: grid; gap: 6px; margin-top: 14px; }
+
+.lp-agent-row {
+  align-items: center;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  padding: 8px 12px;
+}
+.lp-dot { border-radius: 50%; height: 8px; width: 8px; }
+.lp-agent-name {
+  font-size: 11px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lp-agent-equity { font-family: "DM Mono", monospace; font-size: 11px; }
+.lp-agent-return { font-family: "DM Mono", monospace; font-size: 11px; font-weight: 700; min-width: 58px; text-align: right; }
+
+/* ---------- 净值叠加曲线 ---------- */
+
+.lp-chart-wrap { margin-top: 16px; position: relative; }
+
+.lp-chart-stage { height: 110px; position: relative; }
+
+.lp-chart { display: block; height: 110px; width: 100%; }
+.lp-grid-line { stroke: var(--line); stroke-dasharray: 3 4; stroke-width: 1; }
+.lp-axis-label { fill: var(--muted); font-family: "DM Mono", monospace; font-size: 9px; }
+.lp-crosshair { stroke: var(--muted); stroke-dasharray: 2 3; stroke-width: 1; }
+.lp-series-line { fill: none; stroke-linejoin: round; stroke-linecap: round; stroke-width: 1.75px; }
+
+.lp-chart-axis {
+  color: var(--muted);
+  display: flex;
+  font-family: "DM Mono", monospace;
+  font-size: 9px;
+  justify-content: space-between;
+  margin-top: 6px;
+}
+
+.lp-tooltip {
+  background: #0b0f15;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.45);
+  font-size: 10px;
+  min-width: 120px;
+  padding: 8px 10px;
+  pointer-events: none;
+  position: absolute;
+  transform: translate(-50%, 0);
+  z-index: 5;
+}
+.lp-tooltip .lp-tooltip-date { color: var(--muted); display: block; font-size: 9px; margin-bottom: 5px; }
+.lp-tooltip-row { align-items: center; display: flex; gap: 6px; justify-content: space-between; padding: 1px 0; }
+.lp-tooltip-row i { border-radius: 50%; display: inline-block; height: 6px; width: 6px; }
+.lp-tooltip-row span { color: var(--muted); font-size: 10px; margin-right: 10px; }
+.lp-tooltip-row b { font-family: "DM Mono", monospace; font-size: 10px; font-weight: 500; }
+
+.lp-chart-empty {
+  align-items: center;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  display: flex;
+  font-size: 11px;
+  height: 110px;
+  justify-content: center;
+}
+
+/* ---------- 事件流工具条 ---------- */
+
+.lp-stream-toolbar { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
+
+.lp-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.lp-chip {
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 99px;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 10px;
+  padding: 4px 11px;
+}
+.lp-chip:hover { border-color: var(--muted); color: inherit; }
+.lp-chip.active { border-color: var(--green); color: var(--green); }
+
+.lp-stream-controls { align-items: center; display: flex; gap: 8px; }
+
+.lp-select {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: inherit;
+  flex: 1;
+  font-size: 11px;
+  min-width: 0;
+  padding: 5px 8px;
+}
+
+.lp-pause {
+  align-items: center;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--muted);
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 10px;
+  gap: 5px;
+  padding: 5px 10px;
+  white-space: nowrap;
+}
+.lp-pause.active { border-color: var(--amber); color: var(--amber); }
+
+.lp-stream-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  position: relative;
+}
+
+/* rail 内的事件流改为 flex 列布局：工具条固定，列表区滚动。
+   覆盖全局 .event-stream / .event-stream ol 的高度约定。 */
+.lp-rail .event-stream {
+  display: flex;
+  flex-direction: column;
+  height: min(560px, calc(100vh - 340px));
+  min-height: 380px;
+}
+.lp-rail .event-stream .panel-heading { margin-bottom: 12px; }
+.lp-rail .event-stream ol { flex: 1; max-height: none; overflow: visible; }
+
+.lp-new-pill {
+  background: var(--green);
+  border: none;
+  border-radius: 99px;
+  box-shadow: 0 6px 18px rgb(72 213 151 / 0.35);
+  color: #06110d;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 700;
+  left: 50%;
+  padding: 6px 14px;
+  position: absolute;
+  top: 8px;
+  transform: translateX(-50%);
+  z-index: 6;
+}
+
+/* 空闲待命面板：无运行时与办公室并排展示 */
+.lp-idle-panel {
+  align-self: start;
+  display: grid;
+  gap: 10px;
+  padding: 24px;
+}
+.lp-idle-panel h2 { font-size: 17px; letter-spacing: -0.02em; margin: 0; }
+.lp-idle-panel p { color: var(--muted); font-size: 12px; line-height: 1.7; margin: 0; }
+.lp-idle-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 6px; }
+
+/* 页头运行切换器 */
+.lp-run-switcher { max-width: 280px; }

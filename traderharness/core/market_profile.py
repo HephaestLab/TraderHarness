@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Protocol, runtime_checkable
 
 TWO_PLACES = Decimal("0.01")
@@ -34,7 +34,7 @@ class AShareProfile:
     """A-share (China mainland) market rules.
 
     - Normal stocks: ±10% daily price limit
-    - STAR Market (688xxx) / ChiNext (300xxx): ±20%
+    - STAR Market (688xxx/689xxx) / ChiNext (300xxx/301xxx): ±20%
     - Round lot: 100 shares
     - Settlement: T+1
     - Commission: 0.025%, min 5 yuan
@@ -71,4 +71,4 @@ class AShareProfile:
         return comm, stamp
 
     def is_wide_limit(self, stock_code: str) -> bool:
-        return stock_code.startswith("688") or stock_code.startswith("300")
+        return stock_code.startswith(("688", "689", "300", "301"))

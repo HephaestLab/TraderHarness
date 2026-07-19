@@ -5,12 +5,17 @@
 
 from __future__ import annotations
 
-from traderharness.tools.registry import ToolDefinition, ToolContext
+from traderharness.tools.registry import ToolContext, ToolDefinition
 
 
 async def handle_get_portfolio(params: dict, ctx: ToolContext) -> dict:
     portfolio = ctx.portfolio
-    prices = ctx.execution_price if ctx.execution_price else {}
+    if ctx.current_phase == "pre_market":
+        from traderharness.agents.window_context import previous_close_prices
+
+        prices = previous_close_prices(ctx)
+    else:
+        prices = ctx.execution_price if ctx.execution_price else {}
 
     total_value = float(portfolio.total_value(prices)) if prices else float(portfolio.cash)
     initial = float(ctx.initial_cash)
@@ -20,15 +25,21 @@ async def handle_get_portfolio(params: dict, ctx: ToolContext) -> dict:
     for code, pos in portfolio.positions.items():
         price = prices.get(code)
         current_price = float(price) if price else float(pos.avg_cost)
-        pnl_pct = ((current_price - float(pos.avg_cost)) / float(pos.avg_cost) * 100) if pos.avg_cost else 0
-        positions.append({
-            "stock_code": code,
-            "quantity": pos.quantity,
-            "avg_cost": float(pos.avg_cost),
-            "current_price": current_price,
-            "pnl_pct": round(pnl_pct, 2),
-            "market_value": round(current_price * pos.quantity, 2),
-        })
+        pnl_pct = (
+            ((current_price - float(pos.avg_cost)) / float(pos.avg_cost) * 100)
+            if pos.avg_cost
+            else 0
+        )
+        positions.append(
+            {
+                "stock_code": code,
+                "quantity": pos.quantity,
+                "avg_cost": float(pos.avg_cost),
+                "current_price": current_price,
+                "pnl_pct": round(pnl_pct, 2),
+                "market_value": round(current_price * pos.quantity, 2),
+            }
+        )
 
     return {
         "cash": round(float(portfolio.cash), 2),
@@ -45,9 +56,16 @@ async def handle_get_position(params: dict, ctx: ToolContext) -> dict:
     if pos is None:
         return {"error": f"未持有 {code}"}
 
-    price = ctx.execution_price.get(code)
+    if ctx.current_phase == "pre_market":
+        from traderharness.agents.window_context import previous_close_prices
+
+        price = previous_close_prices(ctx).get(code)
+    else:
+        price = ctx.execution_price.get(code)
     current_price = float(price) if price else float(pos.avg_cost)
-    pnl_pct = ((current_price - float(pos.avg_cost)) / float(pos.avg_cost) * 100) if pos.avg_cost else 0
+    pnl_pct = (
+        ((current_price - float(pos.avg_cost)) / float(pos.avg_cost) * 100) if pos.avg_cost else 0
+    )
     sellable = pos.sellable_quantity(ctx.current_date)
 
     return {

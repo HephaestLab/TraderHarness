@@ -36,7 +36,12 @@ class DailyMemory:
             entries = [e for e in entries if e["date"] < before_date.isoformat()]
         return entries[-n:]
 
-    def to_prompt_text(self, before_date: date | None = None, max_tokens: int = 8000) -> str:
+    def to_prompt_text(
+        self,
+        before_date: date | None = None,
+        max_tokens: int = 8000,
+        entity_masker=None,
+    ) -> str:
         """Append-mode memory with date masking — uses relative day index instead of calendar dates."""
         entries = self._entries
         if before_date:
@@ -61,7 +66,7 @@ class DailyMemory:
         # Estimate tokens (rough: 1 token ≈ 2 chars for Chinese)
         est_tokens = len(full_text) // 2
         if est_tokens <= max_tokens:
-            return full_text
+            return entity_masker.mask_text(full_text) if entity_masker is not None else full_text
 
         # Over budget: compress earlier entries, keep recent 5 days full
         recent_count = min(5, len(entries))
@@ -75,7 +80,9 @@ class DailyMemory:
             for j, entry in enumerate(early):
                 summary = entry["summary"][:60]
                 trade_count = len(entry.get("trades", []))
-                lines.append(f"  第{j + 1}天: {summary}{'...' if len(entry['summary']) > 60 else ''} ({trade_count}笔交易)")
+                lines.append(
+                    f"  第{j + 1}天: {summary}{'...' if len(entry['summary']) > 60 else ''} ({trade_count}笔交易)"
+                )
 
         start_idx = len(early)
         for j, entry in enumerate(recent):
@@ -88,7 +95,8 @@ class DailyMemory:
                     code = t.get("stock_code", "")
                     lines.append(f"  - {action} {code}")
 
-        return "\n".join(lines)
+        text = "\n".join(lines)
+        return entity_masker.mask_text(text) if entity_masker is not None else text
 
     def clear(self) -> None:
         self._entries = []

@@ -5,17 +5,22 @@ from decimal import Decimal
 
 import pytest
 
-from traderharness.metrics.behavior import calculate_behavior, BehaviorMetrics
+from traderharness.metrics.behavior import BehaviorMetrics, calculate_behavior
 
 
 @pytest.fixture
 def sample_trades():
     return [
-        {"action": "buy", "stock_code": "600519", "date": "2024-01-05", "amount": 180000, "quantity": 100, "price": 1800},
-        {"action": "buy", "stock_code": "000001", "date": "2024-01-08", "amount": 15000, "quantity": 1000, "price": 15},
-        {"action": "sell", "stock_code": "600519", "date": "2024-01-15", "amount": 185000, "quantity": 100, "price": 1850, "pnl": 5000},
-        {"action": "sell", "stock_code": "000001", "date": "2024-01-20", "amount": 14000, "quantity": 1000, "price": 14, "pnl": -1000},
-        {"action": "buy", "stock_code": "300750", "date": "2024-01-22", "amount": 100000, "quantity": 500, "price": 200},
+        {"action": "buy", "stock_code": "600519", "date": "2024-01-05",
+         "amount": 180000, "quantity": 100, "price": 1800},
+        {"action": "buy", "stock_code": "000001", "date": "2024-01-08",
+         "amount": 15000, "quantity": 1000, "price": 15},
+        {"action": "sell", "stock_code": "600519", "date": "2024-01-15",
+         "amount": 185000, "quantity": 100, "price": 1850, "pnl": 5000},
+        {"action": "sell", "stock_code": "000001", "date": "2024-01-20",
+         "amount": 14000, "quantity": 1000, "price": 14, "pnl": -1000},
+        {"action": "buy", "stock_code": "300750", "date": "2024-01-22",
+         "amount": 100000, "quantity": 500, "price": 200},
     ]
 
 

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import date
-from io import StringIO
 
 import httpx
 import pandas as pd
@@ -17,9 +16,7 @@ class TencentProvider:
     def __init__(self) -> None:
         self._client = httpx.AsyncClient(timeout=30.0)
 
-    async def get_daily_bars(
-        self, stock_code: str, start: date, end: date
-    ) -> pd.DataFrame:
+    async def get_daily_bars(self, stock_code: str, start: date, end: date) -> pd.DataFrame:
         prefix = "sh" if stock_code.startswith("6") else "sz"
         symbol = f"{prefix}{stock_code}"
         params = {
@@ -43,14 +40,16 @@ class TencentProvider:
         rows = []
         for k in klines:
             if len(k) >= 6:
-                rows.append({
-                    "date": k[0],
-                    "open": float(k[1]),
-                    "close": float(k[2]),
-                    "high": float(k[3]),
-                    "low": float(k[4]),
-                    "volume": float(k[5]),
-                })
+                rows.append(
+                    {
+                        "date": k[0],
+                        "open": float(k[1]),
+                        "close": float(k[2]),
+                        "high": float(k[3]),
+                        "low": float(k[4]),
+                        "volume": float(k[5]),
+                    }
+                )
         df = pd.DataFrame(rows)
         df["date"] = pd.to_datetime(df["date"]).dt.date
         mask = (df["date"] >= start) & (df["date"] <= end)

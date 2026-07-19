@@ -1,6 +1,5 @@
 """Tests for EventBus (hook system)."""
 
-import pytest
 
 from traderharness.core.events import EventBus
 
@@ -31,7 +30,9 @@ class TestEventBus:
     def test_off_removes_handler(self):
         bus = EventBus()
         calls = []
-        handler = lambda **kw: calls.append(1)
+        def handler(**kw):
+            calls.append(1)
+
         bus.on("day_end", handler)
         bus.off("day_end", handler)
         bus.emit("day_end")

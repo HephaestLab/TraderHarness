@@ -1,7 +1,6 @@
 """Tests for data providers."""
 
 from datetime import date
-from pathlib import Path
 
 import pandas as pd
 import pytest

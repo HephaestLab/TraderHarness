@@ -4,9 +4,8 @@ from datetime import date, timedelta
 from decimal import Decimal
 
 import pandas as pd
-import pytest
 
-from traderharness.core.env import TradingEnv, EnvConfig
+from traderharness.core.env import EnvConfig, TradingEnv
 from traderharness.metrics.performance import calculate_metrics
 
 
@@ -44,6 +43,33 @@ class RealisticDataProvider:
 
     async def get_stock_list(self) -> list[dict]:
         return [{"code": c, "name": c} for c in self._data.keys()]
+
+    async def get_5min_bars(self, stock_code: str, start: date, end: date) -> pd.DataFrame:
+        # TradingBus only fills against 5-minute sub-window bars (no daily
+        # open/close fallback), so provide matching intraday bars for tests
+        # that exercise place_order.
+        from datetime import datetime
+
+        df = self._data.get(stock_code)
+        if df is None:
+            return pd.DataFrame()
+        mask = (df["date"] >= start) & (df["date"] <= end)
+        rows = []
+        for _, row in df[mask].iterrows():
+            d = row["date"]
+            rows.append({
+                "datetime": datetime.combine(d, datetime.min.time()).replace(hour=9, minute=40),
+                "date": d,
+                "open": row["open"], "high": row["high"], "low": row["low"],
+                "close": row["open"], "volume": 1000,
+            })
+            rows.append({
+                "datetime": datetime.combine(d, datetime.min.time()).replace(hour=14, minute=40),
+                "date": d,
+                "open": row["close"], "high": row["high"], "low": row["low"],
+                "close": row["close"], "volume": 1000,
+            })
+        return pd.DataFrame(rows)
 
 
 class BuyAndHoldAgent:

@@ -9,11 +9,10 @@ import hashlib
 import json
 import logging
 from datetime import date
-from pathlib import Path
-
-logger = logging.getLogger(__name__)
 
 from traderharness.paths import prompt_audit_cache_dir
+
+logger = logging.getLogger(__name__)
 
 _AUDIT_CACHE_DIR = prompt_audit_cache_dir()
 
@@ -48,9 +47,7 @@ async def audit_persona(
 
     Returns: {"leak_found": bool, "details": str, "cached": bool}
     """
-    cache_key = hashlib.sha256(
-        f"{persona}|{backtest_start}|{backtest_end}".encode()
-    ).hexdigest()
+    cache_key = hashlib.sha256(f"{persona}|{backtest_start}|{backtest_end}".encode()).hexdigest()
 
     cached = _get_cached(cache_key)
     if cached is not None:
@@ -81,9 +78,7 @@ async def audit_persona(
     result["cached"] = False
 
     if result.get("leak_found"):
-        logger.warning(
-            "PROMPT AUDIT WARNING: 检测到未来信息泄露! %s", result["details"]
-        )
+        logger.warning("PROMPT AUDIT WARNING: 检测到未来信息泄露! %s", result["details"])
 
     return result
 

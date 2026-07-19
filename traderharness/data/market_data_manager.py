@@ -62,21 +62,24 @@ class MarketDataManager:
         return d.exists() and any(d.rglob("*.parquet"))
 
     def has_5min_cache(self) -> bool:
-        return (
-            self.min5_path.exists()
-            or self._dir_has_parquet(self.min5_clean_dir)
-            or self._dir_has_parquet(self.min5_chunks_dir)
-        )
+        """Whether the canonical, cleaned 5-minute dataset is installed."""
+        return self._dir_has_parquet(self.min5_clean_dir)
 
-    def load_daily(self, start_date: "date | None" = None, end_date: "date | None" = None) -> pd.DataFrame:
+    def load_daily(
+        self, start_date: date | None = None, end_date: date | None = None
+    ) -> pd.DataFrame:
         """加载日线缓存。支持时间范围过滤（pyarrow pushdown）。"""
         if not self.has_daily_cache():
-            self.fetch_daily()
+            raise FileNotFoundError(
+                f"Canonical daily dataset not found at {self.daily_path}. "
+                "Run `traderharness data download --full`."
+            )
         logger.info("Loading daily cache: %s", self.daily_path)
 
         if start_date or end_date:
-            import pyarrow.dataset as ds
             import pyarrow as pa
+            import pyarrow.dataset as ds
+
             dataset = ds.dataset(self.daily_path, format="parquet")
             filters = []
             if start_date:
@@ -98,29 +101,64 @@ class MarketDataManager:
                 df["date"] = pd.to_datetime(df["date"]).dt.date
         return df
 
-    def load_5min(self, start_date: "date | None" = None, end_date: "date | None" = None) -> pd.DataFrame:
-        """加载5分钟线缓存。
+    def load_daily_for_codes(
+        self,
+        codes: list[str] | set[str],
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> pd.DataFrame:
+        """Load daily rows for a small set of stock codes via pyarrow pushdown.
 
-        优先级：5min_clean/（清洗+按年分区的5年全量）> 5min_chunks/（原始分片）
-        > 5min.parquet（近期单文件）。pyarrow dataset 支持目录级 pushdown filter，
-        并对 clean 目录按 year 分区做文件级剪枝，内存与速度都更优。
+        Used by post-backtest evaluation tooling (e.g. K-line evidence for a
+        fill the agent never queried) that must not force a full-market load
+        just to backfill a handful of trades.
+        """
+        codes = sorted({str(code) for code in codes if code})
+        if not codes:
+            return pd.DataFrame()
+        if not self.has_daily_cache():
+            raise FileNotFoundError(
+                f"Canonical daily dataset not found at {self.daily_path}. "
+                "Run `traderharness data download --full`."
+            )
+
+        import pyarrow as pa
+        import pyarrow.dataset as ds
+
+        dataset = ds.dataset(self.daily_path, format="parquet")
+        combined_filter = ds.field("stock_code").isin(codes)
+        if start_date:
+            combined_filter = combined_filter & (ds.field("date") >= pa.scalar(pd.Timestamp(start_date)))
+        if end_date:
+            combined_filter = combined_filter & (ds.field("date") <= pa.scalar(pd.Timestamp(end_date)))
+        df = dataset.to_table(filter=combined_filter).to_pandas()
+
+        if "date" in df.columns:
+            if pd.api.types.is_datetime64_any_dtype(df["date"]):
+                df["date"] = df["date"].dt.date
+            else:
+                df["date"] = pd.to_datetime(df["date"]).dt.date
+        return df
+
+    def load_5min(
+        self, start_date: date | None = None, end_date: date | None = None
+    ) -> pd.DataFrame:
+        """Load the canonical year-partitioned 5-minute dataset.
+
+        Raw ``5min_chunks/`` and the legacy recent-only ``5min.parquet`` are
+        deliberately not fallbacks: accepting either silently changes the
+        tested market universe and history length.
         """
         if not self.has_5min_cache():
-            return pd.DataFrame()
+            raise FileNotFoundError(
+                "Canonical 5-minute dataset not found at "
+                f"{self.min5_clean_dir}. Run `traderharness data download --full`."
+            )
 
         import pyarrow.dataset as ds
 
-        # Prefer cleaned partitioned dataset > raw chunks > single recent file
-        clean = self._dir_has_parquet(self.min5_clean_dir)
-        if clean:
-            dataset = ds.dataset(self.min5_clean_dir, format="parquet", partitioning="hive")
-            logger.info("Loading 5min from clean dir: %s", self.min5_clean_dir)
-        elif self._dir_has_parquet(self.min5_chunks_dir):
-            dataset = ds.dataset(self.min5_chunks_dir, format="parquet")
-            logger.info("Loading 5min from chunks dir: %s", self.min5_chunks_dir)
-        else:
-            dataset = ds.dataset(self.min5_path, format="parquet")
-            logger.info("Loading 5min from single file: %s", self.min5_path)
+        dataset = ds.dataset(self.min5_clean_dir, format="parquet", partitioning="hive")
+        logger.info("Loading canonical 5min dataset: %s", self.min5_clean_dir)
 
         filters = []
         if start_date:
@@ -129,7 +167,7 @@ class MarketDataManager:
             filters.append(ds.field("date") <= pd.Timestamp(end_date))
 
         # Directory-level pruning on the year partition (clean dataset only).
-        if clean and (start_date or end_date):
+        if start_date or end_date:
             y0 = (start_date or end_date).year
             y1 = (end_date or start_date).year
             filters.append(ds.field("year").isin(list(range(y0, y1 + 1))))
@@ -192,6 +230,7 @@ class MarketDataManager:
         t0 = time.time()
 
         local = threading.local()
+
         def get_api():
             if not hasattr(local, "api"):
                 local.api = Quotes.factory(market="std")
@@ -203,15 +242,19 @@ class MarketDataManager:
                     api = get_api()
                     df = api.bars(symbol=code, frequency=9, offset=800)
                     if df is not None and len(df) > 30:
-                        return pd.DataFrame({
-                            "stock_code": code,
-                            "date": pd.to_datetime(df.index).date,
-                            "open": df["open"].values,
-                            "high": df["high"].values,
-                            "low": df["low"].values,
-                            "close": df["close"].values,
-                            "volume": (df["volume"] if "volume" in df.columns else df["vol"]).astype(int).values,
-                        })
+                        return pd.DataFrame(
+                            {
+                                "stock_code": code,
+                                "date": pd.to_datetime(df.index).date,
+                                "open": df["open"].values,
+                                "high": df["high"].values,
+                                "low": df["low"].values,
+                                "close": df["close"].values,
+                                "volume": (df["volume"] if "volume" in df.columns else df["vol"])
+                                .astype(int)
+                                .values,
+                            }
+                        )
                     return None
                 except Exception:
                     if attempt < max_retries - 1:
@@ -235,7 +278,12 @@ class MarketDataManager:
         combined = pd.concat(all_frames, ignore_index=True)
         combined.to_parquet(self.daily_path, index=False)
         self._save_metadata("daily", len(all_frames), combined)
-        logger.info("Daily cache saved: %d stocks, %d rows, %.0fs", len(all_frames), len(combined), time.time() - t0)
+        logger.info(
+            "Daily cache saved: %d stocks, %d rows, %.0fs",
+            len(all_frames),
+            len(combined),
+            time.time() - t0,
+        )
 
     def fetch_5min(self) -> None:
         """从 mootdx 拉取全市场 A 股5分钟线并存为单个 parquet。8 并发 + 翻页。"""
@@ -261,10 +309,13 @@ class MarketDataManager:
             if c.startswith(("000", "001", "002", "003", "300", "301")):
                 codes.append(c)
 
-        logger.info("Fetching 5min bars for %d A-share stocks (8 workers, 15 pages each)...", len(codes))
+        logger.info(
+            "Fetching 5min bars for %d A-share stocks (8 workers, 15 pages each)...", len(codes)
+        )
         t0 = time.time()
 
         local = threading.local()
+
         def get_api():
             if not hasattr(local, "api"):
                 local.api = Quotes.factory(market="std")
@@ -284,16 +335,24 @@ class MarketDataManager:
                         return None
                     combined = pd.concat(page_bars).sort_index()
                     combined = combined[~combined.index.duplicated()]
-                    return pd.DataFrame({
-                        "stock_code": code,
-                        "datetime": pd.to_datetime(combined.index),
-                        "date": pd.to_datetime(combined.index).date,
-                        "open": combined["open"].values,
-                        "high": combined["high"].values,
-                        "low": combined["low"].values,
-                        "close": combined["close"].values,
-                        "volume": (combined["volume"] if "volume" in combined.columns else combined["vol"]).astype(int).values,
-                    })
+                    return pd.DataFrame(
+                        {
+                            "stock_code": code,
+                            "datetime": pd.to_datetime(combined.index),
+                            "date": pd.to_datetime(combined.index).date,
+                            "open": combined["open"].values,
+                            "high": combined["high"].values,
+                            "low": combined["low"].values,
+                            "close": combined["close"].values,
+                            "volume": (
+                                combined["volume"]
+                                if "volume" in combined.columns
+                                else combined["vol"]
+                            )
+                            .astype(int)
+                            .values,
+                        }
+                    )
                 except Exception:
                     if attempt < max_retries - 1:
                         local.api = None
@@ -327,7 +386,10 @@ class MarketDataManager:
             "stock_count": stock_count,
             "total_rows": len(df),
             "fetched_at": datetime.now().isoformat(),
-            "date_range": [str(df["date"].min()), str(df["date"].max())] if "date" in df.columns else [],
+            "date_range": [str(df["date"].min()), str(df["date"].max())]
+            if "date" in df.columns
+            else [],
         }
-        self.metadata_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
-
+        self.metadata_path.write_text(
+            json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
+        )

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from traderharness.tools.registry import ToolDefinition, ToolContext
+from traderharness.tools.registry import ToolContext, ToolDefinition
 
 
 async def handle_add_watchlist(params: dict, ctx: ToolContext) -> dict:
@@ -46,7 +46,9 @@ async def handle_get_watchlist(params: dict, ctx: ToolContext) -> dict:
                 info["close"] = round(float(last["close"]), 2)
                 if len(filtered) >= 2:
                     prev = filtered.iloc[-2]
-                    change = (float(last["close"]) - float(prev["close"])) / float(prev["close"]) * 100
+                    change = (
+                        (float(last["close"]) - float(prev["close"])) / float(prev["close"]) * 100
+                    )
                     info["change_pct"] = round(change, 2)
         items.append(info)
 

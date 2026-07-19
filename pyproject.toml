@@ -4,15 +4,26 @@ build-backend = "hatchling.build"
 
 [project]
 name = "traderharness"
-version = "0.1.0"
-description = "A realistic LLM-native harness for building, testing, and benchmarking autonomous trading agents"
+version = "1.0.0"
+description = "Contamination-resistant A-share backtesting, evaluation, and trajectory generation for autonomous LLM trading agents"
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.10"
 authors = [{ name = "HephaestLab" }]
-keywords = ["llm", "trading", "agents", "backtesting", "benchmark"]
+keywords = [
+    "llm-agents",
+    "autonomous-agents",
+    "quantitative-trading",
+    "backtesting",
+    "a-share",
+    "benchmark",
+    "deepseek",
+    "synthetic-data",
+    "sft",
+    "rlhf",
+]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
@@ -24,7 +35,7 @@ classifiers = [
 dependencies = [
     "pandas>=2.0",
     "numpy>=1.24",
-    "httpx>=0.25",
+    "httpx>=0.25,<0.26",
     "pyyaml>=6.0",
     "click>=8.0",
     "jinja2>=3.1",
@@ -33,18 +44,35 @@ dependencies = [
 
 [project.optional-dependencies]
 llm = ["openai>=1.58", "tenacity>=8.0", "json-repair>=0.27"]
-data = ["mootdx>=0.11.7"]
-ui = ["streamlit>=1.30", "plotly>=5.18"]
+data = [
+    "mootdx>=0.11.7",
+    "baostock>=0.9.1",
+    "duckdb>=1.5.4",
+    "flashtext>=2.7",
+    "huggingface_hub>=0.34",
+]
+ui = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+]
 dev = ["pytest>=7.0", "pytest-cov>=4.0", "pytest-asyncio>=0.21", "ruff>=0.4", "mypy>=1.8"]
-all = ["traderharness[llm,data,ui,dev]"]
+docs = ["mkdocs-material>=9.5", "mkdocs-minify-plugin>=0.8"]
+all = ["traderharness[llm,data,ui,dev,docs]"]
 
 [project.scripts]
 traderharness = "traderharness.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/HephaestLab/traderharness"
-Repository = "https://github.com/HephaestLab/traderharness"
-Issues = "https://github.com/HephaestLab/traderharness/issues"
+Homepage = "https://github.com/HephaestLab/TraderHarness"
+Documentation = "https://hephaestlab.github.io/TraderHarness/"
+Repository = "https://github.com/HephaestLab/TraderHarness"
+Issues = "https://github.com/HephaestLab/TraderHarness/issues"
+
+[tool.hatch.build.targets.wheel.force-include]
+"examples/replays/momentum_dragon_2024-03-14.jsonl" = "traderharness/demo/momentum_dragon_2024-03-14.jsonl"
+
+[tool.hatch.build]
+artifacts = ["traderharness/ui/static/**"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -53,7 +81,8 @@ asyncio_mode = "auto"
 
 [tool.ruff]
 target-version = "py310"
-line-length = 100
+line-length = 120
+extend-exclude = ["scripts/archive"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]
@@ -70,9 +99,12 @@ branch = true
 omit = [
     "traderharness/ui/*",
     "traderharness/cli.py",
+    "traderharness/agents/llm_client.py",
+    "traderharness/agents/prompt_audit.py",
     "traderharness/data/providers/mootdx.py",
     "traderharness/data/providers/tencent.py",
     "traderharness/data/providers/base.py",
+    "traderharness/data/update_providers.py",
     "traderharness/data/datasets.py",
     "traderharness/tools/market.py",
     "traderharness/tools/portfolio.py",

@@ -7,6 +7,7 @@ export const MAX_ROWS = 32;
 export const TileType = {
   WALL: 0,
   FLOOR: 1,
+  BLOCKED: 2,
   VOID: 255,
 } as const;
 export type TileType = (typeof TileType)[keyof typeof TileType];
@@ -18,6 +19,9 @@ export const CharacterState = {
   COFFEE: "coffee",
   MEETING: "meeting",
   BOARD: "board",
+  SIT_IDLE: "sit_idle",
+  RELAX: "relax",
+  ACT: "act",
 } as const;
 export type CharacterState =
   (typeof CharacterState)[keyof typeof CharacterState];
@@ -34,6 +38,21 @@ export interface ActionBubble {
   icon: string;
   timer: number;
   duration: number;
+}
+
+/** A scripted errand: walk to a spot, act briefly, walk back. */
+export interface CharacterTask {
+  kind: "order" | "chat";
+  phase: "go" | "act" | "back";
+  standCol: number;
+  standRow: number;
+  standDir: Direction;
+  returnCol: number;
+  returnRow: number;
+  actTimer: number;
+  actDuration: number;
+  bubbleIcon: string;
+  bubbleDuration: number;
 }
 
 export interface Character {
@@ -55,7 +74,14 @@ export interface Character {
   seatId: string | null;
   currentTool: string | null;
   bubble: ActionBubble | null;
+  bubbleQueue: ActionBubble[];
   activityTimer: number;
+  /** Countdown driving the idle life-rhythm (paperwork bouts / breaks). */
+  restTimer: number;
+  /** Set on day_end/run_end: first sit-down afterwards lasts 20-40s. */
+  offDuty: boolean;
+  task: CharacterTask | null;
+  taskQueue: CharacterTask[];
 }
 
 export interface Seat {
@@ -107,6 +133,7 @@ export const POIType = {
   COFFEE: "coffee",
   BOARD: "board",
   MEETING: "meeting",
+  RISK: "risk",
 } as const;
 export type POIType = (typeof POIType)[keyof typeof POIType];
 

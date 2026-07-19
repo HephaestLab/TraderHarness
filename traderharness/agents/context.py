@@ -83,7 +83,11 @@ class ContextManager:
         while split_idx < len(non_system) and non_system[split_idx].get("role") == "tool":
             split_idx -= 1
         # Also don't split right after an assistant with tool_calls (keep the tool responses together)
-        if split_idx > 0 and non_system[split_idx - 1].get("role") == "assistant" and non_system[split_idx - 1].get("tool_calls"):
+        if (
+            split_idx > 0
+            and non_system[split_idx - 1].get("role") == "assistant"
+            and non_system[split_idx - 1].get("tool_calls")
+        ):
             split_idx -= 1
 
         if split_idx <= 0:
@@ -108,11 +112,11 @@ class ContextManager:
 
         summary_content = "=== 前序分析摘要（已压缩）===\n" + "\n".join(compress_text)
 
-        self._messages = system_msgs + [
-            {"role": "user", "content": summary_content}
-        ] + to_keep
+        self._messages = system_msgs + [{"role": "user", "content": summary_content}] + to_keep
 
         logger.info(
             "context_compressed: compressed=%d remaining=%d est_tokens=%d",
-            len(to_compress), len(self._messages), self.estimate_tokens(),
+            len(to_compress),
+            len(self._messages),
+            self.estimate_tokens(),
         )

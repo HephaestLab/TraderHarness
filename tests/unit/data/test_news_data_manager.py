@@ -1,36 +1,41 @@
 """TDD tests for NewsDataManager — P0 announcements + P1 policy filtering."""
 
-from datetime import date, datetime
+import os
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
 import pytest
 
-from traderharness.data.news_data_manager import NewsDataManager, POLICY_KEYWORDS
+from traderharness.data.news_data_manager import NewsDataManager
 
 
 @pytest.fixture
 def sample_announcements(tmp_path: Path) -> Path:
-    df = pd.DataFrame({
-        "stock_code": ["600519", "600519", "000001", "300750", "600519"],
-        "stock_name": ["贵州茅台", "贵州茅台", "平安银行", "宁德时代", "贵州茅台"],
-        "title": [
-            "2023年年度报告",
-            "关于高管增持的公告",
-            "2023年第四季度报告",
-            "关于新建产能的公告",
-            "2024年第一季度报告",
-        ],
-        "announcement_time": pd.to_datetime([
-            "2024-03-03 20:30:00",
-            "2024-03-04 08:00:00",
-            "2024-03-03 21:00:00",
-            "2024-03-05 07:00:00",
-            "2024-03-10 19:00:00",
-        ]),
-        "pdf_url": [""] * 5,
-        "ann_type": [None] * 5,
-    })
+    df = pd.DataFrame(
+        {
+            "stock_code": ["600519", "600519", "000001", "300750", "600519"],
+            "stock_name": ["贵州茅台", "贵州茅台", "平安银行", "宁德时代", "贵州茅台"],
+            "title": [
+                "2023年年度报告",
+                "关于高管增持的公告",
+                "2023年第四季度报告",
+                "关于新建产能的公告",
+                "2024年第一季度报告",
+            ],
+            "announcement_time": pd.to_datetime(
+                [
+                    "2024-03-03 20:30:00",
+                    "2024-03-04 08:00:00",
+                    "2024-03-03 21:00:00",
+                    "2024-03-05 07:00:00",
+                    "2024-03-10 19:00:00",
+                ]
+            ),
+            "pdf_url": [""] * 5,
+            "ann_type": [None] * 5,
+        }
+    )
     path = tmp_path / "announcements.parquet"
     df.to_parquet(path, index=False)
     return tmp_path
@@ -38,34 +43,38 @@ def sample_announcements(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def sample_news(tmp_path: Path) -> Path:
-    df = pd.DataFrame({
-        "id": [1, 2, 3, 4, 5],
-        "title": ["央行降准", "特斯拉涨", "证监会新规", "苹果发布", "国务院会议"],
-        "content": [
-            "央行决定下调存款准备金率0.5个百分点",
-            "特斯拉股价创新高",
-            "证监会发布关于加强退市制度的新规",
-            "苹果公司发布最新产品",
-            "国务院常务会议研究经济形势",
-        ],
-        "ctime": [
-            int(datetime(2024, 3, 3, 16, 0).timestamp()),
-            int(datetime(2024, 3, 3, 17, 0).timestamp()),
-            int(datetime(2024, 3, 4, 7, 0).timestamp()),
-            int(datetime(2024, 3, 4, 8, 0).timestamp()),
-            int(datetime(2024, 3, 5, 6, 0).timestamp()),
-        ],
-        "display_time": pd.to_datetime([
-            "2024-03-03 16:00:00",
-            "2024-03-03 17:00:00",
-            "2024-03-04 07:00:00",
-            "2024-03-04 08:00:00",
-            "2024-03-05 06:00:00",
-        ]),
-        "level": ["A", "C", "A", "C", "A"],
-        "tags": [""] * 5,
-        "stock_list": [""] * 5,
-    })
+    df = pd.DataFrame(
+        {
+            "id": [1, 2, 3, 4, 5],
+            "title": ["央行降准", "特斯拉涨", "证监会新规", "苹果发布", "国务院会议"],
+            "content": [
+                "央行决定下调存款准备金率0.5个百分点",
+                "特斯拉股价创新高",
+                "证监会发布关于加强退市制度的新规",
+                "苹果公司发布最新产品",
+                "国务院常务会议研究经济形势",
+            ],
+            "ctime": [
+                int(datetime(2024, 3, 3, 16, 0).timestamp()),
+                int(datetime(2024, 3, 3, 17, 0).timestamp()),
+                int(datetime(2024, 3, 4, 7, 0).timestamp()),
+                int(datetime(2024, 3, 4, 8, 0).timestamp()),
+                int(datetime(2024, 3, 5, 6, 0).timestamp()),
+            ],
+            "display_time": pd.to_datetime(
+                [
+                    "2024-03-03 16:00:00",
+                    "2024-03-03 17:00:00",
+                    "2024-03-04 07:00:00",
+                    "2024-03-04 08:00:00",
+                    "2024-03-05 06:00:00",
+                ]
+            ),
+            "level": ["A", "C", "A", "C", "A"],
+            "tags": [""] * 5,
+            "stock_list": [""] * 5,
+        }
+    )
     path = tmp_path / "news_cls.parquet"
     df.to_parquet(path, index=False)
     return tmp_path
@@ -81,6 +90,61 @@ class TestNewsDataManagerLoad:
         mgr = NewsDataManager(dataset_dir=sample_news)
         mgr.load()
         assert len(mgr.news) == 5
+
+    def test_masked_mode_prefers_templated_text_files(self, tmp_path):
+        original_ann = pd.DataFrame(
+            {
+                "stock_code": ["600519"],
+                "stock_name": ["贵州茅台"],
+                "title": ["贵州茅台公告"],
+                "announcement_time": pd.to_datetime(["2024-03-03 20:30:00"]),
+            }
+        )
+        templated_ann = original_ann.copy()
+        templated_ann["stock_name"] = "{{C600519}}"
+        templated_ann["title"] = "{{C600519}}公告"
+        original_ann.to_parquet(tmp_path / "announcements.parquet", index=False)
+        templated_ann.to_parquet(tmp_path / "announcements_templated.parquet", index=False)
+
+        original_news = pd.DataFrame(
+            {
+                "id": [1],
+                "content": ["贵州茅台新闻"],
+                "display_time": pd.to_datetime(["2024-03-03 20:30:00"]),
+            }
+        )
+        templated_news = original_news.copy()
+        templated_news["content"] = "{{C600519}}新闻"
+        original_news.to_parquet(tmp_path / "news_cls.parquet", index=False)
+        templated_news.to_parquet(tmp_path / "news_cls_templated.parquet", index=False)
+
+        mgr = NewsDataManager(dataset_dir=tmp_path, templated=True)
+        mgr.load()
+
+        assert mgr.announcements.iloc[0]["title"] == "{{C600519}}公告"
+        assert mgr.news.iloc[0]["content"] == "{{C600519}}新闻"
+
+    def test_masked_mode_rejects_stale_templated_file(self, tmp_path):
+        original = pd.DataFrame(
+            {
+                "stock_code": ["600519"],
+                "title": ["最新公告"],
+                "announcement_time": pd.to_datetime(["2024-03-04 08:00:00"]),
+            }
+        )
+        templated = original.copy()
+        templated["title"] = "{{C600519}}旧公告"
+        original_path = tmp_path / "announcements.parquet"
+        templated_path = tmp_path / "announcements_templated.parquet"
+        templated.to_parquet(templated_path, index=False)
+        original.to_parquet(original_path, index=False)
+        os.utime(templated_path, (1, 1))
+        os.utime(original_path, (2, 2))
+
+        mgr = NewsDataManager(dataset_dir=tmp_path, templated=True)
+        mgr.load()
+
+        assert mgr.announcements.iloc[0]["title"] == "最新公告"
 
     def test_missing_files_no_crash(self, tmp_path):
         mgr = NewsDataManager(dataset_dir=tmp_path)
@@ -164,26 +228,30 @@ class TestP1PolicyNews:
 class TestWindowNews:
     def test_returns_both_p0_and_p1(self, tmp_path):
         # Create both files in one directory
-        ann_df = pd.DataFrame({
-            "stock_code": ["600519"],
-            "stock_name": ["贵州茅台"],
-            "title": ["关于高管增持的公告"],
-            "announcement_time": pd.to_datetime(["2024-03-04 08:00:00"]),
-            "pdf_url": [""],
-            "ann_type": [None],
-        })
+        ann_df = pd.DataFrame(
+            {
+                "stock_code": ["600519"],
+                "stock_name": ["贵州茅台"],
+                "title": ["关于高管增持的公告"],
+                "announcement_time": pd.to_datetime(["2024-03-04 08:00:00"]),
+                "pdf_url": [""],
+                "ann_type": [None],
+            }
+        )
         ann_df.to_parquet(tmp_path / "announcements.parquet", index=False)
 
-        news_df = pd.DataFrame({
-            "id": [1],
-            "title": ["证监会新规"],
-            "content": ["证监会发布关于加强退市制度的新规"],
-            "ctime": [int(datetime(2024, 3, 4, 7, 0).timestamp())],
-            "display_time": pd.to_datetime(["2024-03-04 07:00:00"]),
-            "level": ["A"],
-            "tags": [""],
-            "stock_list": [""],
-        })
+        news_df = pd.DataFrame(
+            {
+                "id": [1],
+                "title": ["证监会新规"],
+                "content": ["证监会发布关于加强退市制度的新规"],
+                "ctime": [int(datetime(2024, 3, 4, 7, 0).timestamp())],
+                "display_time": pd.to_datetime(["2024-03-04 07:00:00"]),
+                "level": ["A"],
+                "tags": [""],
+                "stock_list": [""],
+            }
+        )
         news_df.to_parquet(tmp_path / "news_cls.parquet", index=False)
 
         mgr = NewsDataManager(dataset_dir=tmp_path)

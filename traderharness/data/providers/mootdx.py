@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date
 
 import pandas as pd
 
@@ -20,15 +20,10 @@ class MootdxProvider:
 
                 self._api = Quotes.factory(market="std")
             except ImportError:
-                raise ImportError(
-                    "mootdx not installed. Run: pip install traderharness[data]"
-                )
+                raise ImportError("mootdx not installed. Run: pip install traderharness[data]")
 
-    async def get_daily_bars(
-        self, stock_code: str, start: date, end: date
-    ) -> pd.DataFrame:
+    async def get_daily_bars(self, stock_code: str, start: date, end: date) -> pd.DataFrame:
         self._ensure_api()
-        market = 1 if stock_code.startswith("6") else 0
         days = (end - start).days + 60
         df = self._api.bars(symbol=stock_code, frequency=9, offset=days)
         if df is None or df.empty:
@@ -49,9 +44,11 @@ class MootdxProvider:
             stocks = self._api.stocks(market=market)
             if stocks is not None:
                 for _, row in stocks.iterrows():
-                    result.append({
-                        "code": row.get("code", ""),
-                        "name": row.get("name", ""),
-                        "market": "sz" if market == 0 else "sh",
-                    })
+                    result.append(
+                        {
+                            "code": row.get("code", ""),
+                            "name": row.get("name", ""),
+                            "market": "sz" if market == 0 else "sh",
+                        }
+                    )
         return result

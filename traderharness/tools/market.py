@@ -6,11 +6,11 @@
 from __future__ import annotations
 
 import logging
-from datetime import timedelta
 
 import pandas as pd
 
-from traderharness.tools.registry import ToolDefinition, ToolContext
+from traderharness.tools.dedup import with_dedup
+from traderharness.tools.registry import ToolContext, ToolDefinition
 
 logger = logging.getLogger(__name__)
 
@@ -53,14 +53,16 @@ async def handle_get_kline(params: dict, ctx: ToolContext) -> dict:
     for i, (_, row) in enumerate(recent.iterrows()):
         offset = n - i
         day_label = masker.mask_date(row["date"]) if masker is not None else f"T-{offset}"
-        records.append({
-            "day": day_label,
-            "open": round(float(row["open"]), 2),
-            "high": round(float(row["high"]), 2),
-            "low": round(float(row["low"]), 2),
-            "close": round(float(row["close"]), 2),
-            "volume": int(row.get("volume", 0)),
-        })
+        records.append(
+            {
+                "day": day_label,
+                "open": round(float(row["open"]), 2),
+                "high": round(float(row["high"]), 2),
+                "low": round(float(row["low"]), 2),
+                "close": round(float(row["close"]), 2),
+                "volume": int(row.get("volume", 0)),
+            }
+        )
 
     result = {"stock_code": code, "count": len(filtered), "recent_20": records}
 
@@ -75,7 +77,12 @@ async def handle_get_kline(params: dict, ctx: ToolContext) -> dict:
             "low": round(float(older["low"].min()), 2),
             "open_price": round(float(older.iloc[0]["open"]), 2),
             "close_price": round(float(older.iloc[-1]["close"]), 2),
-            "change_pct": round((float(older.iloc[-1]["close"]) - float(older.iloc[0]["open"])) / float(older.iloc[0]["open"]) * 100, 2),
+            "change_pct": round(
+                (float(older.iloc[-1]["close"]) - float(older.iloc[0]["open"]))
+                / float(older.iloc[0]["open"])
+                * 100,
+                2,
+            ),
             "avg_volume": int(volumes.mean()),
             "ma5_end": round(float(closes.tail(5).mean()), 2),
             "ma10_end": round(float(closes.tail(10).mean()), 2),
@@ -99,7 +106,9 @@ async def handle_get_stock_price(params: dict, ctx: ToolContext) -> dict:
     last = filtered.iloc[-1]
     prev = filtered.iloc[-2] if len(filtered) >= 2 else last
     prev_close = float(prev["close"])
-    change_pct = ((float(last["close"]) - prev_close) / prev_close * 100) if prev_close != 0 else 0.0
+    change_pct = (
+        ((float(last["close"]) - prev_close) / prev_close * 100) if prev_close != 0 else 0.0
+    )
 
     masker = getattr(ctx, "date_masker", None)
     day_label = masker.mask_date(last["date"]) if masker is not None else "T-1"
@@ -120,7 +129,16 @@ async def handle_get_stock_info(params: dict, ctx: ToolContext) -> dict:
     code = params.get("stock_code", "")
     if not code:
         return {"error": "stock_code 不能为空"}
+
+    # Only serve codes inside this run's market universe. The full packaged
+    # registry covers stocks the run has no data for; answering those would
+    # emit a real company name the entity masker has no alias mapping for.
+    df = await _ensure_daily_data(code, ctx)
+    if df is None or df.empty:
+        return {"error": f"{code} 不在本次回测数据范围内，无法查询"}
+
     from traderharness.data.stock_registry_loader import get_stock_info as _get_info
+
     info = _get_info(code)
     return {
         "stock_code": code,
@@ -137,7 +155,11 @@ GET_KLINE = ToolDefinition(
         "type": "object",
         "properties": {
             "stock_code": {"type": "string", "description": "股票代码，如 600519"},
-            "days": {"type": "integer", "description": "获取最近N个交易日的数据，默认20，最大120", "default": 20},
+            "days": {
+                "type": "integer",
+                "description": "获取最近N个交易日的数据，默认20，最大120",
+                "default": 20,
+            },
         },
         "required": ["stock_code"],
     },
@@ -156,8 +178,6 @@ GET_STOCK_PRICE = ToolDefinition(
     },
     handler=handle_get_stock_price,
 )
-
-from traderharness.tools.dedup import with_dedup
 
 GET_STOCK_INFO = ToolDefinition(
     name="get_stock_info",

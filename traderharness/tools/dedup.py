@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
-from typing import Callable, Awaitable
+from collections.abc import Awaitable, Callable
 
 from traderharness.tools.registry import ToolContext
 
 
-def with_dedup(handler: Callable[[dict, ToolContext], Awaitable[dict]]) -> Callable[[dict, ToolContext], Awaitable[dict]]:
+def with_dedup(
+    handler: Callable[[dict, ToolContext], Awaitable[dict]],
+) -> Callable[[dict, ToolContext], Awaitable[dict]]:
     """Wrap a tool handler with deduplication.
 
     If the same handler is called with the same params within the same ToolContext,

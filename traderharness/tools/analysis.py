@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import logging
 
-from traderharness.tools.registry import ToolDefinition, ToolContext
 from traderharness.data.stock_registry_loader import get_stock_industry
+from traderharness.tools.registry import ToolContext, ToolDefinition
 
 logger = logging.getLogger(__name__)
 
 
-async def handle_get_market_overview(params: dict, ctx: ToolContext) -> dict:
+def build_market_overview(ctx: ToolContext) -> dict:
+    """Point-in-time market overview shared by tools and sandbox MarketAPI."""
     sector_data: dict[str, list[float]] = {}
     total_up = 0
     total_down = 0
@@ -47,13 +48,19 @@ async def handle_get_market_overview(params: dict, ctx: ToolContext) -> dict:
         "total_stocks": total_up + total_down,
         "up_count": total_up,
         "down_count": total_down,
-        "top_sectors": [{"sector": s, "avg_change_pct": round(c, 2)} for s, c in sorted_sectors[:5]],
-        "bottom_sectors": [{"sector": s, "avg_change_pct": round(c, 2)} for s, c in sorted_sectors[-5:]],
+        "top_sectors": [
+            {"sector": s, "avg_change_pct": round(c, 2)} for s, c in sorted_sectors[:5]
+        ],
+        "bottom_sectors": [
+            {"sector": s, "avg_change_pct": round(c, 2)} for s, c in sorted_sectors[-5:]
+        ],
         "total_sectors": len(sorted_sectors),
     }
 
 
-async def handle_screen_stocks(params: dict, ctx: ToolContext) -> dict:
+def build_screen_stocks(ctx: ToolContext, params: dict | None = None) -> dict:
+    """Point-in-time stock screen shared by tools and sandbox MarketAPI."""
+    params = params or {}
     price_min = params.get("price_min", 0)
     price_max = params.get("price_max", 99999)
     change_pct_min = params.get("change_pct_min")
@@ -97,16 +104,20 @@ async def handle_screen_stocks(params: dict, ctx: ToolContext) -> dict:
         prev_5 = filtered.iloc[-5]
         change_5d = (close - float(prev_5["close"])) / float(prev_5["close"]) * 100
 
-        results.append({
-            "code": code,
-            "close": round(close, 2),
-            "change_1d_pct": round(change_1d, 2),
-            "change_5d_pct": round(change_5d, 2),
-            "volume": volume,
-        })
+        results.append(
+            {
+                "code": code,
+                "close": round(close, 2),
+                "change_1d_pct": round(change_1d, 2),
+                "change_5d_pct": round(change_5d, 2),
+                "volume": volume,
+            }
+        )
 
-    sort_key = {"change_5d": "change_5d_pct", "change_1d": "change_1d_pct", "volume": "volume"}.get(sort_by, "change_5d_pct")
-    results.sort(key=lambda x: -x[sort_key])
+    sort_key = {"change_5d": "change_5d_pct", "change_1d": "change_1d_pct", "volume": "volume"}.get(
+        sort_by, "change_5d_pct"
+    )
+    results.sort(key=lambda x: (-x[sort_key], x["code"]))
 
     if not results:
         return {"stocks": [], "total_matched": 0, "hint": "无股票满足筛选条件，建议放宽条件"}
@@ -114,9 +125,8 @@ async def handle_screen_stocks(params: dict, ctx: ToolContext) -> dict:
     return {"stocks": results[:max_results], "total_matched": len(results)}
 
 
-async def handle_get_sector_summary(params: dict, ctx: ToolContext) -> dict:
-    """获取指定板块内股票详情。"""
-    sector = params.get("sector", "")
+def build_sector_constituents(ctx: ToolContext, sector: str) -> list[dict] | dict:
+    """All point-in-time constituents for a sector, or an error dict."""
     if not sector:
         return {"error": "请指定板块名称（如：电力设备、医药生物、金融行业）"}
 
@@ -140,7 +150,17 @@ async def handle_get_sector_summary(params: dict, ctx: ToolContext) -> dict:
     if not stocks:
         return {"error": f"未找到板块「{sector}」或该板块在当前日期无数据"}
 
-    stocks.sort(key=lambda x: -x["change_pct"])
+    # Secondary key by code so equal change_pct ties stay fingerprint-stable.
+    stocks.sort(key=lambda x: (-x["change_pct"], x["code"]))
+    return stocks
+
+
+def build_sector_summary(ctx: ToolContext, sector: str) -> dict:
+    """Point-in-time sector summary shared by tools and sandbox MarketAPI."""
+    stocks = build_sector_constituents(ctx, sector)
+    if isinstance(stocks, dict):
+        return stocks
+
     avg_change = sum(s["change_pct"] for s in stocks) / len(stocks)
     return {
         "sector": sector,
@@ -149,6 +169,19 @@ async def handle_get_sector_summary(params: dict, ctx: ToolContext) -> dict:
         "top_gainers": stocks[:5],
         "top_losers": stocks[-5:] if len(stocks) > 5 else [],
     }
+
+
+async def handle_get_market_overview(params: dict, ctx: ToolContext) -> dict:
+    return build_market_overview(ctx)
+
+
+async def handle_screen_stocks(params: dict, ctx: ToolContext) -> dict:
+    return build_screen_stocks(ctx, params)
+
+
+async def handle_get_sector_summary(params: dict, ctx: ToolContext) -> dict:
+    """获取指定板块内股票详情。"""
+    return build_sector_summary(ctx, params.get("sector", ""))
 
 
 GET_MARKET_OVERVIEW = ToolDefinition(
@@ -170,7 +203,11 @@ SCREEN_STOCKS = ToolDefinition(
             "change_pct_max": {"type": "number", "description": "最大涨跌幅(%)"},
             "volume_min": {"type": "integer", "description": "最小成交量"},
             "industry": {"type": "string", "description": "行业名称过滤（如：电力设备）"},
-            "sort_by": {"type": "string", "enum": ["change_5d", "change_1d", "volume"], "description": "排序方式，默认按5日涨幅"},
+            "sort_by": {
+                "type": "string",
+                "enum": ["change_5d", "change_1d", "volume"],
+                "description": "排序方式，默认按5日涨幅",
+            },
             "max_results": {"type": "integer", "description": "最多返回数量，默认10，最大30"},
         },
         "required": [],
@@ -184,7 +221,10 @@ GET_SECTOR_SUMMARY = ToolDefinition(
     parameters={
         "type": "object",
         "properties": {
-            "sector": {"type": "string", "description": "板块名称，如：电力设备、医药生物、金融行业"},
+            "sector": {
+                "type": "string",
+                "description": "板块名称，如：电力设备、医药生物、金融行业",
+            },
         },
         "required": ["sector"],
     },

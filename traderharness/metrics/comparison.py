@@ -8,7 +8,7 @@ from decimal import Decimal
 
 import pandas as pd
 
-from traderharness.metrics.performance import calculate_metrics, PerformanceMetrics
+from traderharness.metrics.performance import PerformanceMetrics, calculate_metrics
 
 
 @dataclass
@@ -22,6 +22,7 @@ class ComparisonResult:
 @dataclass
 class MultiAgentComparison:
     """Multi-agent comparison table."""
+
     agents: list[str] = field(default_factory=list)
     metrics: dict[str, PerformanceMetrics] = field(default_factory=dict)
     vs_benchmark: dict[str, ComparisonResult] = field(default_factory=dict)
@@ -60,7 +61,13 @@ class MultiAgentComparison:
         for agent_id, m in self.metrics.items():
             val = getattr(m, metric, 0.0)
             scores.append((agent_id, val))
-        scores.sort(key=lambda x: -x[1])
+        scores.sort(
+            key=lambda item: (
+                item[1],
+                self.metrics[item[0]].total_return_pct,
+            ),
+            reverse=True,
+        )
         self.ranking = scores
         return scores
 
@@ -72,8 +79,9 @@ def compare_vs_benchmark(
 ) -> ComparisonResult:
     """Compare agent performance against benchmark."""
     if not agent_curve or not benchmark_curve:
-        return ComparisonResult(alpha=0.0, information_ratio=0.0,
-                                agent_return_pct=0.0, benchmark_return_pct=0.0)
+        return ComparisonResult(
+            alpha=0.0, information_ratio=0.0, agent_return_pct=0.0, benchmark_return_pct=0.0
+        )
 
     initial = float(initial_cash)
     agent_final = float(agent_curve[-1][1])
@@ -87,8 +95,8 @@ def compare_vs_benchmark(
     agent_daily = _daily_returns(agent_curve)
     bench_daily = _daily_returns(benchmark_curve)
 
-    min_len = min(len(agent_daily), len(bench_daily))
-    if min_len < 2:
+    common_dates = sorted(set(agent_daily) & set(bench_daily))
+    if len(common_dates) < 2:
         return ComparisonResult(
             alpha=round(alpha, 2),
             information_ratio=0.0,
@@ -96,11 +104,11 @@ def compare_vs_benchmark(
             benchmark_return_pct=round(bench_return * 100, 2),
         )
 
-    excess = [agent_daily[i] - bench_daily[i] for i in range(min_len)]
+    excess = [agent_daily[day] - bench_daily[day] for day in common_dates]
     mean_excess = sum(excess) / len(excess)
     var_excess = sum((e - mean_excess) ** 2 for e in excess) / (len(excess) - 1)
-    tracking_error = var_excess ** 0.5 * (252 ** 0.5)
-    ir = (mean_excess * 252) / tracking_error if tracking_error > 0 else 0.0
+    tracking_error = var_excess**0.5 * (252**0.5)
+    ir = (mean_excess * 252) / tracking_error if tracking_error > 1e-12 else 0.0
 
     return ComparisonResult(
         alpha=round(alpha, 2),
@@ -134,10 +142,10 @@ def compare_multi_agents(
     return comparison
 
 
-def _daily_returns(curve: list[tuple[date, Decimal]]) -> list[float]:
-    values = [float(v) for _, v in curve]
-    returns = []
-    for i in range(1, len(values)):
-        if values[i - 1] != 0:
-            returns.append((values[i] - values[i - 1]) / values[i - 1])
+def _daily_returns(curve: list[tuple[date, Decimal]]) -> dict[date, float]:
+    returns = {}
+    for index in range(1, len(curve)):
+        previous = float(curve[index - 1][1])
+        if previous != 0:
+            returns[curve[index][0]] = (float(curve[index][1]) - previous) / previous
     return returns

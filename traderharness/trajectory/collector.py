@@ -6,7 +6,6 @@ import json
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
-from typing import Any
 
 import pandas as pd
 
@@ -51,12 +50,14 @@ class TrajectoryCollector:
         self._day_records.append(DayRecord(date=trade_date, observation=observation))
 
     def record_step(self, trade_date: date, step_type: str, data: dict) -> None:
-        self._step_records.append(StepRecord(
-            date=trade_date,
-            step=self._current_step,
-            type=step_type,
-            data=data,
-        ))
+        self._step_records.append(
+            StepRecord(
+                date=trade_date,
+                step=self._current_step,
+                type=step_type,
+                data=data,
+            )
+        )
         self._current_step += 1
         self._flush_live(trade_date, step_type, data)
 
@@ -67,12 +68,14 @@ class TrajectoryCollector:
             existing = json.loads(self._live_file.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, FileNotFoundError):
             existing = []
-        existing.append({
-            "date": str(trade_date),
-            "step": self._current_step - 1,
-            "type": step_type,
-            "data": data,
-        })
+        existing.append(
+            {
+                "date": str(trade_date),
+                "step": self._current_step - 1,
+                "type": step_type,
+                "data": data,
+            }
+        )
         self._live_file.write_text(
             json.dumps(existing, ensure_ascii=False, default=str),
             encoding="utf-8",
@@ -96,24 +99,28 @@ class TrajectoryCollector:
     def to_day_dataframe(self) -> pd.DataFrame:
         rows = []
         for r in self._day_records:
-            rows.append({
-                "date": r.date,
-                "observation": json.dumps(r.observation, default=str),
-                "actions": json.dumps(r.actions, default=str),
-                "reward": r.reward,
-                "done": r.done,
-            })
+            rows.append(
+                {
+                    "date": r.date,
+                    "observation": json.dumps(r.observation, default=str),
+                    "actions": json.dumps(r.actions, default=str),
+                    "reward": r.reward,
+                    "done": r.done,
+                }
+            )
         return pd.DataFrame(rows)
 
     def to_step_dataframe(self) -> pd.DataFrame:
         rows = []
         for r in self._step_records:
-            rows.append({
-                "date": r.date,
-                "step": r.step,
-                "type": r.type,
-                "data": json.dumps(r.data, default=str),
-            })
+            rows.append(
+                {
+                    "date": r.date,
+                    "step": r.step,
+                    "type": r.type,
+                    "data": json.dumps(r.data, default=str),
+                }
+            )
         return pd.DataFrame(rows)
 
     def export_parquet(self, output_dir: str | Path) -> dict[str, Path]:

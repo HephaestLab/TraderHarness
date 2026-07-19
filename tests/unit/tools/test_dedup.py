@@ -6,8 +6,8 @@ from decimal import Decimal
 import pandas as pd
 import pytest
 
-from traderharness.tools.registry import ToolContext
 from traderharness.core.portfolio import Portfolio
+from traderharness.tools.registry import ToolContext
 
 
 def _make_ctx() -> ToolContext:
@@ -32,8 +32,8 @@ def _make_ctx() -> ToolContext:
 class TestDedup:
     @pytest.mark.asyncio
     async def test_get_stock_info_dedup(self):
-        from traderharness.tools.market import handle_get_stock_info
         from traderharness.tools.dedup import with_dedup
+        from traderharness.tools.market import handle_get_stock_info
         ctx = _make_ctx()
 
         wrapped = with_dedup(handle_get_stock_info)
@@ -47,8 +47,8 @@ class TestDedup:
 
     @pytest.mark.asyncio
     async def test_different_params_no_dedup(self):
-        from traderharness.tools.market import handle_get_stock_info
         from traderharness.tools.dedup import with_dedup
+        from traderharness.tools.market import handle_get_stock_info
         ctx = _make_ctx()
 
         wrapped = with_dedup(handle_get_stock_info)
@@ -61,8 +61,8 @@ class TestDedup:
 
     @pytest.mark.asyncio
     async def test_dedup_does_not_cache_errors(self):
-        from traderharness.tools.market import handle_get_stock_info
         from traderharness.tools.dedup import with_dedup
+        from traderharness.tools.market import handle_get_stock_info
         ctx = _make_ctx()
 
         wrapped = with_dedup(handle_get_stock_info)

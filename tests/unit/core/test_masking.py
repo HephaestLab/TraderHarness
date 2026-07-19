@@ -11,7 +11,6 @@ import pandas as pd
 
 from traderharness.core.masking import DateMasker
 
-
 ANCHOR = date(2024, 3, 15)  # a Friday
 
 
@@ -32,6 +31,47 @@ class TestEnabledMasking:
     def test_mask_datetime_keeps_time(self):
         m = DateMasker(anchor=ANCHOR, enabled=True)
         assert m.mask_datetime(datetime(2024, 3, 9, 10, 30)) == "D-6 10:30"
+
+    def test_mask_text_replaces_chinese_and_iso_calendar_dates(self):
+        m = DateMasker(anchor=date(2024, 3, 6), enabled=True)
+
+        text = m.mask_text("会议于2024年3月5日召开，报告时间2024-03-04 10:30。")
+
+        assert text == "会议于D-1召开，报告时间D-2 10:30。"
+
+    def test_mask_text_replaces_year_month_without_day(self):
+        m = DateMasker(anchor=date(2024, 3, 6), enabled=True)
+
+        text = m.mask_text("该政策始于2021年9月。")
+
+        assert text == "该政策始于D-917所在月。"
+
+    def test_mask_text_ignores_year_plus_non_month_number(self):
+        """News copy like '2024年15个百分点' must not be parsed as month 15."""
+        m = DateMasker(anchor=date(2024, 3, 6), enabled=True)
+
+        text = m.mask_text("同比增长2024年15个百分点，环比2024/00改善。")
+
+        assert text == "同比增长2024年15个百分点，环比2024/00改善。"
+        assert "所在月" not in text
+
+    def test_mask_text_replaces_iso_year_month(self):
+        m = DateMasker(anchor=date(2024, 3, 6), enabled=True)
+
+        assert m.mask_text("生效于2024-02") == "生效于D-34所在月"
+        assert m.mask_text("生效于2024/02") == "生效于D-34所在月"
+
+    def test_mask_text_replaces_chinese_month_day_without_year(self):
+        m = DateMasker(anchor=date(2024, 3, 4), enabled=True)
+
+        text = m.mask_text("财联社3月4日电，会议由3月1日开始。")
+
+        assert text == "财联社D+0电，会议由D-3开始。"
+
+    def test_month_day_infers_nearest_year_around_new_year(self):
+        m = DateMasker(anchor=date(2024, 1, 2), enabled=True)
+
+        assert m.mask_text("12月31日发布") == "D-2发布"
 
     def test_mask_offset_is_int(self):
         m = DateMasker(anchor=ANCHOR, enabled=True)

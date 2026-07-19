@@ -7,6 +7,7 @@ import {
   addAgent,
   rebuildSeats,
   handleBacktestEvent,
+  setRunContext,
   UndoStack,
   type OfficeState,
 } from "./office/engine/officeState";
@@ -126,6 +127,15 @@ function App() {
     window.addEventListener("message", handler);
     return () => window.removeEventListener("message", handler);
   }, []);
+
+  // Debug hook for local visual verification / Playwright screenshots.
+  useEffect(() => {
+    (window as unknown as Record<string, unknown>).__office = {
+      state,
+      setRunContext,
+      handleBacktestEvent,
+    };
+  }, [state]);
 
   // Keyboard shortcuts
   useEffect(() => {

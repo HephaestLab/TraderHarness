@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from traderharness.tools.registry import ToolDefinition, ToolContext
+from traderharness.tools.registry import ToolContext, ToolDefinition
 
 
 async def handle_get_announcements(params: dict, ctx: ToolContext) -> dict:
@@ -13,6 +13,10 @@ async def handle_get_announcements(params: dict, ctx: ToolContext) -> dict:
 
     if not code:
         return {"error": "stock_code 不能为空"}
+    from traderharness.agents.window_context import code_in_universe, universe_error
+
+    if not code_in_universe(code, ctx):
+        return universe_error(code)
 
     announcements = ctx.tool_call_cache.get("_announcements_data")
     if announcements is None:
@@ -28,13 +32,20 @@ async def handle_get_announcements(params: dict, ctx: ToolContext) -> dict:
     ]
 
     if filtered.empty:
-        return {"stock_code": code, "announcements": [], "count": 0, "hint": f"{code} 近{days}天无公告"}
+        return {
+            "stock_code": code,
+            "announcements": [],
+            "count": 0,
+            "hint": f"{code} 近{days}天无公告",
+        }
 
     results = []
     for _, row in filtered.tail(20).iterrows():
-        results.append({
-            "title": row["title"],
-        })
+        results.append(
+            {
+                "title": row["title"],
+            }
+        )
 
     return {"stock_code": code, "announcements": results, "count": len(filtered)}
 
@@ -53,8 +64,7 @@ async def handle_get_news(params: dict, ctx: ToolContext) -> dict:
     start = ctx.current_date - timedelta(days=days)
 
     filtered = news_data[
-        (news_data["display_time"].dt.date >= start)
-        & (news_data["display_time"].dt.date < cutoff)
+        (news_data["display_time"].dt.date >= start) & (news_data["display_time"].dt.date < cutoff)
     ]
 
     # Filter by stock_code (from stock_list column if available)
@@ -81,10 +91,12 @@ async def handle_get_news(params: dict, ctx: ToolContext) -> dict:
 
     results = []
     for _, row in filtered.tail(15).iterrows():
-        results.append({
-            "content": row["content"][:100],
-            "level": row.get("level", ""),
-        })
+        results.append(
+            {
+                "content": row["content"][:100],
+                "level": row.get("level", ""),
+            }
+        )
 
     filter_desc = keyword or sector or "(全部)"
     return {"news": results, "count": len(filtered), "filter": filter_desc}

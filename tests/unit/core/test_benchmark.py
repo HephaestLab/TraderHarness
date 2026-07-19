@@ -3,8 +3,6 @@
 from datetime import date
 from decimal import Decimal
 
-import pytest
-
 from traderharness.core.benchmark import BuyAndHoldBenchmark
 
 

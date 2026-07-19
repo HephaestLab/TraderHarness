@@ -3,21 +3,26 @@
 Tests the full pipeline without LLM calls (using DummyAgent).
 """
 
-from datetime import date, timedelta
+from datetime import date
 from decimal import Decimal
 from pathlib import Path
 
 import pandas as pd
 import pytest
 
+from traderharness.core.calendar import TradingCalendar
 from traderharness.core.engine import BacktestEngine, EngineConfig
 from traderharness.core.events import EventBus
-from traderharness.core.calendar import TradingCalendar
 from traderharness.core.market_profile import AShareProfile
 
 
 class SimpleTestProvider:
-    """Test data provider that returns synthetic data via interface."""
+    """Test data provider that returns synthetic data via interface.
+
+    Also exposes 5-minute bars: TradingBus only fills orders against
+    5-minute sub-window bars (no daily open/close fallback), so any fixture
+    exercising place_order needs matching intraday data.
+    """
 
     def __init__(self, daily_df: pd.DataFrame):
         self._df = daily_df
@@ -29,6 +34,27 @@ class SimpleTestProvider:
     async def get_daily_bars(self, stock_code: str, start: date, end: date) -> pd.DataFrame:
         mask = (self._df["stock_code"] == stock_code) & (self._df["date"] >= start) & (self._df["date"] <= end)
         return self._df[mask].drop(columns=["stock_code"]).reset_index(drop=True)
+
+    async def get_5min_bars(self, stock_code: str, start: date, end: date) -> pd.DataFrame:
+        from datetime import datetime
+
+        mask = (self._df["stock_code"] == stock_code) & (self._df["date"] >= start) & (self._df["date"] <= end)
+        rows = []
+        for _, row in self._df[mask].iterrows():
+            d = row["date"]
+            rows.append({
+                "datetime": datetime.combine(d, datetime.min.time()).replace(hour=9, minute=40),
+                "date": d,
+                "open": row["open"], "high": row["high"], "low": row["low"],
+                "close": row["open"], "volume": 1000,
+            })
+            rows.append({
+                "datetime": datetime.combine(d, datetime.min.time()).replace(hour=14, minute=40),
+                "date": d,
+                "open": row["close"], "high": row["high"], "low": row["low"],
+                "close": row["close"], "volume": 1000,
+            })
+        return pd.DataFrame(rows)
 
 
 def _create_test_data(tmp_path: Path) -> tuple[Path, pd.DataFrame]:
@@ -141,7 +167,7 @@ class TestEngineWithDividends:
         engine = BacktestEngine(config=config, data_provider=SimpleTestProvider(daily_df), event_bus=EventBus())
         agent = BuyAndHoldAgent()
 
-        result = await engine.run(
+        await engine.run(
             agents=[agent],
             start_date=date(2024, 3, 4),
             end_date=date(2024, 3, 11),

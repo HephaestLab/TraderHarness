@@ -8,21 +8,24 @@ from datetime import date
 from decimal import Decimal
 from pathlib import Path
 
-import pandas as pd
 import pytest
 
-from traderharness.core.env import TradingEnv, EnvConfig
+from traderharness.core.env import EnvConfig, TradingEnv
 from traderharness.core.events import EventBus
-from traderharness.data.providers.parquet import ParquetProvider
-from traderharness.metrics.performance import calculate_metrics
-from traderharness.metrics.comparison import compare_vs_benchmark
-from traderharness.tools.registry import ToolContext
-from traderharness.tools.market import GET_KLINE, GET_STOCK_PRICE
-from traderharness.tools.trading import PLACE_ORDER
-from traderharness.tools.analysis import SCREEN_STOCKS, GET_MARKET_OVERVIEW
 from traderharness.core.portfolio import Portfolio
+from traderharness.data.providers.parquet import ParquetProvider
+from traderharness.metrics.comparison import compare_vs_benchmark
+from traderharness.metrics.performance import calculate_metrics
+from traderharness.tools.analysis import SCREEN_STOCKS
+from traderharness.tools.market import GET_KLINE
+from traderharness.tools.registry import ToolContext
 
 DATA_DIR = Path(__file__).parent.parent / "fixtures" / "market_data"
+if len(list(DATA_DIR.glob("*.parquet"))) < 5000:
+    pytest.skip(
+        "requires the local real full-market integration fixture",
+        allow_module_level=True,
+    )
 
 
 @pytest.fixture
@@ -103,20 +106,39 @@ class TestMultiStockPortfolio:
         class MultiTrader:
             agent_id = "multi"
             name = "MultiTrader"
-            _day = 0
+            _targets = ("600519", "601318", "300750")
+
+            def __init__(self) -> None:
+                self._day = 0
+                self._held: set[str] = set()
+                self._sold: set[str] = set()
 
             async def on_day(self, bus, current_date):
                 self._day += 1
-                if self._day == 2:
-                    bus.place_order(agent_id="multi", stock_code="600519", side="buy", quantity=100)
-                    bus.place_order(agent_id="multi", stock_code="000001", side="buy", quantity=1000)
-                    bus.place_order(agent_id="multi", stock_code="300750", side="buy", quantity=100)
-                if self._day == 60:
-                    bus.place_order(agent_id="multi", stock_code="600519", side="sell", quantity=100)
-                    bus.place_order(agent_id="multi", stock_code="000001", side="sell", quantity=1000)
-                    bus.place_order(agent_id="multi", stock_code="300750", side="sell", quantity=100)
+                # Retry across days: limit locks / missing window bars must not fake fills.
+                if 2 <= self._day < 50 and len(self._held) < len(self._targets):
+                    for code in self._targets:
+                        if code in self._held:
+                            continue
+                        qty = 100 if code != "601318" else 200
+                        result = bus.place_order(
+                            agent_id="multi", stock_code=code, side="buy", quantity=qty
+                        )
+                        if result.get("success"):
+                            self._held.add(code)
+                        break
+                if self._day >= 60 and self._sold != self._held:
+                    for code in list(self._held - self._sold):
+                        qty = 100 if code != "601318" else 200
+                        result = bus.place_order(
+                            agent_id="multi", stock_code=code, side="sell", quantity=qty
+                        )
+                        if result.get("success"):
+                            self._sold.add(code)
+                        break
 
-        result = env_2024h1.run(MultiTrader())
+        agent = MultiTrader()
+        result = env_2024h1.run(agent)
         trades = result.agent_data["multi"]["trades"]
         equity = result.agent_data["multi"]["equity_curve"]
 
@@ -124,9 +146,11 @@ class TestMultiStockPortfolio:
         sell_trades = [t for t in trades if t["action"] == "sell"]
         assert len(buy_trades) == 3
         assert len(sell_trades) == 3
+        assert agent._held == set(agent._targets)
+        assert agent._sold == agent._held
 
         metrics = calculate_metrics(equity, Decimal("1000000"), trades)
-        assert metrics.total_trades == 3
+        assert metrics.total_trades == 6
         assert metrics.trading_days > 100
 
 
@@ -273,19 +297,29 @@ class TestLongBacktest:
             name = "FreqTrader"
             _day = 0
             _holding = False
+
             async def on_day(self, bus, d):
                 self._day += 1
-                if self._day % 20 == 5 and not self._holding:
-                    r = bus.place_order(agent_id="freq", stock_code="000001", side="buy", quantity=1000)
+                # Use a liquid large-cap and retry later if the window is limit-locked.
+                if not self._holding and self._day % 20 in {5, 6, 7}:
+                    r = bus.place_order(
+                        agent_id="freq", stock_code="600519", side="buy", quantity=100
+                    )
                     if r.get("success"):
                         self._holding = True
-                elif self._day % 20 == 15 and self._holding:
-                    r = bus.place_order(agent_id="freq", stock_code="000001", side="sell", quantity=1000)
+                elif self._holding and self._day % 20 in {15, 16, 17}:
+                    r = bus.place_order(
+                        agent_id="freq", stock_code="600519", side="sell", quantity=100
+                    )
                     if r.get("success"):
                         self._holding = False
 
         env = TradingEnv(
-            config=EnvConfig(start_date=date(2024, 1, 2), end_date=date(2024, 7, 31), initial_cash=Decimal("1000000")),
+            config=EnvConfig(
+                start_date=date(2024, 1, 2),
+                end_date=date(2024, 7, 31),
+                initial_cash=Decimal("1000000"),
+            ),
             data_provider=provider,
         )
         result = env.run(FrequentTrader())
@@ -296,4 +330,4 @@ class TestLongBacktest:
         assert len(trades) >= 6  # at least 3 round-trips
         metrics = calculate_metrics(equity, Decimal("1000000"), trades)
         assert metrics.trading_days > 120
-        assert metrics.total_trades >= 3
+        assert metrics.total_trades >= 6

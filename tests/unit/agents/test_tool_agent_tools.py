@@ -61,3 +61,13 @@ def test_system_prompt_mentions_current_tools_only(tmp_path):
     assert "get_market_overview" in prompt
     for name in LEGACY_TOOLS:
         assert name not in prompt, f"system prompt still mentions {name}"
+
+
+def test_system_prompt_documents_sandbox_api_contract(tmp_path):
+    agent = _make_agent(tmp_path)
+    prompt = agent._system_prompt
+    assert "traderharness_api" in prompt
+    assert "get_all_daily" in prompt
+    assert "change_pct" in prompt
+    assert "get_sector_stocks" in prompt
+    assert "offset" in prompt

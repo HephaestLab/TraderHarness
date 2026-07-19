@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 520" role="img" aria-labelledby="title desc">
+  <title id="title">TraderHarness architecture</title>
+  <desc id="desc">Full-market data is preloaded into an in-memory engine, exposed through masked tools, and recorded as trajectories, metrics, and training data.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#6b7b8f"/></marker>
+    <style>
+      .bg{fill:#0a0e14}.box{fill:#121923;stroke:#2b3745;stroke-width:2}.core{fill:#13241f;stroke:#48d597}.out{fill:#111a26;stroke:#4478a8}
+      .h{fill:#edf2f7;font:700 22px system-ui}.s{fill:#8d9aaa;font:14px system-ui}.tag{fill:#48d597;font:700 12px ui-monospace,monospace;letter-spacing:1px}
+      .line{stroke:#6b7b8f;stroke-width:2;fill:none;marker-end:url(#arrow)}
+    </style>
+  </defs>
+  <rect class="bg" width="1200" height="520" rx="18"/>
+  <text class="tag" x="54" y="55">TRADERHARNESS · ONE MARKET CLOCK</text>
+  <g transform="translate(54 94)">
+    <rect class="box" width="220" height="126" rx="8"/><text class="h" x="22" y="42">Market dataset</text>
+    <text class="s" x="22" y="70">Daily · 5-minute · news</text><text class="s" x="22" y="94">fundamentals · CSI 300</text>
+  </g>
+  <path class="line" d="M274 157H360"/>
+  <g transform="translate(360 80)">
+    <rect class="core" width="276" height="154" rx="8"/><text class="tag" x="24" y="35">PRELOAD ONCE</text>
+    <text class="h" x="24" y="70">BacktestEngine</text><text class="s" x="24" y="100">In-memory market · portfolio</text><text class="s" x="24" y="124">corporate actions · clock</text>
+  </g>
+  <path class="line" d="M636 157H722"/>
+  <g transform="translate(722 94)">
+    <rect class="core" width="210" height="126" rx="8"/><text class="h" x="22" y="42">TradingBus</text>
+    <text class="s" x="22" y="70">Masked read tools</text><text class="s" x="22" y="94">Single order path</text>
+  </g>
+  <path class="line" d="M932 157H1000"/>
+  <g transform="translate(1000 94)">
+    <rect class="box" width="146" height="126" rx="8"/><text class="h" x="20" y="42">Agent</text>
+    <text class="s" x="20" y="70">Research</text><text class="s" x="20" y="94">Decide · act</text>
+  </g>
+  <path class="line" d="M1072 220V290H825"/>
+  <g transform="translate(722 290)">
+    <rect class="out" width="210" height="126" rx="8"/><text class="h" x="22" y="42">Trajectory</text>
+    <text class="s" x="22" y="70">Full LLM exchanges</text><text class="s" x="22" y="94">Tools · fills · replay</text>
+  </g>
+  <path class="line" d="M722 353H636"/>
+  <g transform="translate(360 290)">
+    <rect class="out" width="276" height="126" rx="8"/><text class="h" x="24" y="42">Evaluation</text>
+    <text class="s" x="24" y="70">PnL · risk · behavior · benchmark</text><text class="s" x="24" y="94">Comparison · SFT export</text>
+  </g>
+  <g transform="translate(54 290)">
+    <rect class="box" width="220" height="126" rx="8"/><text class="tag" x="22" y="34">CORE INVARIANTS</text>
+    <text class="s" x="22" y="64">Zero I/O during run</text><text class="s" x="22" y="88">Strict point-in-time mask</text><text class="s" x="22" y="112">Deterministic execution</text>
+  </g>
+  <text class="s" x="54" y="474">The agent never owns the portfolio and never bypasses TradingBus.place_order().</text>
+</svg>

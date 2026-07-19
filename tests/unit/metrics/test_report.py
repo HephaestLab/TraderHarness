@@ -3,6 +3,7 @@
 from datetime import date
 from decimal import Decimal
 
+from traderharness import __version__
 from traderharness.metrics.performance import PerformanceMetrics
 from traderharness.metrics.report import generate_html_report, save_html_report
 
@@ -24,6 +25,9 @@ class TestHTMLReport:
         assert "TestAgent" in html
         assert "10.5%" in html
         assert "TraderHarness" in html
+        assert f"v{__version__}" in html
+        if __version__ != "0.1.0":
+            assert "v0.1.0" not in html
 
     def test_save(self, tmp_path):
         html = "<html><body>test</body></html>"

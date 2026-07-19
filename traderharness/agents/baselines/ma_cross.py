@@ -27,7 +27,6 @@ class MACrossAgent:
             if code not in self._price_history:
                 self._price_history[code] = []
 
-            price = getattr(env, "_engine", None)
             if hasattr(env, "get_price"):
                 p = env.get_price(code)
                 if p:
@@ -39,8 +38,8 @@ class MACrossAgent:
             if len(history) < self._long:
                 continue
 
-            short_ma = sum(history[-self._short:]) / self._short
-            long_ma = sum(history[-self._long:]) / self._long
+            short_ma = sum(history[-self._short :]) / self._short
+            long_ma = sum(history[-self._long :]) / self._long
 
             if short_ma > long_ma:
                 env.place_order(

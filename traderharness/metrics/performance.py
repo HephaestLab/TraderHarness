@@ -34,11 +34,19 @@ def calculate_metrics(
 ) -> PerformanceMetrics:
     if not equity_curve:
         return PerformanceMetrics(
-            total_return_pct=0.0, annual_return_pct=0.0,
-            sharpe_ratio=0.0, sortino_ratio=0.0, calmar_ratio=0.0,
-            max_drawdown_pct=0.0, max_consecutive_loss_days=0,
-            win_rate=0.0, profit_loss_ratio=0.0, turnover_rate=0.0,
-            total_trades=0, trading_days=0, final_value=float(initial_cash),
+            total_return_pct=0.0,
+            annual_return_pct=0.0,
+            sharpe_ratio=0.0,
+            sortino_ratio=0.0,
+            calmar_ratio=0.0,
+            max_drawdown_pct=0.0,
+            max_consecutive_loss_days=0,
+            win_rate=0.0,
+            profit_loss_ratio=0.0,
+            turnover_rate=0.0,
+            total_trades=0,
+            trading_days=0,
+            final_value=float(initial_cash),
         )
 
     values = [float(v) for _, v in equity_curve]
@@ -62,9 +70,12 @@ def calculate_metrics(
     sharpe_ratio = _calc_sharpe(daily_returns, annual_return_pct)
     sortino_ratio = _calc_sortino(daily_returns, annual_return_pct)
     max_drawdown_pct = _calc_max_drawdown(values) * 100
-    calmar_ratio = (annual_return_pct / 100) / (max_drawdown_pct / 100) if max_drawdown_pct > 0 else 0.0
+    calmar_ratio = (
+        (annual_return_pct / 100) / (max_drawdown_pct / 100) if max_drawdown_pct > 0 else 0.0
+    )
     max_consecutive_loss_days = _calc_max_consecutive_loss(daily_returns)
-    win_rate, profit_loss_ratio, total_trades = _calc_trade_stats(trades)
+    win_rate, profit_loss_ratio, _ = _calc_trade_stats(trades)
+    total_trades = len(trades)
     turnover_rate = _calc_turnover(trades, initial, trading_days)
 
     return PerformanceMetrics(
@@ -99,7 +110,7 @@ def _calc_sortino(daily_returns: list[float], annual_return_pct: float) -> float
     downside = [r for r in daily_returns if r < 0]
     if not downside:
         return 0.0
-    downside_var = sum(r ** 2 for r in downside) / len(downside)
+    downside_var = sum(r**2 for r in downside) / len(downside)
     downside_vol = math.sqrt(downside_var) * math.sqrt(252)
     return (annual_return_pct / 100 - RISK_FREE_RATE) / downside_vol if downside_vol else 0.0
 

@@ -2,11 +2,10 @@
 
 from datetime import date
 from decimal import Decimal
-from pathlib import Path
 
 import pytest
 
-from traderharness.config.env_config import EnvYAMLConfig, AgentYAMLConfig
+from traderharness.config.env_config import AgentYAMLConfig, EnvYAMLConfig
 
 
 @pytest.fixture

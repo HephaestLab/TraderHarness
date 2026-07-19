@@ -28,10 +28,10 @@ def save_pending(filename: str, config: dict) -> Path:
     return path
 
 
-def save_complete(filename: str, result_data: dict) -> Path:
+def save_complete(filename: str, result_data: dict, *, status: str = "done") -> Path:
     """Write a completed result file."""
     path = RESULTS_DIR / filename
-    result_data["status"] = "done"
+    result_data["status"] = status
     result_data["completed_at"] = datetime.now().isoformat()
     path.write_text(
         json.dumps(result_data, ensure_ascii=False, default=str, indent=2),

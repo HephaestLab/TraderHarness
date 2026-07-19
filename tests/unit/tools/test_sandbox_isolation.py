@@ -14,8 +14,8 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from traderharness.tools.registry import ToolContext
 from traderharness.core.portfolio import Portfolio
+from traderharness.tools.registry import ToolContext
 from traderharness.tools.sandbox import handle_execute_code
 
 

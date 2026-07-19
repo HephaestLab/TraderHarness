@@ -11,9 +11,7 @@ import pandas as pd
 class DataProvider(Protocol):
     """Protocol for market data providers."""
 
-    async def get_daily_bars(
-        self, stock_code: str, start: date, end: date
-    ) -> pd.DataFrame:
+    async def get_daily_bars(self, stock_code: str, start: date, end: date) -> pd.DataFrame:
         """Fetch daily OHLCV bars. Returns DataFrame with columns:
         date, open, high, low, close, volume.
         """

@@ -2,8 +2,6 @@
 
 from datetime import date
 
-import pytest
-
 from traderharness.core.calendar import TradingCalendar
 
 

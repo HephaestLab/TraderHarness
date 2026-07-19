@@ -2,8 +2,6 @@
 
 from datetime import date
 
-import pytest
-
 from traderharness.trajectory.collector import TrajectoryCollector
 
 

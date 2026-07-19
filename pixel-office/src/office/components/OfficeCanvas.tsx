@@ -36,12 +36,11 @@ export function OfficeCanvas({
       if (parent) {
         canvas.width = parent.clientWidth;
         canvas.height = parent.clientHeight;
-        if (isEmbed) {
-          const s = stateRef.current;
-          const zoomX = parent.clientWidth / (s.cols * 16);
-          const zoomY = parent.clientHeight / (s.rows * 16);
-          s.zoom = Math.floor(Math.min(zoomX, zoomY) * 10) / 10;
-        }
+        const s = stateRef.current;
+        const zoomX = (parent.clientWidth - 24) / (s.cols * 16);
+        const zoomY = (parent.clientHeight - 24) / (s.rows * 16);
+        const fittedZoom = Math.max(1, Math.floor(Math.min(zoomX, zoomY) * 10) / 10);
+        s.zoom = isEmbed ? fittedZoom : Math.min(s.zoom, fittedZoom);
       }
     };
     resizeCanvas();
@@ -67,7 +66,9 @@ export function OfficeCanvas({
           s.panY,
           furnitureImages,
           characterSheet,
-          showGrid
+          showGrid,
+          s.runContext,
+          s.showSparklines
         );
       },
     });

@@ -2,19 +2,22 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
 import os
-import time
-from pathlib import Path
 from typing import Any
-
-logger = logging.getLogger(__name__)
 
 from traderharness.paths import llm_cache_dir
 
+logger = logging.getLogger(__name__)
+
 _CACHE_DIR = llm_cache_dir()
+
+# Models that support DeepSeek-style extended thinking ("reasoning") mode.
+# Matched as a prefix so date/size suffixes (e.g. "-0528") still match.
+_THINKING_MODEL_PREFIXES = ("deepseek-v4-pro", "deepseek-reasoner")
 
 
 class RateLimitError(Exception):
@@ -38,6 +41,9 @@ class LLMClient:
         cache_enabled: bool = True,
         replay_recorder: Any | None = None,
         replay_player: Any | None = None,
+        thinking: bool | None = None,
+        reasoning_effort: str | None = None,
+        concurrency_limiter: asyncio.Semaphore | None = None,
     ) -> None:
         self.model = model
         self.temperature = temperature
@@ -46,6 +52,17 @@ class LLMClient:
         self._recorder = replay_recorder
         self._player = replay_player
         self._replay_step: int = 0
+        self._concurrency_limiter = concurrency_limiter
+
+        # Thinking mode detection: explicit `thinking` wins; otherwise a
+        # thinking-capable model name or an explicit `reasoning_effort`
+        # implies thinking mode. DeepSeek thinking mode ignores temperature,
+        # so it must never be sent alongside extra_body.thinking.
+        if thinking is not None:
+            self._thinking = thinking
+        else:
+            self._thinking = bool(reasoning_effort) or self._is_thinking_model(model)
+        self._reasoning_effort = reasoning_effort or ("high" if self._thinking else None)
 
         self._api_key = api_key or self._resolve_api_key(model)
         self._base_url = base_url or self._resolve_base_url(model)
@@ -69,9 +86,7 @@ class LLMClient:
         """
         # Replay mode: return pre-recorded response
         if self._player:
-            entry = self._player.next_response()
-            if entry and "output" in entry:
-                return entry["output"]
+            return self._player.require_response(messages=messages, tools=tools)
 
         if self.cache_enabled and not tools:
             cached = self._cache_get(messages, tools)
@@ -83,35 +98,53 @@ class LLMClient:
         if self.cache_enabled and not tools:
             self._cache_put(messages, tools, response)
 
-        # Record for replay
-        if self._recorder:
-            from datetime import date as _date
-            self._recorder.record(
-                _date.today(), self._replay_step, "llm_call",
-                {"input": messages[-1:], "output": response},
-            )
-            self._replay_step += 1
-
         return response
+
+    def record_replay_call(
+        self,
+        *,
+        messages: list[dict],
+        tools: list[dict] | None,
+        output: dict,
+    ) -> None:
+        """Record an Agent-sanitized response for deterministic replay."""
+        if self._recorder is None:
+            return
+        self._recorder.record_llm_call(messages=messages, tools=tools, output=output)
+        self._replay_step += 1
 
     async def _call_with_retry(
         self, messages: list[dict], tools: list[dict] | None, temperature: float | None
     ) -> dict:
         self._ensure_client()
-        temp = temperature if temperature is not None else self.temperature
 
         for attempt in range(self.max_retries):
             try:
                 kwargs: dict[str, Any] = {
                     "model": self.model,
                     "messages": messages,
-                    "temperature": temp,
                 }
+                if self._thinking:
+                    # DeepSeek-style thinking mode: enabled via extra_body,
+                    # reasoning_effort forwarded as a top-level param.
+                    # temperature is documented as having no effect in this
+                    # mode, so it is intentionally never sent.
+                    kwargs["extra_body"] = {"thinking": {"type": "enabled"}}
+                    if self._reasoning_effort:
+                        kwargs["reasoning_effort"] = self._reasoning_effort
+                else:
+                    kwargs["temperature"] = (
+                        temperature if temperature is not None else self.temperature
+                    )
                 if tools:
                     kwargs["tools"] = tools
                     kwargs["tool_choice"] = "auto"
 
-                resp = await self._client.chat.completions.create(**kwargs)
+                if self._concurrency_limiter is not None:
+                    async with self._concurrency_limiter:
+                        resp = await self._client.chat.completions.create(**kwargs)
+                else:
+                    resp = await self._client.chat.completions.create(**kwargs)
                 msg = resp.choices[0].message
 
                 if resp.usage:
@@ -122,7 +155,12 @@ class LLMClient:
                     "content": msg.content,
                 }
 
-                # DeepSeek thinking models return reasoning_content
+                finish_reason = getattr(resp.choices[0], "finish_reason", None)
+                if finish_reason:
+                    result["_finish_reason"] = finish_reason
+
+                # DeepSeek thinking models return reasoning_content. This must
+                # survive even when the response also carries tool_calls.
                 reasoning = getattr(msg, "reasoning_content", None)
                 if reasoning:
                     result["reasoning_content"] = reasoning
@@ -148,14 +186,31 @@ class LLMClient:
                 return result
 
             except Exception as e:
-                if "429" in str(e) or "rate" in str(e).lower():
-                    wait = min(2 ** attempt * 10, 60)
-                    logger.warning("Rate limited, waiting %ds (attempt %d)", wait, attempt + 1)
+                message = str(e).lower()
+                is_rate_limited = "429" in message or "rate" in message
+                is_timeout = (
+                    "timeout" in message
+                    or "timed out" in message
+                    or e.__class__.__name__.endswith("Timeout")
+                    or e.__class__.__name__.endswith("TimeoutError")
+                )
+                if is_rate_limited or is_timeout:
+                    wait = min(2**attempt * (10 if is_rate_limited else 5), 60)
+                    logger.warning(
+                        "%s, waiting %ds (attempt %d/%d): %s",
+                        "Rate limited" if is_rate_limited else "Transient timeout",
+                        wait,
+                        attempt + 1,
+                        self.max_retries,
+                        type(e).__name__,
+                    )
                     if attempt == self.max_retries - 1:
-                        raise RateLimitError(wait)
-                    time.sleep(wait)
-                else:
-                    raise
+                        if is_rate_limited:
+                            raise RateLimitError(wait) from e
+                        raise
+                    await asyncio.sleep(wait)
+                    continue
+                raise
 
         raise RuntimeError("Max retries exceeded")
 
@@ -165,14 +220,15 @@ class LLMClient:
         try:
             from openai import AsyncOpenAI
 
-            self._client = AsyncOpenAI(
-                api_key=self._api_key, base_url=self._base_url
-            )
+            self._client = AsyncOpenAI(api_key=self._api_key, base_url=self._base_url)
         except ImportError:
             raise ImportError("openai not installed. Run: pip install traderharness[llm]")
 
     def _cache_key(self, messages: list[dict], tools: list[dict] | None) -> str:
-        content = json.dumps({"messages": messages, "tools": tools, "model": self.model}, sort_keys=True)
+        content = json.dumps(
+            {"messages": messages, "tools": tools, "model": self.model},
+            sort_keys=True,
+        )
         return hashlib.sha256(content.encode()).hexdigest()
 
     def _cache_get(self, messages: list[dict], tools: list[dict] | None) -> dict | None:
@@ -188,6 +244,11 @@ class LLMClient:
         path = _CACHE_DIR / f"{key}.json"
         cacheable = {k: v for k, v in response.items() if not k.startswith("_")}
         path.write_text(json.dumps(cacheable, ensure_ascii=False), encoding="utf-8")
+
+    @staticmethod
+    def _is_thinking_model(model: str) -> bool:
+        lowered = model.lower()
+        return any(lowered.startswith(prefix) for prefix in _THINKING_MODEL_PREFIXES)
 
     @staticmethod
     def _resolve_api_key(model: str) -> str:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from traderharness.tools.registry import ToolDefinition, ToolContext
+from traderharness.tools.registry import ToolContext, ToolDefinition
 
 
 async def handle_finish_day(params: dict, ctx: ToolContext) -> dict:
@@ -19,7 +19,10 @@ FINISH_DAY = ToolDefinition(
     parameters={
         "type": "object",
         "properties": {
-            "summary": {"type": "string", "description": "今日总结：市场观察、交易决策及理由、持仓变化"},
+            "summary": {
+                "type": "string",
+                "description": "今日总结：市场观察、交易决策及理由、持仓变化",
+            },
         },
         "required": ["summary"],
     },

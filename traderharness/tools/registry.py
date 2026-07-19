@@ -5,12 +5,12 @@
 
 from __future__ import annotations
 
-import json
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
-from typing import Any, Callable, Awaitable
+from typing import Any
 
 import pandas as pd
 
@@ -40,6 +40,7 @@ class ToolContext:
     max_position_pct: float = 25.0
     max_positions: int = 4
     date_masker: Any = None
+    entity_masker: Any = None
     _bus: Any = field(default=None, repr=False)
     _workspace: Any = field(default=None, repr=False)
 
@@ -51,7 +52,7 @@ class ToolDefinition:
     name: str
     description: str
     parameters: dict
-    handler: Callable[[dict, "ToolContext"], Awaitable[dict]]
+    handler: Callable[[dict, ToolContext], Awaitable[dict]]
 
     def to_openai_schema(self) -> dict:
         return {
@@ -78,21 +79,28 @@ class ToolRegistry:
 
     def get_openai_tools_schema(self, *, exclude: set[str] | None = None) -> list[dict]:
         exclude = exclude or set()
-        return [
-            t.to_openai_schema()
-            for t in self._tools.values()
-            if t.name not in exclude
-        ]
+        return [t.to_openai_schema() for t in self._tools.values() if t.name not in exclude]
 
     async def execute(self, name: str, arguments: dict, ctx: ToolContext) -> dict:
         tool = self._tools.get(name)
         if tool is None:
             return {"error": f"未知工具: {name}"}
         try:
-            return await tool.handler(arguments, ctx)
+            masker = ctx.entity_masker
+            internal_arguments = masker.unmask_obj(arguments) if masker is not None else arguments
+            result = await tool.handler(internal_arguments, ctx)
+            date_masker = ctx.date_masker
+            if date_masker is not None:
+                result = date_masker.mask_obj(result)
+            return masker.mask_obj(result) if masker is not None else result
         except Exception as e:
             logger.exception("tool_execution_error: %s", name)
-            return {"error": f"工具执行失败: {type(e).__name__}: {str(e)}"}
+            result = {"error": f"工具执行失败: {type(e).__name__}: {str(e)}"}
+            date_masker = ctx.date_masker
+            if date_masker is not None:
+                result = date_masker.mask_obj(result)
+            masker = ctx.entity_masker
+            return masker.mask_obj(result) if masker is not None else result
 
     def __len__(self) -> int:
         return len(self._tools)

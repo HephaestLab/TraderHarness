@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+message: "If TraderHarness supports your research, please cite this software."
+title: "TraderHarness: A Contamination-Resistant Environment for Autonomous Trading Agents"
+type: software
+authors:
+  - name: HephaestLab
+version: 1.0.0
+date-released: 2026-07-17
+license: Apache-2.0
+repository-code: "https://github.com/HephaestLab/TraderHarness"
+url: "https://hephaestlab.github.io/TraderHarness/"
+keywords:
+  - autonomous agents
+  - large language models
+  - algorithmic trading
+  - backtesting
+  - point-in-time data

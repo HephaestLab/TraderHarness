@@ -27,7 +27,7 @@ class EnvYAMLConfig:
     log_level: str = "INFO"
 
     @classmethod
-    def from_yaml(cls, path: str | Path) -> "EnvYAMLConfig":
+    def from_yaml(cls, path: str | Path) -> EnvYAMLConfig:
         p = Path(path)
         if not p.exists():
             raise FileNotFoundError(f"Config not found: {path}")
@@ -59,7 +59,7 @@ class AgentYAMLConfig:
     max_tokens_per_day: int = 0
 
     @classmethod
-    def from_yaml(cls, path: str | Path) -> "AgentYAMLConfig":
+    def from_yaml(cls, path: str | Path) -> AgentYAMLConfig:
         p = Path(path)
         if not p.exists():
             raise FileNotFoundError(f"Agent config not found: {path}")

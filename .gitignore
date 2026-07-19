@@ -4,6 +4,7 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+.build-check/
 .venv/
 .env
 *.parquet
@@ -14,6 +15,10 @@ runs/
 htmlcov/
 .ruff_cache/
 node_modules/
+site/
+webui/test-results/
+webui/playwright-report/
+*.tsbuildinfo
 
 # logs & local artifacts
 *.log
@@ -22,9 +27,17 @@ test_cache_benchmark/
 
 # local-only source material & run artifacts (not part of the project)
 assets/
+!docs/assets/
+!docs/assets/**
+!pixel-office/public/assets/
+!pixel-office/public/assets/**
 workspaces/
 momentum-dragon/
 value_investor/
 screenshots/
 test_screenshots/
 pixel_test/
+
+# local run artifacts & capture intermediates
+artifacts/
+docs/assets/demo-frames/

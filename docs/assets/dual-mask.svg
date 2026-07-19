@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 500" role="img" aria-labelledby="title desc">
+  <title id="title">TraderHarness date and entity masking</title>
+  <desc id="desc">A historical announcement with a real date and company identity is transformed into a relative date and neutral pseudo-identity before reaching the agent.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9Z" fill="#48d597"/></marker>
+    <style>
+      .bg{fill:#0a0e14}.card{fill:#121923;stroke:#2b3745;stroke-width:2}.masked{fill:#11221e;stroke:#34745d}
+      .h{fill:#edf2f7;font:700 22px system-ui}.body{fill:#c3ccd7;font:18px system-ui}.muted{fill:#8290a2;font:14px system-ui}
+      .tag{fill:#48d597;font:700 12px ui-monospace,monospace;letter-spacing:1.2px}.danger{fill:#ff7b82}.safe{fill:#62e2aa}.line{stroke:#48d597;stroke-width:3;fill:none;marker-end:url(#arrow)}
+    </style>
+  </defs>
+  <rect class="bg" width="1200" height="500" rx="18"/>
+  <text class="tag" x="55" y="55">THE SAME HISTORICAL FACT · TWO IDENTITIES REMOVED</text>
+  <g transform="translate(55 92)">
+    <rect class="card" width="425" height="286" rx="10"/>
+    <text class="danger" x="28" y="40" style="font:700 12px ui-monospace,monospace">SOURCE RECORD · ENVIRONMENT ONLY</text>
+    <text class="h" x="28" y="82">2024-03-05 08:42</text>
+    <text class="body" x="28" y="128">5Þð600519	Ñ</text>
+    <text class="body" x="28" y="160">t¦¥J%6Ôž</text>
+    <line x1="28" x2="397" y1="193" y2="193" stroke="#2b3745"/>
+    <text class="muted" x="28" y="226">Exact calendar date is historically valid,</text>
+    <text class="muted" x="28" y="250">but can reveal memorized market knowledge.</text>
+  </g>
+  <path class="line" d="M505 235H686"/>
+  <g transform="translate(520 160)">
+    <rect x="0" y="0" width="152" height="52" rx="26" fill="#16372d" stroke="#34745d"/>
+    <text class="tag" x="22" y="22">DATE MASK</text><text class="tag" x="22" y="40">ENTITY MASK</text>
+  </g>
+  <g transform="translate(720 92)">
+    <rect class="masked" width="425" height="286" rx="10"/>
+    <text class="safe" x="28" y="40" style="font:700 12px ui-monospace,monospace">AGENT-FACING VIEW</text>
+    <text class="h" x="28" y="82">D-9 08:42</text>
+    <text class="body" x="28" y="128">lø-001000731	Ñ</text>
+    <text class="body" x="28" y="160">t¦¥J%6Ôž</text>
+    <line x1="28" x2="397" y1="193" y2="193" stroke="#2b4b41"/>
+    <text class="muted" x="28" y="226">Market information survives. Calendar and</text>
+    <text class="muted" x="28" y="250">identity cues are deterministic pseudonyms.</text>
+  </g>
+  <text class="muted" x="55" y="437">Board semantics are preserved: a ChiNext or STAR pseudo-code retains its historical 20% price-limit rules.</text>
+  <text class="muted" x="55" y="462">The same run-wide mapping is applied to tools, prompts, orders, memory, trajectories, replay, and exported training data.</text>
+</svg>

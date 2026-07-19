@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
-from traderharness.tools.registry import ToolDefinition, ToolContext
+from traderharness.tools.registry import ToolContext, ToolDefinition
 
 
 async def handle_get_fundamentals(params: dict, ctx: ToolContext) -> dict:
     code = params.get("stock_code", "")
     if not code:
         return {"error": "stock_code 不能为空"}
+    from traderharness.agents.window_context import code_in_universe, universe_error
+
+    if not code_in_universe(code, ctx):
+        return universe_error(code)
 
     fundamentals = ctx.tool_call_cache.get("_fundamentals_data")
     if fundamentals is None:

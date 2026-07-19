@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -12,9 +13,24 @@ from traderharness.agents.tool_agent import ToolAgent
 
 
 class PromptAgent(ToolAgent):
-    """Agent loaded from a YAML persona file."""
+    """Agent loaded from a YAML persona file.
 
-    def __init__(self, config_path: str | Path, llm_client: LLMClient | None = None):
+    `replay_recorder`/`replay_player` accept a Replay Bundle
+    (`traderharness.trajectory.bundle.ScopedReplayRecorder`/`ScopedReplayPlayer`)
+    so that both the executor and every advisor of a committee-backed persona
+    are recorded/replayed to independent, scoped cassettes. Ignored when an
+    explicit `llm_client` is supplied, since the caller owns that scoping.
+    """
+
+    def __init__(
+        self,
+        config_path: str | Path,
+        llm_client: LLMClient | None = None,
+        *,
+        replay_recorder: Any | None = None,
+        replay_player: Any | None = None,
+        prompt_contract_version: str | None = None,
+    ):
         path = Path(config_path)
         if not path.exists():
             raise FileNotFoundError(f"Agent config not found: {config_path}")
@@ -30,9 +46,38 @@ class PromptAgent(ToolAgent):
         max_positions = cfg.get("max_positions", 4)
         max_position_pct = cfg.get("max_position_pct", 25.0)
         mask_dates = cfg.get("mask_dates", True)
+        is_committee = bool(cfg.get("advisors"))
+        committee = None
+        if is_committee:
+            from traderharness.agents.committee import build_committee_from_config
+
+            committee = build_committee_from_config(
+                cfg["advisors"],
+                agent_id=agent_id,
+                replay_recorder=replay_recorder,
+                replay_player=replay_player,
+            )
 
         if llm_client is None:
-            llm_client = LLMClient(model=model)
+            from traderharness.trajectory.bundle import executor_scope_id
+
+            executor_scope = executor_scope_id(agent_id, is_committee=is_committee)
+            scoped_player = (
+                replay_player.scope(executor_scope) if replay_player is not None else None
+            )
+            scoped_recorder = (
+                replay_recorder.scope(executor_scope) if replay_recorder is not None else None
+            )
+            if scoped_player is not None or scoped_recorder is not None:
+                llm_client = LLMClient(
+                    model=model,
+                    api_key="replay" if scoped_player is not None else None,
+                    cache_enabled=False,
+                    replay_recorder=scoped_recorder,
+                    replay_player=scoped_player,
+                )
+            else:
+                llm_client = LLMClient(model=model)
 
         super().__init__(
             agent_id=agent_id,
@@ -43,4 +88,6 @@ class PromptAgent(ToolAgent):
             max_positions=max_positions,
             max_position_pct=max_position_pct,
             mask_dates=mask_dates,
+            committee=committee,
+            prompt_contract_version=prompt_contract_version,
         )

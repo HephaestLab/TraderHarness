@@ -1,0 +1,85 @@
+name: Dataset Release
+
+# Manual publish of a HuggingFace dataset release.
+#
+# The canonical dataset (~/.traderharness/dataset/) is multi-year, full-market A-share
+# data that lives on a maintainer's machine, not in this repository or on a fresh
+# GitHub-hosted runner. This workflow does not build that dataset; it only verifies
+# and uploads an already-staged release directory that must exist on the runner that
+# executes this workflow.
+#
+# Required one-time setup:
+#   1. Add a repository secret named HF_TOKEN with a HuggingFace token that has write
+#      access to the target dataset repo. Never commit this token to the repository.
+#   2. Run this workflow on a runner that can see `release_dir` on disk — in practice
+#      that means a self-hosted runner on the machine (or a mounted volume) where the
+#      release was staged. The default `ubuntu-latest` GitHub-hosted runner starts from
+#      a clean filesystem and will not have this directory; change `runs-on` below if
+#      you provision a self-hosted runner for this purpose.
+#
+# Local steps before dispatching this workflow:
+#   .venv\Scripts\python.exe scripts\build_hf_release.py --output <release_dir>
+#   .venv\Scripts\traderharness.exe audit <release_dir>
+#
+# Then dispatch this workflow with `release_dir` set to that same absolute path.
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_dir:
+        description: >-
+          Absolute path (on the runner) to a release directory already staged with
+          scripts/build_hf_release.py and verified with `traderharness audit`.
+        required: true
+        type: string
+      repo_id:
+        description: "HuggingFace dataset repo id (default: the canonical full-dataset repo)"
+        required: false
+        type: string
+      private:
+        description: "Create/keep the HuggingFace dataset repo private"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -e ".[data]"
+      - name: Verify and upload the staged release
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          RELEASE_DIR: ${{ inputs.release_dir }}
+          REPO_ID: ${{ inputs.repo_id }}
+          MAKE_PRIVATE: ${{ inputs.private }}
+        run: |
+          if [ -z "${HF_TOKEN:-}" ]; then
+            echo "HF_TOKEN secret is not configured on this repository." >&2
+            exit 1
+          fi
+          if [ ! -d "$RELEASE_DIR" ]; then
+            echo "release_dir '$RELEASE_DIR' does not exist on this runner." >&2
+            echo "Build it locally first with:" >&2
+            echo "  python scripts/build_hf_release.py --output <release_dir>" >&2
+            echo "This workflow only works on a runner that already has that directory" >&2
+            echo "(typically a self-hosted runner on the machine that staged it)." >&2
+            exit 1
+          fi
+          args=("$RELEASE_DIR")
+          if [ -n "$REPO_ID" ]; then
+            args+=(--repo-id "$REPO_ID")
+          fi
+          if [ "$MAKE_PRIVATE" = "true" ]; then
+            args+=(--private)
+          fi
+          python scripts/upload_hf_release.py "${args[@]}"

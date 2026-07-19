@@ -1,0 +1,123 @@
+{
+  "checks": [
+    {
+      "name": "presence:daily.parquet",
+      "status": "PASS",
+      "detail": "C:\\Users\\admin\\.traderharness\\dataset\\daily.parquet (77 MB)"
+    },
+    {
+      "name": "presence:dividends.parquet",
+      "status": "PASS",
+      "detail": "C:\\Users\\admin\\.traderharness\\dataset\\dividends.parquet (0 MB)"
+    },
+    {
+      "name": "presence:fundamentals.parquet",
+      "status": "PASS",
+      "detail": "C:\\Users\\admin\\.traderharness\\dataset\\fundamentals.parquet (10 MB)"
+    },
+    {
+      "name": "presence:valuation.parquet",
+      "status": "PASS",
+      "detail": "C:\\Users\\admin\\.traderharness\\dataset\\valuation.parquet (143 MB)"
+    },
+    {
+      "name": "presence:announcements.parquet",
+      "status": "PASS",
+      "detail": "C:\\Users\\admin\\.traderharness\\dataset\\announcements.parquet (43 MB)"
+    },
+    {
+      "name": "presence:news_cls.parquet",
+      "status": "PASS",
+      "detail": "C:\\Users\\admin\\.traderharness\\dataset\\news_cls.parquet (196 MB)"
+    },
+    {
+      "name": "presence:index_300.parquet",
+      "status": "PASS",
+      "detail": "C:\\Users\\admin\\.traderharness\\dataset\\index_300.parquet (0 MB)"
+    },
+    {
+      "name": "presence:5min_clean/",
+      "status": "PASS",
+      "detail": "C:\\Users\\admin\\.traderharness\\dataset\\5min_clean"
+    },
+    {
+      "name": "range:daily",
+      "status": "PASS",
+      "detail": "2021-05-17 -> 2026-07-16, 5073 stocks, 5,536,889 rows"
+    },
+    {
+      "name": "universe:announcements-a-share",
+      "status": "PASS",
+      "detail": "0/2,088,367 rows have non-A-share codes"
+    },
+    {
+      "name": "range:market-end-alignment",
+      "status": "PASS",
+      "detail": "spread=1d | daily=2026-07-16, valuation=2026-07-16, index_300=2026-07-16, announcements=2026-07-17, news_cls=2026-07-16"
+    },
+    {
+      "name": "range:fundamentals-freshness",
+      "status": "PASS",
+      "detail": "lag=62d | pub_date=2026-05-15"
+    },
+    {
+      "name": "coverage:daily-vs-5min",
+      "status": "PASS",
+      "detail": "min year ratio=100.00% (threshold 99%) [2021: 100.00%, 2022: 100.00%, 2023: 100.00%, 2024: 100.00%, 2025: 100.00%, 2026: 100.00%]"
+    },
+    {
+      "name": "freshness:active-stock-5min",
+      "status": "PASS",
+      "detail": "0/5071 active stocks lag their last daily bar"
+    },
+    {
+      "name": "integrity:5min-duplicates",
+      "status": "PASS",
+      "detail": "0 duplicate (stock,datetime) in 50 sampled stocks"
+    },
+    {
+      "name": "integrity:5min-bars-per-day",
+      "status": "PASS",
+      "detail": "2/58041 sampled days outside [30,48] bars"
+    },
+    {
+      "name": "metadata:daily-range",
+      "status": "PASS",
+      "detail": "recorded=['2021-05-17', '2026-07-16'] actual=['2021-05-17', '2026-07-16']"
+    }
+  ],
+  "generated_at": "2026-07-17T11:22:27",
+  "coverage_by_year": {
+    "2021": {
+      "daily_stocks": 4312,
+      "missing_5min": 0,
+      "ratio": 1.0
+    },
+    "2022": {
+      "daily_stocks": 4540,
+      "missing_5min": 0,
+      "ratio": 1.0
+    },
+    "2023": {
+      "daily_stocks": 4894,
+      "missing_5min": 0,
+      "ratio": 1.0
+    },
+    "2024": {
+      "daily_stocks": 4971,
+      "missing_5min": 0,
+      "ratio": 1.0
+    },
+    "2025": {
+      "daily_stocks": 5061,
+      "missing_5min": 0,
+      "ratio": 1.0
+    },
+    "2026": {
+      "daily_stocks": 5073,
+      "missing_5min": 0,
+      "ratio": 1.0
+    }
+  },
+  "stale_active_stocks": {}
+}

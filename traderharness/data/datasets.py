@@ -4,9 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pandas as pd
-
-
 from traderharness.paths import datasets_dir
 
 DATASETS_DIR = datasets_dir()
@@ -33,11 +30,13 @@ def list_datasets() -> list[dict]:
     results = []
     for name, meta in BUILTIN_DATASETS.items():
         local_path = DATASETS_DIR / name
-        results.append({
-            "name": name,
-            "description": meta["description"],
-            "downloaded": local_path.exists(),
-        })
+        results.append(
+            {
+                "name": name,
+                "description": meta["description"],
+                "downloaded": local_path.exists(),
+            }
+        )
     return results
 
 
@@ -68,6 +67,12 @@ def _download_hf_dataset(repo_id: str, target: Path) -> None:
 
         snapshot_download(repo_id=repo_id, local_dir=str(target), repo_type="dataset")
     except ImportError:
-        raise ImportError(
-            "huggingface_hub not installed. Run: pip install huggingface_hub"
-        )
+        raise ImportError("huggingface_hub not installed. Run: pip install huggingface_hub")
+
+
+def download_full(*, force: bool = False) -> Path:
+    """Download and atomically install the canonical full-market dataset."""
+    from traderharness.data.release import download_full_dataset
+    from traderharness.paths import dataset_dir
+
+    return download_full_dataset(dataset_dir(), force=force)

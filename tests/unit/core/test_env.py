@@ -1,12 +1,11 @@
 """Tests for TradingEnv — main entry point."""
 
 from datetime import date, timedelta
-from decimal import Decimal
 
 import pandas as pd
 import pytest
 
-from traderharness.core.env import TradingEnv, EnvConfig
+from traderharness.core.env import EnvConfig, TradingEnv
 
 
 class FakeData:
@@ -49,7 +48,7 @@ class TestTradingEnv:
         )
         a1 = DummyAgent("a1")
         a2 = DummyAgent("a2")
-        result = env.run([a1, a2])
+        env.run([a1, a2])
         assert len(a1.days_called) == 2
         assert len(a2.days_called) == 2
 

@@ -24,28 +24,76 @@ from typing import Any
 
 # Modules the agent may not import: OS / filesystem / network escape hatches
 # plus backtest frameworks (running a backtest inside the backtest).
-BLOCKED_IMPORTS: frozenset[str] = frozenset({
-    # filesystem / OS / process
-    "os", "sys", "subprocess", "shutil", "glob", "pathlib", "tempfile",
-    "fileinput", "importlib", "ctypes", "mmap", "pickle", "marshal",
-    # network
-    "socket", "urllib", "requests", "httpx", "ftplib", "smtplib", "http",
-    # backtest frameworks
-    "traderharness", "backtrader", "vnpy", "zipline", "qlib",
-    "pyalgotrade", "bt", "finrl",
-})
+BLOCKED_IMPORTS: frozenset[str] = frozenset(
+    {
+        # filesystem / OS / process
+        "os",
+        "sys",
+        "subprocess",
+        "shutil",
+        "glob",
+        "pathlib",
+        "tempfile",
+        "fileinput",
+        "importlib",
+        "ctypes",
+        "mmap",
+        "pickle",
+        "marshal",
+        # network
+        "socket",
+        "urllib",
+        "requests",
+        "httpx",
+        "ftplib",
+        "smtplib",
+        "http",
+        # backtest frameworks
+        "traderharness",
+        "backtrader",
+        "vnpy",
+        "zipline",
+        "qlib",
+        "pyalgotrade",
+        "bt",
+        "finrl",
+    }
+)
 
 # pandas readers that touch the filesystem
-_PANDAS_READERS: frozenset[str] = frozenset({
-    "read_parquet", "read_csv", "read_table", "read_feather", "read_pickle",
-    "read_hdf", "read_json", "read_orc", "read_excel", "read_stata", "read_sas",
-    "read_spss", "read_xml", "read_html", "read_fwf", "read_sql", "read_sql_table",
-})
+_PANDAS_READERS: frozenset[str] = frozenset(
+    {
+        "read_parquet",
+        "read_csv",
+        "read_table",
+        "read_feather",
+        "read_pickle",
+        "read_hdf",
+        "read_json",
+        "read_orc",
+        "read_excel",
+        "read_stata",
+        "read_sas",
+        "read_spss",
+        "read_xml",
+        "read_html",
+        "read_fwf",
+        "read_sql",
+        "read_sql_table",
+    }
+)
 
 # numpy readers that touch the filesystem
-_NUMPY_READERS: frozenset[str] = frozenset({
-    "load", "loadtxt", "genfromtxt", "fromfile", "memmap", "fromregex",
-})
+_NUMPY_READERS: frozenset[str] = frozenset(
+    {
+        "load",
+        "loadtxt",
+        "genfromtxt",
+        "fromfile",
+        "memmap",
+        "fromregex",
+    }
+)
 
 
 def _path_within(path: Any, root: Path) -> bool:
@@ -77,12 +125,12 @@ class _GuardedModule:
         root = object.__getattribute__(self, "_root")
         attr = getattr(real, name)
         if name in readers and callable(attr):
+
             def guarded(path: Any = None, *args: Any, **kwargs: Any) -> Any:
                 if path is not None and not _path_within(path, root):
-                    raise PermissionError(
-                        f"沙箱只能访问工作目录内的文件，禁止读取: {path}"
-                    )
+                    raise PermissionError(f"沙箱只能访问工作目录内的文件，禁止读取: {path}")
                 return attr(path, *args, **kwargs)
+
             return guarded
         return attr
 
@@ -103,8 +151,8 @@ def build_sandbox_globals(fake_api_module: Any, workspace_root: str) -> dict:
             p.parent.mkdir(parents=True, exist_ok=True)
         return _builtins.open(p, mode, *args, **kwargs)
 
-    import pandas as _pd
     import numpy as _np
+    import pandas as _pd
 
     guarded_pd = _GuardedModule(_pd, _PANDAS_READERS, root)
     guarded_np = _GuardedModule(_np, _NUMPY_READERS, root)
@@ -112,7 +160,9 @@ def build_sandbox_globals(fake_api_module: Any, workspace_root: str) -> dict:
     def guarded_import(name: str, globals=None, locals=None, fromlist=(), level=0):
         top = name.split(".")[0]
         if top in BLOCKED_IMPORTS:
-            raise ImportError(f"禁止导入: {name}（沙箱内不可用，请通过 traderharness_api 访问数据）")
+            raise ImportError(
+                f"禁止导入: {name}（沙箱内不可用，请通过 traderharness_api 访问数据）"
+            )
         if name == "pandas":
             return guarded_pd
         if name == "numpy":

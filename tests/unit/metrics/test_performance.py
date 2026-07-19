@@ -3,7 +3,9 @@
 from datetime import date, timedelta
 from decimal import Decimal
 
-from traderharness.metrics.performance import calculate_metrics, PerformanceMetrics
+import pytest
+
+from traderharness.metrics.performance import calculate_metrics
 
 
 def _make_curve(start: date, days: int, start_val: float, end_val: float):
@@ -40,10 +42,7 @@ class TestCalculateMetrics:
         assert m.max_drawdown_pct > 18.0
 
     def test_max_consecutive_loss_days(self):
-        curve = [
-            (date(2024, 1, i), Decimal(str(1000000 - i * 1000)))
-            for i in range(1, 8)
-        ]
+        curve = [(date(2024, 1, i), Decimal(str(1000000 - i * 1000))) for i in range(1, 8)]
         m = calculate_metrics(curve, Decimal("1000000"), [])
         assert m.max_consecutive_loss_days == 6
 
@@ -63,10 +62,15 @@ class TestCalculateMetrics:
         assert m.total_return_pct == 0.0
         assert m.trading_days == 0
 
+    def test_total_trades_counts_opening_fills_too(self):
+        curve = [(date(2024, 1, 2), Decimal("1000000"))]
+        trades = [{"action": "buy", "amount": 100000}]
+
+        metrics = calculate_metrics(curve, Decimal("1000000"), trades)
+
+        assert metrics.total_trades == 1
+
     def test_sharpe_positive(self):
         curve = _make_curve(date(2024, 1, 2), 252, 1000000, 1200000)
         m = calculate_metrics(curve, Decimal("1000000"), [])
         assert m.sharpe_ratio > 0
-
-
-import pytest

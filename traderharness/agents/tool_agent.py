@@ -9,29 +9,103 @@ from __future__ import annotations
 import logging
 from datetime import date
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
-import pandas as pd
-
+from traderharness.agents.llm_client import LLMClient
 from traderharness.agents.loop import AgentLoop, DayResult
 from traderharness.agents.memory import DailyMemory
-from traderharness.agents.llm_client import LLMClient
 from traderharness.core.events import EventBus
-from traderharness.tools.registry import ToolRegistry, ToolContext
-from traderharness.tools.market import GET_KLINE, GET_STOCK_PRICE, GET_STOCK_INFO
-from traderharness.tools.portfolio import GET_PORTFOLIO, GET_POSITION
-from traderharness.tools.trading import PLACE_ORDER
-from traderharness.tools.control import FINISH_DAY
-from traderharness.tools.analysis import SCREEN_STOCKS, GET_SECTOR_SUMMARY, GET_MARKET_OVERVIEW
-from traderharness.tools.fundamentals import GET_FUNDAMENTALS
-from traderharness.tools.news import GET_ANNOUNCEMENTS, GET_NEWS
-from traderharness.tools.watchlist import ADD_WATCHLIST, REMOVE_WATCHLIST, GET_WATCHLIST
-from traderharness.tools.sandbox import EXECUTE_CODE
+from traderharness.tools.analysis import GET_MARKET_OVERVIEW, GET_SECTOR_SUMMARY, SCREEN_STOCKS
 from traderharness.tools.business import GET_BUSINESS_SEGMENTS
+from traderharness.tools.catalog import normalize_allowed_tools
+from traderharness.tools.control import FINISH_DAY
+from traderharness.tools.fundamentals import GET_FUNDAMENTALS
+from traderharness.tools.market import GET_KLINE, GET_STOCK_INFO, GET_STOCK_PRICE
+from traderharness.tools.news import GET_ANNOUNCEMENTS, GET_NEWS
+from traderharness.tools.portfolio import GET_PORTFOLIO, GET_POSITION
+from traderharness.tools.registry import ToolContext, ToolRegistry
+from traderharness.tools.sandbox import EXECUTE_CODE
+from traderharness.tools.trading import PLACE_ORDER
 from traderharness.tools.valuation import GET_VALUATION
+from traderharness.tools.watchlist import ADD_WATCHLIST, GET_WATCHLIST, REMOVE_WATCHLIST
+
+if TYPE_CHECKING:
+    from traderharness.trajectory.collector import TrajectoryCollector
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT_TEMPLATE = """你是一位A股交易员，正在模拟交易环境中回测对战。初始资金{initial_cash}元。
+TOOL_DEFINITIONS = (
+    GET_KLINE,
+    GET_STOCK_PRICE,
+    GET_STOCK_INFO,
+    GET_MARKET_OVERVIEW,
+    SCREEN_STOCKS,
+    GET_SECTOR_SUMMARY,
+    GET_PORTFOLIO,
+    GET_POSITION,
+    PLACE_ORDER,
+    GET_FUNDAMENTALS,
+    GET_ANNOUNCEMENTS,
+    GET_NEWS,
+    ADD_WATCHLIST,
+    REMOVE_WATCHLIST,
+    GET_WATCHLIST,
+    EXECUTE_CODE,
+    GET_BUSINESS_SEGMENTS,
+    GET_VALUATION,
+    FINISH_DAY,
+)
+
+DECISION_RECORDING_CONTRACT = """
+
+## 决策记录要求
+
+每次调用 place_order 前必须形成可审计的决策摘要，不要输出隐藏思维过程，只记录可验证依据。
+reasoning 参数必须明确包含：交易信号、使用的数据或事件证据、主要风险与失效条件、仓位依据、退出计划。
+不得只写“趋势较好”“看涨”或“止损”等无法复盘的短句。
+"""
+
+# Current contract version: DECISION_RECORDING_CONTRACT is injected into the
+# system prompt. Cassettes/bundles recorded under this version include the
+# contract text in every recorded prompt fingerprint.
+CONTRACT_VERSION = "v2"
+# Legacy version: no contract text was injected (pre-dates this feature, or a
+# manifest/replay source explicitly says the recorded prompt lacked it).
+LEGACY_CONTRACT_VERSION = "v1"
+
+
+def resolve_decision_contract(
+    llm_client: object,
+    prompt_contract_version: str | None = None,
+) -> tuple[str, str]:
+    """Decide whether to inject `DECISION_RECORDING_CONTRACT` into the system
+    prompt, and report which contract version that decision corresponds to.
+
+    Returns `(contract_text, contract_version)`. `contract_text` is either
+    `DECISION_RECORDING_CONTRACT` or a blank placeholder ("\\n") that keeps the
+    template's line structure stable.
+
+    Resolution order:
+    1. If `prompt_contract_version` is given (typically read from a Replay
+       Bundle manifest during replay, or explicitly set when recording), it
+       is authoritative: `CONTRACT_VERSION` injects, anything else suppresses.
+       This lets replay reproduce exactly whatever prompt was recorded,
+       regardless of the current code's live-vs-replay state.
+    2. Otherwise, fall back to the legacy heuristic: a replay player without
+       manifest context means an old (pre-contract) v1 cassette, so the
+       contract is suppressed to keep the request fingerprint stable; a live
+       client (no player) injects the current contract.
+    """
+    if prompt_contract_version is not None:
+        if prompt_contract_version == CONTRACT_VERSION:
+            return DECISION_RECORDING_CONTRACT, CONTRACT_VERSION
+        return "\n", LEGACY_CONTRACT_VERSION
+    if getattr(llm_client, "_player", None) is not None:
+        return "\n", LEGACY_CONTRACT_VERSION
+    return DECISION_RECORDING_CONTRACT, CONTRACT_VERSION
+
+SYSTEM_PROMPT_TEMPLATE = """
+你是一位A股交易员，正在模拟交易环境中回测对战。初始资金{initial_cash}元。
 
 ## 每天流程
 
@@ -56,8 +130,7 @@ SYSTEM_PROMPT_TEMPLATE = """你是一位A股交易员，正在模拟交易环境
 - 最多同时持有{max_positions}只股票
 - 空仓也是策略，不必强制交易
 - 注意控制回撤，亏损达10%时应认真复盘
-
-## 工具说明
+{decision_recording_contract}## 工具说明
 
 | 工具 | 用途 |
 |------|------|
@@ -78,8 +151,27 @@ SYSTEM_PROMPT_TEMPLATE = """你是一位A股交易员，正在模拟交易环境
 | add_watchlist | 加入自选股 |
 | remove_watchlist | 移出自选股 |
 | get_watchlist | 查看自选股 |
-| execute_code | 执行Python代码（traderharness_api访问数据，numpy/pandas可用；工作目录文件直接open()读写） |
+| execute_code | 执行Python代码（通过traderharness_api访问数据） |
 | finish_day | 结束交易日并写总结 |
+
+### execute_code / traderharness_api 契约
+
+沙箱内只能：`from traderharness_api import market, portfolio, news`，再配合 numpy/pandas。
+
+**market 合法方法**（禁止臆造其它名字）：
+`get_kline(code, days=60)`、`get_kline_5min(code)`、`get_stock_list()`、`get_all_stocks()`（=list 别名）、
+`get_all_daily(days=20)`、`get_stock_price(code)`、`get_fundamentals(code)`、
+`get_market_overview()`、`get_sector_summary(sector)`、`get_sector_stocks(sector)`、`screen_stocks(**筛选参数)`。
+
+**get_all_daily 列名**：`stock_code, date, open, high, low, close, volume, change_pct`。
+`date` 为相对整数偏移（开启日期遮罩时），不是日历字符串；只用参数 `days=`，不要传 `offset`/`date_offset`。
+缺少的涨跌幅用返回的 `change_pct` 或自行用 close 计算。
+
+**portfolio**：`get_positions()`、`get_cash()`、`get_total_value()`。
+**news**：`get_announcements(code, days=30)`、`get_policy_news(days=7)`。
+
+禁止读取原始 dataset 路径、禁止 `import` 回测框架/`data_api`、禁止嵌套回测。
+遇到 `AttributeError` 时改用上表方法，不得编造计算结果。
 
 ## 环境规则
 
@@ -98,7 +190,7 @@ class ToolAgent:
     """Tool-Use Agentic Agent — 通过 function calling 自主研究和交易。"""
 
     @classmethod
-    def from_card(cls, card_id: str, llm_client: LLMClient | None = None) -> "ToolAgent":
+    def from_card(cls, card_id: str, llm_client: LLMClient | None = None) -> ToolAgent:
         from traderharness.agents.agent_card import load_card
 
         card = load_card(card_id)
@@ -116,6 +208,7 @@ class ToolAgent:
             initial_cash=Decimal(str(card.initial_cash)),
             max_positions=card.max_positions,
             max_position_pct=card.max_position_pct,
+            allowed_tools=card.allowed_tools,
         )
 
     def __init__(
@@ -127,10 +220,13 @@ class ToolAgent:
         initial_cash: Decimal = Decimal("1000000"),
         max_positions: int = 4,
         max_position_pct: float = 25.0,
+        allowed_tools: list[str] | None = None,
         memory_dir: str | None = None,
         live_file: str | None = None,
-        event_bus: "EventBus | None" = None,
+        event_bus: EventBus | None = None,
         mask_dates: bool = True,
+        committee=None,
+        prompt_contract_version: str | None = None,
     ) -> None:
         self.agent_id = agent_id
         self.name = name
@@ -139,38 +235,28 @@ class ToolAgent:
         self.max_positions = max_positions
         self.max_position_pct = max_position_pct
         self.mask_dates = mask_dates
+        self.allowed_tools = normalize_allowed_tools(allowed_tools)
 
+        contract_text, self.prompt_contract_version = resolve_decision_contract(
+            llm_client, prompt_contract_version
+        )
         self._system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
             initial_cash=f"{float(initial_cash):,.0f}",
             max_position_pct=f"{max_position_pct:.0f}",
             max_positions=max_positions,
             persona=persona,
+            decision_recording_contract=contract_text,
         )
 
         self._registry = ToolRegistry()
-        self._registry.register(GET_KLINE)
-        self._registry.register(GET_STOCK_PRICE)
-        self._registry.register(GET_STOCK_INFO)
-        self._registry.register(GET_MARKET_OVERVIEW)
-        self._registry.register(SCREEN_STOCKS)
-        self._registry.register(GET_SECTOR_SUMMARY)
-        self._registry.register(GET_PORTFOLIO)
-        self._registry.register(GET_POSITION)
-        self._registry.register(PLACE_ORDER)
-        self._registry.register(GET_FUNDAMENTALS)
-        self._registry.register(GET_ANNOUNCEMENTS)
-        self._registry.register(GET_NEWS)
-        self._registry.register(ADD_WATCHLIST)
-        self._registry.register(REMOVE_WATCHLIST)
-        self._registry.register(GET_WATCHLIST)
-        self._registry.register(EXECUTE_CODE)
-        self._registry.register(GET_BUSINESS_SEGMENTS)
-        self._registry.register(GET_VALUATION)
-        self._registry.register(FINISH_DAY)
+        for tool in TOOL_DEFINITIONS:
+            if tool.name in self.allowed_tools:
+                self._registry.register(tool)
 
         self._memory = DailyMemory(agent_id=agent_id, storage_dir=memory_dir)
 
         from traderharness.trajectory.collector import TrajectoryCollector
+
         self._trajectory = TrajectoryCollector(agent_id=agent_id, live_file=live_file)
 
         self._loop = AgentLoop(
@@ -179,6 +265,7 @@ class ToolAgent:
             system_prompt=self._system_prompt,
             memory=self._memory,
             event_bus=event_bus,
+            committee=committee,
         )
         self._loop.trajectory = self._trajectory
 
@@ -188,7 +275,7 @@ class ToolAgent:
         self.day_results: list[DayResult] = []
 
     @property
-    def trajectory(self) -> "TrajectoryCollector":
+    def trajectory(self) -> TrajectoryCollector:
         return self._trajectory
 
     async def on_day(self, bus, current_date: date) -> None:
@@ -207,25 +294,9 @@ class ToolAgent:
 
         preloaded_daily = {code: bus.market.get(code) for code in bus.market.all_codes()}
 
-        # 执行价：持仓 + 自选股
-        price_codes = set(portfolio.positions.keys()) | self._watchlist_codes
-        open_prices = {}
-        close_prices = {}
-        for code in price_codes:
-            op = bus.get_execution_price(code, "open")
-            if op:
-                open_prices[code] = op
-            cp = bus.get_execution_price(code, "close")
-            if cp:
-                close_prices[code] = cp
-
-        # 5分钟窗口数据（如果有）
-        window_minutes: dict[str, pd.DataFrame] = {}
-        for code in set(portfolio.positions.keys()) | self._watchlist_codes:
-            bars_5m = bus.get_5min_bars(code, current_date)
-            if bars_5m is not None and not bars_5m.empty:
-                window_minutes[code] = bars_5m
-
+        # Day-start window/execution snapshots stay empty. AgentLoop rebuilds
+        # them from the live watchlist ∪ positions when entering open/close.
+        # Pre-market valuation uses previous close, never today's fill prices.
         ctx = ToolContext(
             agent_id=self.agent_id,
             current_date=current_date,
@@ -233,17 +304,22 @@ class ToolAgent:
             portfolio=portfolio,
             initial_cash=initial,
             preloaded_daily=preloaded_daily,
-            window_minutes=window_minutes,
-            execution_price=open_prices,
-            close_prices=close_prices,
+            window_minutes={},
+            execution_price={},
+            close_prices={},
             workspace_root=self.agent_id,
             max_position_pct=self.max_position_pct,
             max_positions=self.max_positions,
             _bus=bus,
         )
+        # Seed persisted watchlist so morning brief / tools see yesterday's set,
+        # and so an emptied watchlist can be written back at day end.
+        ctx.tool_call_cache["watchlist"] = {code: "" for code in sorted(self._watchlist_codes)}
 
         from traderharness.core.masking import DateMasker
+
         ctx.date_masker = DateMasker(anchor=current_date, enabled=self.mask_dates)
+        ctx.entity_masker = getattr(bus, "_entity_masker", None)
 
         # Inject news data for tool handlers
         news_mgr = getattr(bus, "_news_manager", None)
@@ -278,9 +354,7 @@ class ToolAgent:
             ctx.tool_call_cache["_p0_announcements"] = news_mgr.get_p0_announcements(
                 target_codes, prev_close, today_open
             )
-            ctx.tool_call_cache["_p1_policy"] = news_mgr.get_p1_policy_news(
-                prev_close, today_open
-            )
+            ctx.tool_call_cache["_p1_policy"] = news_mgr.get_p1_policy_news(prev_close, today_open)
 
         # Corporate actions today
         corporate_actions = getattr(bus, "_corporate_actions_today", [])
@@ -294,7 +368,7 @@ class ToolAgent:
         result = await self._loop.run_day(current_date, ctx)
         self.day_results.append(result)
 
-        # 持久化自选股
-        watchlist_from_ctx = ctx.tool_call_cache.get("watchlist", {})
-        if watchlist_from_ctx:
+        # 持久化自选股（含清空：键存在即回写，允许空集）
+        if "watchlist" in ctx.tool_call_cache:
+            watchlist_from_ctx = ctx.tool_call_cache.get("watchlist") or {}
             self._watchlist_codes = set(watchlist_from_ctx.keys())

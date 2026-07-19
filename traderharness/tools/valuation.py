@@ -2,21 +2,24 @@
 
 from __future__ import annotations
 
-from traderharness.tools.registry import ToolDefinition, ToolContext
+from traderharness.tools.registry import ToolContext, ToolDefinition
 
 
 async def handle_get_valuation(params: dict, ctx: ToolContext) -> dict:
     code = params.get("stock_code", "")
     if not code:
         return {"error": "stock_code 不能为空"}
+    from traderharness.agents.window_context import code_in_universe, universe_error
+
+    if not code_in_universe(code, ctx):
+        return universe_error(code)
 
     valuation_data = ctx.tool_call_cache.get("_valuation_data")
     if valuation_data is None:
         return {"error": "估值数据未加载"}
 
     stock_data = valuation_data[
-        (valuation_data["stock_code"] == code)
-        & (valuation_data["date"] < ctx.current_date)
+        (valuation_data["stock_code"] == code) & (valuation_data["date"] < ctx.current_date)
     ]
     if stock_data.empty:
         return {"error": f"{code} 无估值数据"}

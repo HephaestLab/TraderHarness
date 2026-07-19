@@ -1,0 +1,142 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    name: Python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -e ".[all]"
+      - run: >-
+          python -m ruff check traderharness
+          scripts/build_hf_release.py
+          scripts/upload_hf_release.py
+          scripts/audit_entity_leakage.py
+          scripts/build_readme_gif.py
+          scripts/build_llms_full.py
+          scripts/build_social_preview.py
+          scripts/update_hf_card.py
+          scripts/data_doctor.py
+      - name: Type-check public contracts
+        run: >-
+          python -m mypy --follow-imports=skip --ignore-missing-imports
+          traderharness/agents/protocol.py
+          traderharness/result_analysis.py
+      - name: CI-safe test suite
+        run: python -m pytest tests/ --no-header -q
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: webui/package-lock.json
+      - run: python -m pip install -e ".[llm,data,ui]"
+      - run: npm ci
+        working-directory: webui
+      - run: npm test
+        working-directory: webui
+      - run: npm run build
+        working-directory: webui
+      - run: npm run test:e2e
+        working-directory: webui
+
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -e ".[all]"
+      - name: CI-safe coverage
+        run: >-
+          python -m pytest tests/
+          --cov=traderharness
+          --cov-report=term-missing:skip-covered
+          --cov-fail-under=65
+          --no-header -q
+
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: webui/package-lock.json
+      - run: npm ci && npm run build
+        working-directory: webui
+      - run: python -m pip install build twine
+      - run: python -m build
+      - run: python -m twine check dist/*
+      - run: python -m pip install dist/*.whl
+      - run: traderharness --version
+
+  llms-full-drift:
+    name: llms-full.txt drift check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python scripts/build_llms_full.py
+      - name: Fail if llms-full.txt is stale or uncommitted
+        run: |
+          git add -N llms-full.txt
+          git diff --exit-code llms-full.txt
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: traderharness:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - run: docker run --rm -d --name traderharness-ci -p 8000:8000 traderharness:ci
+      - run: |
+          for attempt in {1..20}; do
+            curl --fail http://127.0.0.1:8000/api/health && exit 0
+            sleep 2
+          done
+          docker logs traderharness-ci
+          exit 1
+      - if: always()
+        run: docker stop traderharness-ci || true

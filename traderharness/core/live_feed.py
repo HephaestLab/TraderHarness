@@ -14,11 +14,13 @@ Usage:
 
 from __future__ import annotations
 
-import time
 import queue
+import time
+from collections.abc import Iterator
 from dataclasses import dataclass, field
-from datetime import date
-from typing import Any, Iterator
+from datetime import date, datetime
+from decimal import Decimal
+from typing import Any
 
 from traderharness.core.events import EventBus
 
@@ -49,24 +51,28 @@ class LiveFeed:
 
     def _wire_engine_events(self) -> None:
         for event_name in (
-            "run_start", "run_end",
-            "day_start", "day_end",
-            "order_placed", "breakpoint_hit",
+            "run_start",
+            "loading_data",
+            "run_end",
+            "day_start",
+            "day_end",
+            "phase_change",
+            "committee_memo",
+            "llm_response",
+            "tool_call",
+            "order_placed",
+            "breakpoint_hit",
         ):
             self._event_bus.on(event_name, self._make_handler(event_name))
 
     def _make_handler(self, event_type: str):
         def handler(**kwargs):
             self._push(event_type, kwargs)
+
         return handler
 
     def _push(self, event_type: str, data: dict[str, Any]) -> None:
-        cleaned = {}
-        for k, v in data.items():
-            if isinstance(v, date):
-                cleaned[k] = v.isoformat()
-            else:
-                cleaned[k] = v
+        cleaned = self._json_value(data)
         event = FeedEvent(type=event_type, ts=time.time(), data=cleaned)
         try:
             self._queue.put_nowait(event)
@@ -74,6 +80,20 @@ class LiveFeed:
             pass
         if event_type == "run_end":
             self._done = True
+
+    @classmethod
+    def _json_value(cls, value: Any) -> Any:
+        if isinstance(value, datetime | date):
+            return value.isoformat()
+        if isinstance(value, Decimal):
+            return float(value)
+        if isinstance(value, dict):
+            return {str(key): cls._json_value(item) for key, item in value.items()}
+        if isinstance(value, list | tuple):
+            return [cls._json_value(item) for item in value]
+        if value is None or isinstance(value, str | int | float | bool):
+            return value
+        return str(value)
 
     def push(self, event_type: str, **data: Any) -> None:
         self._push(event_type, data)

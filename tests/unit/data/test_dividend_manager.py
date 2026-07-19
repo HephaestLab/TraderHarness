@@ -7,8 +7,8 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from traderharness.data.dividend_manager import DividendManager
 from traderharness.core.portfolio import Portfolio
+from traderharness.data.dividend_manager import DividendManager
 
 
 @pytest.fixture
@@ -90,7 +90,6 @@ class TestBonusShares:
 
         portfolio = Portfolio(Decimal("500000"))
         portfolio.buy("000001", "平安银行", Decimal("15.00"), 1000, date(2024, 6, 1))
-        original_cost_basis = Decimal("15.00") * 1000  # 15000
 
         mgr.process_day(date(2024, 6, 15), portfolio)
 
@@ -106,7 +105,7 @@ class TestBonusShares:
         portfolio.buy("300750", "宁德时代", Decimal("200.00"), 500, date(2024, 5, 1))
         cash_before = portfolio.cash
 
-        actions = mgr.process_day(date(2024, 5, 20), portfolio)
+        mgr.process_day(date(2024, 5, 20), portfolio)
 
         # 300750: bonus=5, transfer=0, cash=0
         pos = portfolio.positions["300750"]

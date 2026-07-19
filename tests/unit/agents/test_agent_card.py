@@ -1,11 +1,16 @@
 """Tests for simplified Agent Card system."""
 
-import json
-from pathlib import Path
 
 import pytest
 
-from traderharness.agents.agent_card import AgentCard, load_card, save_card, list_cards
+from traderharness.agents.agent_card import (
+    BUILTIN_STORAGE_DIR,
+    AgentCard,
+    list_cards,
+    load_card,
+    save_card,
+)
+from traderharness.tools.catalog import CORE_TOOL_NAMES
 
 
 class TestAgentCard:
@@ -47,6 +52,29 @@ class TestAgentCard:
         card = AgentCard.from_dict(data)
         assert card.persona == "你是一位经验丰富的主观交易员。"
         assert card.initial_cash == 1_000_000
+
+    def test_strategy_metadata_and_tool_policy_roundtrip(self):
+        card = AgentCard(
+            id="quality",
+            name="Quality",
+            description="以质量和估值为双重门槛。",
+            strategy_tags=["quality", "value"],
+            risk_profile="conservative",
+            holding_period="20-60 trading days",
+            allowed_tools=[
+                *sorted(CORE_TOOL_NAMES),
+                "get_fundamentals",
+                "get_valuation",
+            ],
+        )
+
+        restored = AgentCard.from_dict(card.to_dict())
+
+        assert restored.description == card.description
+        assert restored.strategy_tags == ["quality", "value"]
+        assert restored.risk_profile == "conservative"
+        assert restored.holding_period == "20-60 trading days"
+        assert set(restored.allowed_tools) == set(card.allowed_tools)
 
 
 class TestSaveLoadCards:
@@ -102,8 +130,8 @@ class TestFromCard:
         )
         save_card(card, storage_dir=tmp_path)
 
-        from traderharness.agents.tool_agent import ToolAgent
         from traderharness.agents.llm_client import LLMClient
+        from traderharness.agents.tool_agent import ToolAgent
 
         llm = LLMClient(model="deepseek-chat", api_key="fake", base_url="http://fake")
         agent = ToolAgent.from_card("test-from-card", llm_client=llm)
@@ -113,13 +141,73 @@ class TestFromCard:
         assert agent.max_positions == 3
         assert "测试" in agent.persona
 
+    def test_from_card_applies_tool_allowlist_and_protected_core(self, tmp_path, monkeypatch):
+        import traderharness.agents.agent_card as card_mod
+
+        monkeypatch.setattr(card_mod, "DEFAULT_STORAGE_DIR", tmp_path)
+        save_card(
+            AgentCard(
+                id="focused",
+                name="Focused",
+                model="deepseek-chat",
+                allowed_tools=["get_kline"],
+            ),
+            storage_dir=tmp_path,
+        )
+
+        from traderharness.agents.llm_client import LLMClient
+        from traderharness.agents.tool_agent import ToolAgent
+
+        llm = LLMClient(model="deepseek-chat", api_key="fake", base_url="http://fake")
+        agent = ToolAgent.from_card("focused", llm_client=llm)
+
+        assert "get_kline" in agent._registry
+        assert CORE_TOOL_NAMES <= set(agent._registry._tools)
+        assert "execute_code" not in agent._registry
+
     def test_from_card_not_found(self, tmp_path, monkeypatch):
         import traderharness.agents.agent_card as card_mod
         monkeypatch.setattr(card_mod, "DEFAULT_STORAGE_DIR", tmp_path)
 
-        from traderharness.agents.tool_agent import ToolAgent
         from traderharness.agents.llm_client import LLMClient
+        from traderharness.agents.tool_agent import ToolAgent
 
         llm = LLMClient(model="deepseek-chat", api_key="fake", base_url="http://fake")
         with pytest.raises(FileNotFoundError):
             ToolAgent.from_card("nonexistent", llm_client=llm)
+
+
+def test_builtin_registry_uses_deepseek_v4_pro_model():
+    """All bundled builtin agent cards should use the flagship model, not a mix."""
+    cards = {
+        path.stem: load_card(path.stem, BUILTIN_STORAGE_DIR)
+        for path in BUILTIN_STORAGE_DIR.glob("*.json")
+    }
+    assert cards
+    for card_id, card in cards.items():
+        assert card is not None
+        assert card.model == "deepseek-v4-pro", f"{card_id} still uses {card.model}"
+
+
+def test_builtin_registry_contains_distinct_production_strategies():
+    expected = {
+        "quality-compounder",
+        "event-hawk",
+        "sector-rotator",
+        "contrarian-guardian",
+        "quant-researcher",
+        "trend-breakout",
+    }
+    cards = {
+        path.stem: load_card(path.stem, BUILTIN_STORAGE_DIR)
+        for path in BUILTIN_STORAGE_DIR.glob("*.json")
+    }
+
+    assert expected <= set(cards)
+    for card_id in expected:
+        card = cards[card_id]
+        assert card is not None
+        assert len(card.persona) >= 300
+        assert card.description
+        assert len(card.strategy_tags) >= 2
+        assert CORE_TOOL_NAMES <= set(card.allowed_tools)

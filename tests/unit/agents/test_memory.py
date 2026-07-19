@@ -3,6 +3,7 @@
 from datetime import date
 
 from traderharness.agents.memory import DailyMemory
+from traderharness.core.entity_masking import EntityMasker
 
 
 class TestDailyMemory:
@@ -43,6 +44,25 @@ class TestDailyMemory:
         mem2 = DailyMemory(agent_id="test", storage_dir=tmp_path)
         assert len(mem2) == 1
         assert mem2.get_recent(1)[0]["summary"] == "Persisted entry"
+
+    def test_prompt_text_masks_summary_and_trade_codes(self):
+        mem = DailyMemory(agent_id="test")
+        mem.add(
+            date(2024, 3, 4),
+            "贵州茅台600519仍然值得持有",
+            [{"action": "buy", "stock_code": "600519"}],
+        )
+        masker = EntityMasker(
+            ["600519", "600000"],
+            names={"600519": "贵州茅台", "600000": "浦发银行"},
+            seed=1,
+        )
+
+        text = mem.to_prompt_text(entity_masker=masker)
+
+        assert masker.mask_code("600519") in text
+        assert "贵州茅台" not in text
+        assert "600519" not in text
 
     def test_clear(self):
         mem = DailyMemory(agent_id="test")

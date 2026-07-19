@@ -4,9 +4,8 @@ from datetime import date, timedelta
 from decimal import Decimal
 
 import pandas as pd
-import pytest
 
-from traderharness.core.env import TradingEnv, EnvConfig
+from traderharness.core.env import EnvConfig, TradingEnv
 from traderharness.metrics.performance import calculate_metrics
 
 

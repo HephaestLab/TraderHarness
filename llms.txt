@@ -1,0 +1,34 @@
+# TraderHarness
+
+> TraderHarness is a contamination-resistant historical market environment for autonomous LLM trading agents. It currently targets China A-shares and provides strict point-in-time data masking, deterministic entity/date anonymization, progressive 5-minute execution, full trajectories, replay, SFT export, independent agent comparison, and single-executor multi-role committees.
+
+Canonical repository: https://github.com/HephaestLab/TraderHarness
+Documentation: https://hephaestlab.github.io/TraderHarness/
+Package: https://pypi.org/project/traderharness/
+
+## Core documentation
+
+- [Overview](https://hephaestlab.github.io/TraderHarness/): Product scope and evaluation guarantees
+- [Quickstart](https://hephaestlab.github.io/TraderHarness/quickstart/): Install, dataset, replay demo, and UI
+- [Architecture](https://hephaestlab.github.io/TraderHarness/architecture/): Engine invariants and replay contract
+- [Preventing data leakage](https://hephaestlab.github.io/TraderHarness/contamination/): Point-in-time masking, date anonymization, entity masking, and audit evidence
+- [Project comparison](https://hephaestlab.github.io/TraderHarness/comparison/): TraderHarness, TradingAgents, StockBench, Qlib, and traditional engines
+- [Multi-role committees](https://hephaestlab.github.io/TraderHarness/design/multi-role-agent/): Concurrent read-only advisors with one trading executor
+- [Training data](https://hephaestlab.github.io/TraderHarness/training-data/): Full-fidelity trajectory and SFT export
+- [Data](https://hephaestlab.github.io/TraderHarness/data/): Dataset contents, integrity, and licensing
+- [CLI and local API](https://hephaestlab.github.io/TraderHarness/api/): Commands, agent protocol, REST, and WebSocket endpoints
+- [Extending TraderHarness](https://hephaestlab.github.io/TraderHarness/extensions/): Contracts for data adapters, tools, sandbox backends, metrics, broker adapters, and the frontend
+- [Roadmap](https://hephaestlab.github.io/TraderHarness/roadmap/): Delivered v1.0 scope, paper trading, live broker adapter, sandbox hardening, and explicit non-goals
+- [FAQ](https://hephaestlab.github.io/TraderHarness/faq/): Historical contamination, replay, committees, and security
+- [AGENTS.md](https://github.com/HephaestLab/TraderHarness/blob/main/AGENTS.md): Operating guide for coding agents working in this repository, including non-negotiable invariants
+- [CONTRIBUTING.md](https://github.com/HephaestLab/TraderHarness/blob/main/CONTRIBUTING.md): Pull request expectations and required checks
+
+## Key facts
+
+- Backtest-time market access is in-memory after one preload.
+- TradingBus.place_order() is the only order path.
+- Daily bars are strictly earlier than the simulated date; intraday bars are truncated to the current window.
+- Agent-facing company names, stock codes, and calendar dates can be deterministically anonymized.
+- Replay validates canonical request fingerprints and fails closed.
+- `compare` means independent portfolios; a committee means one portfolio and one executor.
+- Historical simulation is research infrastructure, not investment advice.

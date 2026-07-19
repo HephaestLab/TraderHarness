@@ -9,7 +9,7 @@ from decimal import Decimal
 from typing import Any
 
 from traderharness.core.calendar import TradingCalendar
-from traderharness.core.engine import BacktestEngine, EngineConfig, EngineResult, DataProvider
+from traderharness.core.engine import BacktestEngine, EngineConfig, EngineResult
 from traderharness.core.events import EventBus
 from traderharness.core.market_profile import AShareProfile
 
@@ -42,9 +42,7 @@ class TradingEnv:
         """Synchronous entry point."""
         return asyncio.run(self.run_async(agents, breakpoints))
 
-    async def run_async(
-        self, agents: Any, breakpoints: list[date] | None = None
-    ) -> EngineResult:
+    async def run_async(self, agents: Any, breakpoints: list[date] | None = None) -> EngineResult:
         """Asynchronous entry point."""
         if not isinstance(agents, list):
             agents = [agents]

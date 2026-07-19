@@ -9,11 +9,10 @@ from datetime import date, datetime
 from decimal import Decimal
 
 import pandas as pd
-import pytest
 
-from traderharness.tools.registry import ToolContext
-from traderharness.core.portfolio import Portfolio
 from traderharness.agents.sandbox.api import MarketAPI
+from traderharness.core.portfolio import Portfolio
+from traderharness.tools.registry import ToolContext
 
 
 def _full_day_bars() -> pd.DataFrame:

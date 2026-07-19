@@ -5,8 +5,9 @@ from decimal import Decimal
 
 import pytest
 
-from traderharness.tools.registry import ToolDefinition, ToolRegistry, ToolContext
+from traderharness.core.masking import DateMasker
 from traderharness.core.portfolio import Portfolio
+from traderharness.tools.registry import ToolContext, ToolDefinition, ToolRegistry
 
 
 async def _dummy_handler(params: dict, ctx) -> dict:
@@ -61,3 +62,17 @@ class TestToolRegistry:
         ctx = _make_ctx()
         result = await reg.execute("unknown", {}, ctx)
         assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_execute_masks_dates_embedded_in_free_text(self):
+        async def news_handler(params, ctx):
+            return {"content": "会议将于2024年3月5日召开"}
+
+        reg = ToolRegistry()
+        reg.register(ToolDefinition(name="news", description="", parameters={}, handler=news_handler))
+        ctx = _make_ctx()
+        ctx.date_masker = DateMasker(anchor=date(2024, 3, 4))
+
+        result = await reg.execute("news", {}, ctx)
+
+        assert result["content"] == "会议将于D+1召开"

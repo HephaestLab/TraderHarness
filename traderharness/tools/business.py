@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
-from traderharness.tools.registry import ToolDefinition, ToolContext
+from traderharness.tools.registry import ToolContext, ToolDefinition
 
 
 async def handle_get_business_segments(params: dict, ctx: ToolContext) -> dict:
     code = params.get("stock_code", "")
     if not code:
         return {"error": "stock_code 不能为空"}
+    from traderharness.agents.window_context import code_in_universe, universe_error
+
+    if not code_in_universe(code, ctx):
+        return universe_error(code)
 
     segments_data = ctx.tool_call_cache.get("_business_segments_data")
     if segments_data is None:
@@ -51,7 +55,7 @@ async def handle_get_business_segments(params: dict, ctx: ToolContext) -> dict:
 def _fmt_pct(val) -> str | None:
     if val is None or val != val:  # NaN check
         return None
-    return f"{float(val)*100:.1f}%"
+    return f"{float(val) * 100:.1f}%"
 
 
 GET_BUSINESS_SEGMENTS = ToolDefinition(

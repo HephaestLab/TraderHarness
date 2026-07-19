@@ -1,0 +1,1103 @@
+# TraderHarness full documentation
+
+Canonical source: https://github.com/HephaestLab/TraderHarness
+
+This file is generated from the public README and documentation pages.
+
+---
+
+<!-- source: README.md -->
+
+# TraderHarness
+
+<p align="center">
+  <strong>An execution and evidence environment for autonomous LLM trading agents — not another strategy library.</strong><br>
+  Real A-share data · strict point-in-time masking · reproducible trajectories
+</p>
+
+<p align="center">
+  <a href="https://github.com/HephaestLab/TraderHarness/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/HephaestLab/TraderHarness/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://pypi.org/project/traderharness/"><img alt="PyPI" src="https://img.shields.io/pypi/v/traderharness"></a>
+  <a href="https://github.com/HephaestLab/TraderHarness/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>
+  <a href="https://pypi.org/project/traderharness/"><img alt="Python" src="https://img.shields.io/pypi/pyversions/traderharness"></a>
+  <a href="CHANGELOG.md"><img alt="Status" src="https://img.shields.io/badge/status-research%20beta-orange"></a>
+  · <a href="README_zh.md">中文</a>
+</p>
+
+<p align="center">
+  <img src="docs/assets/traderharness-demo.gif" alt="TraderHarness streaming historical replay console" width="920">
+</p>
+
+<p align="center"><sub>Captured from the local research console (<code>webui/scripts/capture-demo.mjs</code>). Regenerate with <code>npm run capture:demo</code> after any UI change; this GIF will be refreshed alongside the v1.0 acceptance run.</sub></p>
+
+TraderHarness is an execution environment and evaluation harness for LLM trading agents. The model receives a historically valid market, research tools, and a portfolio. It can investigate, write analysis code, revise its thesis, and place orders through one controlled path — nothing about the environment is a live market or a broker.
+
+The first production dataset targets China A-shares: five years of full-market daily and 5-minute bars, announcements, policy news, fundamentals, valuation, dividends, and the CSI 300 benchmark.
+
+## Why TraderHarness
+
+| Capability | Typical agent demo | TraderHarness |
+|---|---:|---:|
+| Point-in-time fundamentals and news | Partial | Enforced at every tool boundary |
+| Date and company anonymization | No | Deterministic entity + calendar masks |
+| Fair intraday execution | Often close-price fills | 5-minute visibility and minute-level matching |
+| Reproducible LLM runs | Prompt logs | Fingerprinted replay cassettes |
+| Full training trajectory | Usually truncated | Full request, response, reasoning, tools, and results |
+| Multi-agent support | Shared-chat simulation | Isolated comparison + single-executor committees |
+| Backtest-time data I/O | Common | Zero I/O after preload |
+| Historical playback | Ad hoc scripts | Streaming, phase-bounded historical replay — never a live feed |
+
+TraderHarness deliberately owns the historical environment, information boundary, execution fairness, and evidence
+artifact; it does not prescribe one trading methodology. For a fuller comparison against TradingAgents, StockBench,
+Qlib, and traditional backtesting engines, see [Project comparison](docs/comparison.md).
+
+## Four-agent showcase
+
+TraderHarness ships four reference agent cards under `traderharness/agents/builtin/`, each with a distinct,
+inspectable persona rather than a single generic "trader":
+
+| Agent id | Style | Risk profile | Holding period |
+|---|---|---|---|
+| `trend-breakout` | Momentum/breakout continuation, relative strength, volume-confirmed, mechanical stops | Aggressive | 3–10 trading days |
+| `quality-compounder` | Profitability quality, balance-sheet, and valuation discipline; low turnover | Conservative | 20–60 trading days |
+| `event-hawk` | Announcement/policy/news catalysts with timestamp and source discipline | Aggressive | 1–5 trading days |
+| `quant-researcher` | Reproducible cross-sectional factor checks via the Python sandbox | Balanced | 2–20 trading days |
+
+The reference acceptance run compares all four, head-to-head, over **2024-03-04 → 2024-03-29** with entity masking
+enabled and `deepseek-v4-pro` in thinking mode as the executor model:
+
+```bash
+export DEEPSEEK_API_KEY="..."
+traderharness compare \
+  --agent trend-breakout \
+  --agent quality-compounder \
+  --agent event-hawk \
+  --agent quant-researcher \
+  --start 2024-03-04 \
+  --end 2024-03-29 \
+  --mask-entities \
+  --entity-mask-seed 42 \
+  --record-replay showcase_mar2024 \
+  --output showcase_mar2024/comparison.html
+```
+
+`--record-replay` captures a fingerprinted cassette so the exact run can be replayed deterministically without an
+API key, then audited and shared. See [Quick start](#quick-start) and [Training data](docs/training-data.md).
+
+**Result table (skeleton).** These figures are intentionally left blank rather than estimated. They will be filled
+in once this exact run completes and passes `traderharness audit`, per the release process in
+[`docs/release-playbook.md`](docs/release-playbook.md):
+
+| Agent | Total return | Annualized return | Sharpe | Max drawdown | Win rate | Trades |
+|---|---:|---:|---:|---:|---:|---:|
+| `trend-breakout` | _pending acceptance run_ | — | — | — | — | — |
+| `quality-compounder` | _pending acceptance run_ | — | — | — | — | — |
+| `event-hawk` | _pending acceptance run_ | — | — | — | — | — |
+| `quant-researcher` | _pending acceptance run_ | — | — | — | — | — |
+| CSI 300 (benchmark) | _pending acceptance run_ | — | — | — | — | — |
+
+## Evidence chain
+
+Every claim above is meant to be checked, not taken on faith. Each completed run keeps, per LLM call: the full
+message list, the full tool schema, assistant content and reasoning, every tool call and its arguments, and phase
+and sub-window metadata — see [Training data](docs/training-data.md). The research console renders the same
+evidence as a per-trade dossier: the executing 5-minute K-line, the agent's stated reasoning, and the exact tool
+call that produced the fill.
+
+<p align="center">
+  <img src="docs/assets/results-workbench.png" alt="TraderHarness result research workbench with benchmark, drawdown, K-lines, trades, and decision evidence" width="920">
+</p>
+
+```bash
+traderharness audit result.json replay.jsonl
+traderharness export sft result.json --output training.jsonl
+```
+
+## Dual masking
+
+Evaluation leakage is a systems problem, not a prompt instruction.
+
+- **Temporal mask:** daily bars satisfy `date < current_date`; intraday bars are truncated to the active sub-window; fundamentals satisfy `pub_date <= current_date`.
+- **Calendar mask:** agent-facing dates become offsets such as `D-1` and `D+0`.
+- **Entity mask:** real codes and company aliases map deterministically to neutral pseudo-identities while preserving board rules such as 20% price limits.
+- **Output sanitation:** responses, reasoning, tool arguments, committee memos, trajectories, and replay cassettes pass through the same masks.
+- **Leakage audit:** JSON, JSONL, and Parquet artifacts can be scanned before publication or SFT export.
+
+<p align="center">
+  <img src="docs/assets/dual-mask.svg" alt="Original historical announcement transformed by date and entity masks" width="920">
+</p>
+
+The v1.0 acceptance gate requires a complete one-month DeepSeek trajectory to pass `traderharness audit` with zero
+detected real entity aliases or absolute calendar dates after serialization. That is an automated egress audit, not a
+claim that semantic re-identification is impossible — see [Preventing data leakage](docs/contamination.md).
+
+## Quick start
+
+Python 3.10–3.12 is supported.
+
+```bash
+pip install "traderharness[llm,data,ui]"
+traderharness data download --full
+traderharness demo
+```
+
+`traderharness demo` replays a real masked one-day run without an API key. It is a **streaming historical
+replay** of real local market data, progressively revealed phase by phase — not a live feed and not a synthetic
+substitute.
+
+Launch the local research console:
+
+```bash
+traderharness ui
+# open http://127.0.0.1:8000
+```
+
+Run your own agent:
+
+```bash
+export DEEPSEEK_API_KEY="..."
+traderharness run \
+  --agent trend-breakout \
+  --start 2024-03-04 \
+  --end 2024-03-29 \
+  --mask-entities \
+  --record-replay run.jsonl
+```
+
+On PowerShell, use `` $env:DEEPSEEK_API_KEY="..." `` and backtick line continuations instead of `\`.
+
+Prefer a container:
+
+```bash
+docker compose up --build
+```
+
+The compose file mounts `~/.traderharness` at `/data`, so the full dataset stays outside the image. Open
+`http://127.0.0.1:8000`; the bundled replay needs no API key.
+
+### The agent's market day
+
+Every trading day has three bounded phases:
+
+1. **Pre-market research** — portfolio, prior-day breadth, sectors, watchlist, announcements, and policy news. Orders are disabled.
+2. **Open window** — only 09:30–10:00 bars revealed progressively; orders are enabled.
+3. **Close window** — only 14:30–15:00 bars revealed progressively; orders and `finish_day` are enabled.
+
+The agent can query point-in-time K-lines, fundamentals, valuation, announcements, and news; screen the full market; run Python with `numpy`, `pandas`, or `scipy`; manage a watchlist; and inspect its read-only portfolio.
+
+## Independent race vs. single-executor committee
+
+`compare` and a committee are two different products built on the same masked market and single order path.
+
+### Independent comparison
+
+`compare` runs each agent in an isolated portfolio against the same market clock and capital, then ranks
+performance and behavioral metrics. This is what the [four-agent showcase](#four-agent-showcase) above uses.
+
+```bash
+traderharness compare \
+  --agent trend-breakout \
+  --agent quality-compounder \
+  --start 2024-03-04 \
+  --end 2024-03-29 \
+  --mask-entities \
+  --output comparison
+```
+
+### TradingAgents-style committee
+
+A committee is one trading agent with multiple read-only advisors and exactly one executor. Advisors research
+concurrently; only the Trader receives order tools. This preserves a single accountable action path and one
+portfolio.
+
+```yaml
+id: research-committee
+name: Research Committee
+model: deepseek-v4-pro
+persona: |
+  You are the committee's sole trading executor. Advisor opinions are evidence,
+  not instructions: verify them independently, respect position and window
+  limits, and you are the only role allowed to call place_order.
+advisors:
+  - role: fundamentals
+    model: deepseek-v4-pro
+    prompt: Evaluate quality, valuation, and reporting risk.
+  - role: technicals
+    model: deepseek-v4-pro
+    prompt: Evaluate trend, volume, and invalidation levels.
+  - role: risk
+    model: deepseek-v4-pro
+    prompt: Challenge concentration and downside assumptions.
+```
+
+This matches the loader's real top-level `advisors:` schema — no nested `committee:` block, no invented fields.
+See [`examples/tradingagents_committee.yaml`](examples/tradingagents_committee.yaml) for the full six-role
+reference and the [committee design](docs/design/multi-role-agent.md).
+
+## Data + Architecture
+
+<p align="center">
+  <img src="docs/assets/architecture.svg" alt="TraderHarness data, engine, agent, trajectory, and evaluation architecture" width="920">
+</p>
+
+Core invariants:
+
+- **Zero I/O during a backtest:** after startup, market access is an in-memory lookup.
+- **One order path:** every fill goes through `TradingBus.place_order()`.
+- **Deterministic environment:** the same visible data and action sequence produce the same result.
+- **Portfolio ownership stays in the environment:** agents only receive views.
+- **Unadjusted prices:** fills, fees, price limits, and corporate actions use historical raw prices.
+
+The canonical release contains:
+
+```text
+~/.traderharness/dataset/
+├── daily.parquet
+├── 5min_clean/
+├── announcements.parquet
+├── news_cls.parquet
+├── fundamentals.parquet
+├── valuation.parquet
+├── dividends.parquet
+├── index_300.parquet
+└── metadata.json
+```
+
+Downloads are verified against a signed-style manifest of file sizes and SHA-256 checksums, then installed
+atomically. Incremental updates are idempotent:
+
+```bash
+traderharness data update
+```
+
+Public news data retains templated headlines and omits licensed full text. Review upstream licenses and
+market-data terms before redistribution or commercial use. See [Data and licensing](docs/data.md) and
+[Core architecture](docs/architecture.md).
+
+## AI-readable entry point
+
+TraderHarness publishes a machine-readable operating guide so a coding assistant can work in this repository
+without guessing at the invariants above:
+
+- [`llms.txt`](llms.txt) — a short index of the canonical documentation.
+- [`llms-full.txt`](llms-full.txt) — the same documentation set concatenated into one file, generated by
+  `scripts/build_llms_full.py`.
+- [`AGENTS.md`](AGENTS.md) — the public operating guide: project map, non-negotiable invariants, and workflow.
+
+A useful first prompt for Cursor, Claude Code, or a similar assistant:
+
+```text
+Read AGENTS.md and docs/architecture.md. Add an Agent implementation without
+bypassing TradingBus, point-in-time masking, or the single order path. Write
+the failing tests first, then run the focused suite and the replay demo.
+```
+
+## Build with us
+
+TraderHarness is easiest to extend at specific, load-bearing seams: data source adapters, tools, sandbox
+backends, evaluation metrics, a live broker adapter, and the research console frontend. Each has a short contract
+in [Extending TraderHarness](docs/extensions.md); the process and required checks are in
+[`CONTRIBUTING.md`](CONTRIBUTING.md).
+
+```bash
+git clone https://github.com/HephaestLab/TraderHarness
+cd TraderHarness
+python -m venv .venv
+.venv/Scripts/python -m pip install -e ".[all]"
+.venv/Scripts/python -m pytest tests/ --no-header -q
+.venv/Scripts/python -m ruff check traderharness
+
+cd webui
+npm ci
+npm test
+npm run build
+npm run test:e2e
+```
+
+Linux and macOS users should replace `.venv/Scripts/python` with `.venv/bin/python`.
+
+## Roadmap
+
+A short version — see [`docs/roadmap.md`](docs/roadmap.md) for the full picture, including explicit non-goals:
+
+| Status | Item |
+|---|---|
+| ✅ Delivered in v1.0 | Backtest engine, masking, replay/SFT, comparison, committees, research console |
+| 🚧 Next | Paper trading (simulated live-forward mode on the same engine and masking contract) |
+| 📋 Planned | Live broker adapter |
+| 📋 Planned | A hardened sandbox for untrusted or third-party agent cards |
+| ❌ Non-goal | A public leaderboard, hosted multi-tenant service, or market-impact modeling |
+
+## Scope and limitations
+
+- The maintained production dataset currently covers China A-shares; adapters for other markets are welcome.
+- There is no paper-trading or live-broker mode yet; see [Roadmap](docs/roadmap.md). Historical simulation cannot model market impact or guarantee live performance.
+- Provider terms may restrict redistribution of some source fields.
+- TraderHarness is research infrastructure, not investment advice or a brokerage system.
+
+## Citation
+
+If TraderHarness supports your research, please cite it:
+
+```bibtex
+@software{traderharness2026,
+  title  = {TraderHarness: A Contamination-Resistant Environment for Autonomous Trading Agents},
+  author = {{HephaestLab}},
+  year   = {2026},
+  url    = {https://github.com/HephaestLab/TraderHarness},
+  version = {1.0.0}
+}
+```
+
+See [`CITATION.cff`](CITATION.cff) for the machine-readable record.
+
+Apache-2.0 © HephaestLab.
+
+---
+
+<!-- source: docs/quickstart.md -->
+
+# Quickstart
+
+## Install
+
+=== "pip"
+
+    ```bash
+    pip install "traderharness[llm,data,ui]"
+    ```
+
+=== "source / Windows"
+
+    ```powershell
+    git clone https://github.com/HephaestLab/TraderHarness
+    cd TraderHarness
+    python -m venv .venv
+    .venv\Scripts\python.exe -m pip install -e ".[all]"
+    ```
+
+=== "Docker"
+
+    ```bash
+    docker compose up --build
+    ```
+
+## Install market data
+
+```bash
+traderharness data download --full
+```
+
+The download is checked against file sizes and SHA-256 hashes before an atomic install to `~/.traderharness/dataset`.
+
+## Run the replay demo
+
+```bash
+traderharness demo
+```
+
+The cassette contains a real, masked model trajectory and needs no API key. The engine still evaluates it against real local market data.
+
+## Open the web console
+
+```bash
+traderharness ui
+```
+
+Open [http://127.0.0.1:8000](http://127.0.0.1:8000). The server binds to loopback by default and refuses accidental public exposure unless explicitly enabled.
+
+## Run a provider-backed agent
+
+```powershell
+$env:DEEPSEEK_API_KEY="..."
+traderharness run `
+  --agent trend-breakout `
+  --start 2024-03-04 `
+  --end 2024-03-29 `
+  --mask-entities
+```
+
+`trend-breakout` is one of four bundled reference agent cards — alongside `quality-compounder`, `event-hawk`, and
+`quant-researcher` — each with a distinct persona and `deepseek-v4-pro` (thinking mode) as the default executor
+model. Compare all four head-to-head:
+
+```powershell
+traderharness compare `
+  --agent trend-breakout `
+  --agent quality-compounder `
+  --agent event-hawk `
+  --agent quant-researcher `
+  --start 2024-03-04 `
+  --end 2024-03-29 `
+  --mask-entities `
+  --output showcase
+```
+
+Use `--record-replay cassette.jsonl` to create a deterministic, leakage-audited recording.
+
+---
+
+<!-- source: docs/contamination.md -->
+
+# LLM trading backtests without data leakage
+
+TraderHarness treats historical contamination as an environment boundary, not a prompt convention.
+
+## Definitions
+
+**Point-in-time masking** means every value exposed to an agent is filtered by the simulated clock before it leaves
+the environment. Daily bars are strictly earlier than the current trading date, 5-minute bars stop at the active
+sub-window, and fundamental records cannot have a future publication date.
+
+**Date anonymization** replaces an absolute agent-facing calendar date with a calendar-day offset from the simulated
+present. The current date is `D+0`; the previous calendar day is `D-1`. Wall-clock times remain visible.
+
+**Entity masking** is a deterministic run-wide bijection from real A-share codes and known company aliases to neutral
+pseudo-identities. Codes are shuffled within compatible board groups so price-limit rules survive anonymization.
+
+**The three-phase trading loop** is a bounded market day consisting of pre-market research with orders disabled, a
+progressively revealed 09:30–10:00 open window, and a progressively revealed 14:30–15:00 close window.
+
+## Egress coverage
+
+The masks apply to:
+
+- daily and intraday K-lines;
+- market screens, fundamentals, valuation, announcements, and policy news;
+- portfolio and watchlist views;
+- Python sandbox DataFrames returned by `traderharness_api`;
+- model responses, reasoning fields, tool arguments, and committee memos;
+- cross-day memory, persisted trajectories, replay cassettes, comparisons, and SFT exports.
+
+Pseudo-codes sent back through tools are resolved internally before matching. The resulting portfolio is rendered
+through the same forward map, so the agent never needs a real code.
+
+![Date and entity mask transformation](assets/dual-mask.svg)
+
+## Artifact audit
+
+```bash
+traderharness audit result.json replay.jsonl export.parquet
+```
+
+The auditor checks known real entity aliases, six-digit A-share code leakage, absolute ISO/Chinese dates, and
+month-day forms. The v1.0 release acceptance run audited a serialized one-month DeepSeek trajectory and detected zero
+real entity aliases or absolute dates after the final egress fixes.
+
+That result has a narrow meaning: it verifies the known lexical and calendar egress contract. It does not prove that
+a model cannot infer a famous company from a unique financial pattern, product, executive, or event. For publishable
+evaluations, report the mask configuration and seed, retain the audit output, and compare blinded with unblinded runs
+when semantic re-identification is material.
+
+## Execution leakage
+
+Information masking is insufficient if the matching engine lets the model inspect a full intraday window and then
+select an earlier favorable price. TraderHarness reveals each open/close sub-window before its eligible fill and
+routes every order through `TradingBus.place_order()`. The action sequence therefore cannot choose prices that were
+not visible at decision time.
+
+---
+
+<!-- source: docs/architecture.md -->
+
+# Core architecture
+
+```mermaid
+flowchart TD
+    D[(Canonical full-market data)] -->|startup preload| E[BacktestEngine]
+    E --> B[TradingBus per agent]
+    B --> T[Masked tools]
+    B --> V[PortfolioView]
+    B --> X[Python sandbox]
+    T --> A[Agent loop]
+    V --> A
+    X --> A
+    A -->|place_order| B
+    E --> C[Trajectory collector]
+    C --> R[Replay / SFT / reports]
+```
+
+## Non-negotiable invariants
+
+### Zero I/O during a run
+
+The engine preloads the full required market slice before the first trading day. Agent tool calls perform in-memory lookups and never fetch provider data or read the canonical dataset.
+
+### Strict historical visibility
+
+Daily bars use `date < current_date`. Fundamentals use `pub_date <= current_date`. Five-minute bars are truncated to the active phase and sub-window. Agent-facing absolute dates become relative offsets.
+
+### Single order path
+
+`TradingBus.place_order()` applies lot size, suspension, cash, position, price-limit, fee, and visible-price checks. There is no second fast path for agents, committees, or the sandbox.
+
+### Environment-owned accounting
+
+The environment owns the portfolio. Agents receive a read-only view and can only mutate state through validated orders. Dividends, stock distributions, and end-of-day equity are deterministic engine operations.
+
+## Replay contract
+
+Each recorded LLM request has a canonical SHA-256 fingerprint. Replay rejects changed requests and exhausted cassettes. It never falls back to a network model, which makes regression failures explicit rather than silently non-deterministic.
+
+---
+
+<!-- source: docs/comparison.md -->
+
+# TraderHarness compared with adjacent projects
+
+TraderHarness is an environment and evidence harness. It can host different agent architectures, but it does not
+prescribe their investment methodology.
+
+| Project | Primary responsibility | Native decision unit | What an integration still needs |
+|---|---|---|---|
+| **TraderHarness** | Historically valid market, execution, portfolio, evaluation, replay, and training trajectories | Autonomous agent, isolated comparison, or one-executor committee | An agent persona or external framework |
+| **TradingAgents** | Multi-role analyst, debate, risk, and trader workflow | Prescribed role graph | A strict market simulator and order contract for benchmark use |
+| **StockBench** | Standardized stock-reasoning benchmark tasks | Benchmark task/prediction | A persistent portfolio environment for autonomous tool use |
+| **Qlib** | Quantitative data, model, experiment, and strategy research | ML model or coded strategy | An LLM-native tool loop and contamination-resistant language egress |
+| **Backtrader / vn.py** | Strategy execution and trading infrastructure | Coded strategy | The autonomous LLM research loop, masking, and trajectory contract |
+
+## Independent agents versus a committee
+
+`traderharness compare` is a race: every agent has its own cash, positions, memory, and portfolio. All agents see the
+same market clock and are scored independently.
+
+A committee is one contestant: read-only advisors may research concurrently, but one Trader is the only role that
+receives order tools. This produces one accountable action path and one portfolio. See
+[Multi-role committees](design/multi-role-agent.md).
+
+## Bring your own framework
+
+An external LangGraph, TradingAgents, or custom orchestrator should return its final decision through the public agent
+protocol. Market reads and orders still pass through `TradingBus`, so the framework inherits the same temporal mask,
+entity/date anonymization, progressive intraday visibility, and matching rules.
+
+---
+
+<!-- source: docs/design/multi-role-agent.md -->
+
+# Multi-role Agent Adapter
+
+## Goal
+
+Support TradingAgents-style committees without changing TraderHarness's market,
+portfolio, matching, masking, or replay semantics. A committee is one evaluated
+agent with one portfolio. Specialist roles advise; one executor alone may call
+`place_order`.
+
+This is distinct from `traderharness compare`, where independent agents receive
+separate portfolios and are ranked against each other.
+
+## Model
+
+```text
+BacktestEngine (shared immutable market snapshot)
+  └─ CommitteeAgent (one Portfolio + one TradingBus)
+       ├─ fundamentals advisor ─┐
+       ├─ technical advisor ───┼─> phase memo
+       ├─ news advisor ────────┤
+       ├─ bull researcher ─────┤
+       ├─ bear researcher ─────┘
+       └─ trader/executor -> existing AgentLoop -> TradingBus.place_order()
+```
+
+Independent committees remain parallelizable by the engine:
+
+```text
+Committee A + Portfolio A ─┐
+Committee B + Portfolio B ─┼─ asyncio.gather per trading day
+Single Agent + Portfolio C ─┘
+```
+
+## Invariants
+
+1. Advisors only receive already-masked Agent-visible messages.
+2. Advisors have no order tool. Read-only tool access is a later extension.
+3. The executor uses the existing `ToolRegistry`; `TradingBus.place_order()` is
+   still the only matching path.
+4. Committee calls are deterministic for replay: role, phase, prompt, response,
+   model, and ordering are trajectory records.
+5. One run-scoped `EntityMasker` is shared by every advisor and executor.
+6. Advisor failures are explicit in the memo and trace; no silent fallback.
+
+## Extension surface
+
+```python
+class Advisor(Protocol):
+    role: str
+    async def advise(self, messages: list[dict], phase: str) -> str: ...
+
+class CommitteeCoordinator:
+    async def build_memo(
+        self,
+        messages: list[dict],
+        phase: str,
+        sub_window: str | None,
+    ) -> CommitteeMemo: ...
+```
+
+`AgentLoop._run_phase()` requests one memo before the first executor call for
+each `(day, phase, sub_window)`. Advisors run concurrently with
+`asyncio.gather`; their output is inserted as a tagged system message. The
+executor can accept or reject every recommendation.
+
+## TradingAgents adapter
+
+The adapter maps external graph nodes to `Advisor` implementations:
+
+- Market/News/Fundamentals analysts -> specialist advisors
+- Bull/Bear researchers -> adversarial advisors
+- Research manager/Risk manager -> synthesis advisors
+- Trader -> TraderHarness executor
+
+External tools and portfolio objects are not imported. They are replaced by
+TraderHarness's masked observations and single portfolio/order path. This keeps
+external reasoning topology while preserving backtest fairness.
+
+## Configuration
+
+The loader (`PromptAgent`) detects a committee from a top-level `advisors:` list — there is no nested `committee:`
+or `executor:` block. `id`, `name`, and the executor's own `model`/`persona` sit at the top level, exactly like a
+single-agent card:
+
+```yaml
+id: tradingagents-reference
+name: TradingAgents Reference Committee
+model: deepseek-chat
+persona: ...
+advisors:
+  - role: fundamentals
+    model: deepseek-chat
+    prompt: ...
+  - role: technical
+    model: deepseek-chat
+    prompt: ...
+  - role: bull
+    model: deepseek-chat
+    prompt: ...
+  - role: bear
+    model: deepseek-chat
+    prompt: ...
+```
+
+See [`examples/tradingagents_committee.yaml`](https://github.com/HephaestLab/TraderHarness/blob/main/examples/tradingagents_committee.yaml)
+for the full, loadable reference committee.
+
+## Acceptance criteria
+
+- Unit test proves advisors never receive `place_order`.
+- Unit test proves all advisors are scheduled concurrently.
+- Integration test proves exactly one executor can place orders.
+- Replay reproduces the same memo and executor action sequence.
+- Real one-day, three-day, and one-month runs pass leakage audit.
+- `compare` can rank a committee against ordinary agents under identical data,
+  cash, masking seed, and benchmark.
+
+## Deferred
+
+- Advisor-specific read-only tool budgets.
+- Arbitrary cyclic graphs and inter-agent message buses.
+- Shared portfolio controlled by multiple executors (intentionally excluded;
+  it would make order ownership and replay ambiguous).
+
+---
+
+<!-- source: docs/training-data.md -->
+
+# Full-fidelity trajectory and SFT export
+
+TraderHarness can persist the exact masked request/response pair for every
+executor LLM call. This is intended for reproducible research and downstream
+supervised fine-tuning (SFT), not as a claim that every generated decision is a
+high-quality training target.
+
+## Capture a trajectory
+
+Run backtests with entity masking enabled:
+
+```bash
+traderharness run \
+  --agent trend-breakout \
+  --start 2024-03-04 \
+  --end 2024-03-29 \
+  --mask-entities
+```
+
+Each `llm_exchange` trajectory step contains:
+
+- the complete message list sent to the executor;
+- the complete tool schema available for that call;
+- assistant content and optional reasoning content;
+- complete tool calls and arguments;
+- phase and sub-window metadata.
+
+The compatibility `assistant` and `tool_call` steps are also retained. Assistant
+text is no longer truncated in newly generated results.
+
+## Export OpenAI-style JSONL
+
+```bash
+traderharness export sft \
+  ~/.traderharness/results/<run>_result.json \
+  --output ./training.jsonl
+```
+
+One line is emitted per LLM call:
+
+```json
+{
+  "messages": [
+    {"role": "system", "content": "..."},
+    {"role": "user", "content": "..."},
+    {"role": "assistant", "content": "...", "tool_calls": []}
+  ],
+  "tools": [],
+  "metadata": {
+    "agent_id": "trend-breakout",
+    "phase": "pre_market",
+    "sub_window": null,
+    "day_index": 1,
+    "call_index": 1
+  }
+}
+```
+
+Absolute trading dates are not copied into export metadata. Agent-visible dates
+remain relative (`D+0`, `D-1`, and so on).
+
+## Safety gates
+
+By default, export:
+
+1. rejects runs that were not created with entity masking;
+2. rejects legacy trajectories without full-fidelity `llm_exchange` records;
+3. runs the entity/date leakage detector over the output;
+4. exits non-zero if any finding remains.
+
+`--allow-unmasked` is an explicit escape hatch for private research. Such
+output must not be published as contamination-resistant training data.
+
+## Curation remains necessary
+
+Full fidelity preserves mistakes as well as good decisions. Before training,
+filter trajectories using outcome, drawdown, rule compliance, tool errors, and
+human review. Also verify that the selected model provider's terms permit use
+of generated reasoning and responses for training.
+
+---
+
+<!-- source: docs/data.md -->
+
+# Data and licensing
+
+The canonical A-share release contains five years of full-market daily and 5-minute bars plus announcements, policy news, fundamentals, valuation, dividends, and the CSI 300 benchmark.
+
+## Integrity
+
+`traderharness data download --full` verifies every file against the release manifest before atomically replacing the local dataset. `traderharness data update` uses watermarks, deterministic deduplication, and atomic writers.
+
+The repository's data doctor checks:
+
+- required schemas and date ranges
+- duplicate natural keys
+- annual 5-minute coverage
+- stale symbols and dataset alignment
+- invalid non-A-share announcement codes
+- metadata consistency
+
+The v1.0 canonical build contains 284,219,844 deduplicated 5-minute rows. Annual symbol coverage reached 100% for
+the active daily universe in the release audit, with zero lagging symbols at the final 5-minute watermark and zero
+duplicate natural keys in the verification sample.
+
+## Public release policy
+
+The public news table retains templated headlines and removes licensed full text. Company templates are resolved to neutral identities only at runtime. This protects evaluation integrity while keeping the source dataset useful for point-in-time filtering.
+
+## Storage
+
+```text
+~/.traderharness/dataset/
+├── daily.parquet
+├── 5min_clean/
+├── announcements.parquet
+├── news_cls.parquet
+├── fundamentals.parquet
+├── valuation.parquet
+├── dividends.parquet
+├── index_300.parquet
+└── metadata.json
+```
+
+Market-data licenses vary by provider and jurisdiction. Verify upstream terms before redistribution or commercial deployment.
+
+---
+
+<!-- source: docs/api.md -->
+
+# CLI and local API reference
+
+## Core CLI
+
+```text
+traderharness run       Run one agent
+traderharness compare   Run isolated agents against one market clock
+traderharness demo      Replay the bundled masked run without an API key
+traderharness ui        Start the local FastAPI and React console
+traderharness audit     Scan artifacts for entity and calendar leakage
+traderharness export    Convert trajectories to SFT JSONL
+traderharness data      Download, update, and inspect datasets
+```
+
+Run `traderharness <command> --help` for the installed version's options.
+
+## Agent protocol
+
+Custom agents implement the public protocol in `traderharness.agents.protocol`. They receive environment-controlled
+context for the pre-market, open-window, and close-window phases. Read-only advisors can be composed behind a single
+executor; see [Multi-role committees](design/multi-role-agent.md).
+
+## Local HTTP API
+
+`traderharness ui` serves:
+
+- `GET /api/status` — dataset, provider, and local security status;
+- `GET/POST /api/agents` — agent-card collection;
+- `GET/PUT/DELETE /api/agents/{id}` — one agent card;
+- `POST /api/runs` — start a backtest;
+- `GET/DELETE /api/runs/{id}` — inspect or cancel a run;
+- `WS /api/runs/{id}/events` — reconnectable sequenced event journal;
+- `GET /api/results` — persisted result summaries;
+- `GET /api/results/{file}` — complete artifact;
+- `GET /api/results/{file}/analysis` — normalized UI research dossier;
+- `POST /api/demo` — start the bundled replay;
+- `GET /api/health` — process health.
+
+The HTTP API is local tooling, not an authenticated public service. Keep the default localhost binding.
+
+---
+
+<!-- source: docs/extensions.md -->
+
+# Extending TraderHarness
+
+TraderHarness is designed to be extended without weakening its core invariants: zero backtest-time I/O, one order
+path, strict point-in-time visibility, deterministic execution, and environment-owned portfolios (see
+[Core architecture](architecture.md) and
+[`AGENTS.md`](https://github.com/HephaestLab/TraderHarness/blob/main/AGENTS.md)). This page is a short contract
+for the most common extension points. Open an issue before starting a large change; see
+[`CONTRIBUTING.md`](https://github.com/HephaestLab/TraderHarness/blob/main/CONTRIBUTING.md).
+
+## Data source adapters
+
+A new market, or a new provider for the existing A-share dataset, should produce data that fits the canonical
+schema described in [Data and licensing](data.md).
+
+Contract:
+
+- Implement a provider under `traderharness/data/providers/`; do not bypass `traderharness/data/datasets.py` or
+  write directly into a running backtest's in-memory tables.
+- Preserve point-in-time integrity: every record needs a stable natural key and, for anything not priced at the
+  bar, a publication timestamp (`pub_date`-style column) that the masking layer can filter on.
+- Add or extend a `data doctor` check (`scripts/data_doctor.py`) for the new table's required columns, date
+  coverage, and duplicate-key invariants.
+- Ship a small real-data fixture under `tests/fixtures/` and a loader test; do not substitute synthetic prices for
+  acceptance validation (see the workspace rule on real data).
+
+## Tools
+
+Agent-facing tools live in `traderharness/tools/` and are registered through `traderharness/tools/registry.py`.
+
+Contract:
+
+- A tool handler receives the run's masked context; it must never reach past that context to read the canonical
+  dataset or another agent's state.
+- Every failure path returns a structured, actionable error that distinguishes "code does not exist" from "no
+  data before this date" from "suspended" from "an ignored parameter" — a generic exception is not acceptable.
+- New tools need JSON-schema argument validation, a unit test per failure mode, and an entry in the relevant agent
+  card's `allowed_tools` list if a builtin agent should use it.
+- Tools must not add a second order path. Trading stays behind `TradingBus.place_order()`.
+
+## Sandbox backends
+
+The `execute_code` tool and `traderharness_api` module are the sanctioned way for an agent to run arbitrary
+analysis code against masked data (see [Preventing data leakage](contamination.md#egress-coverage)).
+
+Contract:
+
+- A sandbox backend must enforce the same path guard that blocks direct dataset reads (`sandbox/guard.py`) and the
+  same wall-clock timeout.
+- `traderharness_api` additions must resolve through the existing masked accessors; do not add a code path that
+  returns an unmasked DataFrame or a real entity code.
+- No sandbox backend may start a nested backtest or call back into the engine's order path.
+- See [Roadmap](roadmap.md#planned-a-hardened-sandbox) for where sandbox isolation is headed; contributions that
+  narrow the trusted surface are especially welcome.
+
+## Evaluation metrics
+
+Performance and behavioral metrics live in `traderharness/metrics/`.
+
+Contract:
+
+- A new metric is a pure function over an already-completed run's daily equity, trades, and decisions — it must
+  not require re-running the backtest or touching provider APIs.
+- Document the formula and its edge cases (empty trade history, single trading day, missing benchmark data) in the
+  docstring, and add a report/JSON-export test.
+- If the metric is agent-comparative (e.g., a ranking), it belongs in `traderharness/metrics/comparison.py`, not in
+  the per-agent report.
+
+## Broker adapters
+
+There is no live broker adapter in v1.0; see [Roadmap](roadmap.md#planned-live-broker-adapter). Design
+discussions and prototypes are welcome as issues, but a broker integration should not be wired into the backtest
+`TradingBus` — historical simulation and live order routing are different trust boundaries and must stay
+separated.
+
+## Frontend (webui)
+
+The research console is a local-only React app in `webui/`.
+
+Contract:
+
+- New views read from the existing REST/WebSocket API (`traderharness/server/app.py`); do not add client-side
+  logic that re-derives masked data from raw fields.
+- Keep Chinese-language labels consistent with `webui/src/locale.ts` rather than hardcoding literal strings in
+  components.
+- Add a Vitest unit test for new components and, for a new page or workflow, a Playwright scenario under
+  `webui/tests/e2e` (or extend `webui/scripts/capture-demo.mjs` if it should also appear in the README GIF).
+
+## Before opening a pull request
+
+1. Add a failing test that demonstrates the new contract.
+2. Implement without weakening any invariant in
+   [`AGENTS.md`](https://github.com/HephaestLab/TraderHarness/blob/main/AGENTS.md#non-negotiable-invariants).
+3. Run the focused suite, then the full suite (`pytest tests/ --no-header -q`, `ruff check`, and for
+   engine/masking/tools/data/sandbox changes, a real replay or backtest with trace inspection).
+4. State plainly which real-data runs were performed and which were not.
+
+---
+
+<!-- source: docs/roadmap.md -->
+
+# Roadmap
+
+This page tracks what TraderHarness actually ships versus what is planned. It exists so integrators can make
+build-or-wait decisions without guessing from issue threads. Nothing below is a date commitment.
+
+## ✅ Delivered in v1.0
+
+- Five-year full-market A-share dataset (daily, 5-minute, announcements, policy news, fundamentals, valuation,
+  dividends, CSI 300) with atomic incremental updates and integrity checks.
+- Zero backtest-time market-data I/O after preload; a single order path through `TradingBus.place_order()`.
+- Strict point-in-time masking across daily, intraday, news, announcement, fundamental, and sandbox egress.
+- Deterministic calendar (`D+0`, `D-1`, …) and company-entity anonymization with board-semantics preservation.
+- The three-phase pre-market / open-window / close-window agent loop with progressive intraday visibility.
+- Independent multi-agent comparison (`traderharness compare`) and a single-executor, multi-role committee
+  reference implementation (advisors are read-only; one Trader holds the order tool).
+- Full-fidelity LLM exchange trajectories, fail-closed fingerprinted replay, and OpenAI-style SFT export.
+- Serialized-artifact leakage auditing (`traderharness audit`).
+- A local FastAPI + React research console, an unprivileged Docker image, PyPI packaging, and CI.
+
+See [`CHANGELOG.md`](https://github.com/HephaestLab/TraderHarness/blob/main/CHANGELOG.md) for the itemized release
+notes.
+
+## 🚧 Next: paper trading
+
+A simulated live-forward mode that reuses the existing engine, masking, and tool contract against a streaming
+(rather than fully preloaded) market feed, so an agent card can be evaluated forward-in-time without code changes.
+This is in design; it is **not available today** and nothing in this repository should be read as a claim
+otherwise.
+
+Constraints carried over from the backtest engine:
+
+- the same `TradingBus.place_order()` path and risk checks;
+- the same masking contract for any agent-facing egress;
+- no shortcut that lets the sandbox or a tool observe data ahead of the simulated clock.
+
+## 📋 Planned: live broker adapter
+
+An adapter boundary so a paper-trading or research agent can be pointed at a real brokerage API. This depends on
+paper trading landing first, and on a threat model for credentials and order authorization that matches the rest
+of the project's security posture (see
+[`SECURITY.md`](https://github.com/HephaestLab/TraderHarness/blob/main/SECURITY.md)). No broker integration
+exists today.
+
+## 📋 Planned: a hardened sandbox
+
+The current Python sandbox (`execute_code` + `traderharness_api`) is scoped to keep a single trusted researcher
+from accidentally reading the canonical dataset or starting a nested backtest — see
+[Local server security](https://github.com/HephaestLab/TraderHarness/blob/main/AGENTS.md#local-server-security).
+Hardening planned for a future release:
+
+- resource and wall-clock isolation suitable for running untrusted or third-party agent cards;
+- a narrower default `traderharness_api` surface with per-tool capability scoping;
+- structured sandbox audit logs alongside the existing trajectory records.
+
+## ❌ Non-goals
+
+- **A public leaderboard or hosted multi-tenant service.** TraderHarness is local research infrastructure; see
+  [Local server security](https://github.com/HephaestLab/TraderHarness/blob/main/AGENTS.md#local-server-security).
+- **Market-impact modeling.** Historical fills use unadjusted prices and do not simulate how an agent's own orders
+  would move the market.
+- **Prescribing a trading methodology.** The environment stays agent-architecture-agnostic; see
+  [Project comparison](comparison.md).
+- **Real-time multi-agent interaction where agents affect each other's fills.** Every agent (or committee) trades
+  against the same historical clock in its own isolated portfolio.
+
+## How to help
+
+Roadmap items above are the areas most likely to be accepted quickly. See
+[Extending TraderHarness](extensions.md) for contribution contracts and
+[`CONTRIBUTING.md`](https://github.com/HephaestLab/TraderHarness/blob/main/CONTRIBUTING.md) for the process.
+
+---
+
+<!-- source: docs/faq.md -->
+
+# Frequently asked questions
+
+## Why evaluate a new LLM on history it may have seen?
+
+A knowledge cutoff is not an information barrier. TraderHarness removes the absolute date and company identity at
+every agent-facing boundary, reveals intraday bars progressively, and audits serialized artifacts for lexical
+leakage. Famous events can still be inferred semantically, so rigorous work should report mask settings and include a
+blinded/unblinded comparison where appropriate.
+
+## Does entity masking change trading rules?
+
+No. Real codes are shuffled within compatible A-share board groups. A ChiNext or STAR Market pseudo-code retains the
+historical board's price-limit behavior. Matching always uses the internally resolved real instrument.
+
+## Is the full dataset synthetic?
+
+No. Acceptance tests and published runs use historical full-market data. The no-key demo is a deterministic replay of
+a real masked run; it does not substitute generated prices.
+
+## Is `compare` a shared multi-agent portfolio?
+
+No. `compare` gives each agent an isolated portfolio. For a TradingAgents-style setup, use a committee: advisors are
+read-only and one Trader controls one portfolio.
+
+## Can replay silently call the model provider?
+
+No. Requests are fingerprinted. A mismatch or exhausted cassette fails closed.
+
+## Can the UI be exposed as a hosted service?
+
+Not safely in its current form. Agent-authored Python is executable behind the local HTTP server. The sandbox guard
+protects backtest data boundaries, not a hostile multi-tenant deployment. Keep the server on localhost.
+
+## Does a profitable backtest imply a deployable strategy?
+
+No. TraderHarness does not model market impact and historical performance does not guarantee future returns. It is
+research infrastructure, not investment advice or a broker.
+
+## Which agents and model does the README showcase use?
+
+The four-agent showcase compares the bundled `trend-breakout`, `quality-compounder`, `event-hawk`, and
+`quant-researcher` cards over 2024-03-04 to 2024-03-29 with entity masking enabled, using `deepseek-v4-pro` in
+thinking mode as the executor. Performance figures are published only after that exact run completes and passes
+`traderharness audit`; the README does not publish estimated or placeholder numbers as if they were real.
+
+## Is `traderharness demo` the same as paper trading?
+
+No. `demo` replays a single recorded, masked historical day with no network calls. Paper trading — a forward
+simulated mode against a streaming feed — does not exist yet; see [Roadmap](roadmap.md).

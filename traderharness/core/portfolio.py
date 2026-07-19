@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import ROUND_HALF_UP, Decimal
 
 TWO_PLACES = Decimal("0.01")
 MIN_COMMISSION = Decimal("5.00")
@@ -112,9 +112,7 @@ class Portfolio:
 
         pos = self.positions[stock_code]
         if quantity > pos.quantity:
-            raise ValueError(
-                f"持仓不足: 持有 {pos.quantity} 股，尝试卖出 {quantity} 股"
-            )
+            raise ValueError(f"持仓不足: 持有 {pos.quantity} 股，尝试卖出 {quantity} 股")
 
         sellable = pos.sellable_quantity(trade_date)
         if quantity > sellable:
@@ -152,8 +150,7 @@ class Portfolio:
 
     def total_value(self, prices: dict[str, Decimal]) -> Decimal:
         market_value = sum(
-            (prices.get(code, pos.avg_cost) * pos.quantity)
-            for code, pos in self.positions.items()
+            (prices.get(code, pos.avg_cost) * pos.quantity) for code, pos in self.positions.items()
         )
         return (self.cash + Decimal(market_value)).quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
 

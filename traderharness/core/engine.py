@@ -9,9 +9,11 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, timedelta
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal
+from pathlib import Path
 from typing import Any, Protocol
 
 import pandas as pd
@@ -41,6 +43,9 @@ class EngineConfig:
     profile: MarketProfile | None = None
     calendar: TradingCalendar | None = None
     dataset_dir: str | None = None
+    mask_entities: bool = False
+    entity_mask_seed: int | str = 0
+    cancel_check: Callable[[], bool] | None = None
 
 
 @dataclass
@@ -49,6 +54,22 @@ class EngineResult:
     start_date: date | None = None
     end_date: date | None = None
     agent_data: dict[str, dict[str, Any]] = field(default_factory=dict)
+    failed_agents: dict[str, str] = field(default_factory=dict)
+
+
+class AgentExecutionError(RuntimeError):
+    """Raised when one or more agents raise during ``BacktestEngine.run``.
+
+    The environment must fail closed instead of silently logging and
+    continuing as if the run had succeeded. The partial ``EngineResult``
+    (with per-agent failure reasons in ``result.failed_agents`` and
+    ``result.agent_data[agent_id]["error"]``) is attached so callers that
+    want to inspect or persist a failed run can still do so.
+    """
+
+    def __init__(self, message: str, result: EngineResult) -> None:
+        super().__init__(message)
+        self.result = result
 
 
 class MarketData:
@@ -69,7 +90,7 @@ class MarketData:
         from pathlib import Path
 
         # 路径1：测试/自定义目录（多文件模式）
-        if hasattr(provider, '_data_dir'):
+        if hasattr(provider, "_data_dir"):
             data_dir = Path(provider._data_dir)
             if data_dir.exists() and len(list(data_dir.glob("*.parquet"))) > 0:
                 self._load_multi_file_dir(data_dir)
@@ -79,8 +100,9 @@ class MarketData:
                 return
 
         # 路径2：Simple test providers without _data_dir and without _use_manager flag
-        if not getattr(provider, '_use_manager', False):
+        if not getattr(provider, "_use_manager", False):
             stocks = await provider.get_stock_list()
+            has_5min_hook = hasattr(provider, "get_5min_bars")
             for stock_info in stocks:
                 code = stock_info if isinstance(stock_info, str) else stock_info.get("code", "")
                 if not code:
@@ -93,12 +115,23 @@ class MarketData:
                         elif not all(isinstance(d, date) for d in df["date"].head(1)):
                             df["date"] = pd.to_datetime(df["date"]).dt.date
                     self._data[code] = df
+                # Optional: providers may also expose 5-minute bars (test/custom
+                # fixtures). Production loading always goes through path 3 below.
+                if has_5min_hook:
+                    min5_df = await provider.get_5min_bars(code, start, end)
+                    if min5_df is not None and not min5_df.empty:
+                        if "date" in min5_df.columns and not all(
+                            isinstance(d, date) for d in min5_df["date"].head(1)
+                        ):
+                            min5_df["date"] = pd.to_datetime(min5_df["date"]).dt.date
+                        self._5min_data[code] = min5_df
             if self._data:
                 logger.info("Loaded %d stocks via provider interface", len(self._data))
                 return
 
         # 路径3：单文件缓存（生产用）
         from traderharness.data.market_data_manager import MarketDataManager
+
         manager = MarketDataManager()
 
         daily_df = manager.load_daily()
@@ -117,9 +150,8 @@ class MarketData:
         label = "5min" if is_5min else "daily"
         logger.info("%s data ingested: %d stocks", label, len(store))
 
-    def _load_multi_file_dir(self, directory: "Path", is_5min: bool = False) -> None:
+    def _load_multi_file_dir(self, directory: Path, is_5min: bool = False) -> None:
         """从多文件目录读取（兼容测试 fixtures）。"""
-        from pathlib import Path
         files = list(Path(directory).glob("*.parquet"))
         if not files:
             return
@@ -210,7 +242,7 @@ class TradingBus:
         filtered = df[df["date"] < self._current_date]
         return filtered.tail(days)
 
-    def get_5min_bars(self, stock_code: str, target_date: "date | None" = None) -> pd.DataFrame:
+    def get_5min_bars(self, stock_code: str, target_date: date | None = None) -> pd.DataFrame:
         """获取5分钟K线。如果 MarketData 中有5分钟数据则返回，否则返回空。"""
         target = target_date or self._current_date
         df = self._market.get_5min(stock_code)
@@ -231,7 +263,9 @@ class TradingBus:
         last = filtered.iloc[-1]
         prev = filtered.iloc[-2] if len(filtered) >= 2 else last
         prev_close = float(prev["close"])
-        change_pct = ((float(last["close"]) - prev_close) / prev_close * 100) if prev_close != 0 else 0.0
+        change_pct = (
+            ((float(last["close"]) - prev_close) / prev_close * 100) if prev_close != 0 else 0.0
+        )
         return {
             "stock_code": stock_code,
             "date": str(last["date"]),
@@ -248,37 +282,31 @@ class TradingBus:
           "close_1": 14:35~14:50 最后bar close
           "close_2": 14:55~15:00 最后bar close (or "close" legacy)
 
-        如果5分钟数据不可用，回退到日线 open/close。
+        撮合公平：只允许用当前子窗口内已经"发生过"的5分钟bar成交。
+        如果5分钟数据不可用，返回 None —— 绝不回退到日线 open/close，
+        否则等价于让 Agent 看完整交易日再挑一个更优价格成交，破坏撮合公平性。
         """
         bars_5m = self.get_5min_bars(stock_code)
-        if not bars_5m.empty and "datetime" in bars_5m.columns:
-            minutes = bars_5m["datetime"].dt.hour * 60 + bars_5m["datetime"].dt.minute
-
-            time_ranges = {
-                "open_1": (9 * 60 + 35, 9 * 60 + 50),
-                "open_2": (9 * 60 + 55, 10 * 60),
-                "open": (9 * 60 + 35, 10 * 60),
-                "close_1": (14 * 60 + 35, 14 * 60 + 50),
-                "close_2": (14 * 60 + 55, 15 * 60),
-                "close": (14 * 60 + 35, 15 * 60),
-            }
-
-            t_range = time_ranges.get(window, time_ranges["open"])
-            window_bars = bars_5m[(minutes >= t_range[0]) & (minutes <= t_range[1])]
-
-            if not window_bars.empty:
-                return Decimal(str(window_bars.iloc[-1]["close"])).quantize(TWO_PLACES)
-
-        # Fallback: daily open/close
-        df = self._market.get(stock_code)
-        if df.empty:
+        if bars_5m.empty or "datetime" not in bars_5m.columns:
             return None
-        today = df[df["date"] == self._current_date]
-        if today.empty:
+
+        minutes = bars_5m["datetime"].dt.hour * 60 + bars_5m["datetime"].dt.minute
+
+        time_ranges = {
+            "open_1": (9 * 60 + 35, 9 * 60 + 50),
+            "open_2": (9 * 60 + 55, 10 * 60),
+            "open": (9 * 60 + 35, 10 * 60),
+            "close_1": (14 * 60 + 35, 14 * 60 + 50),
+            "close_2": (14 * 60 + 55, 15 * 60),
+            "close": (14 * 60 + 35, 15 * 60),
+        }
+
+        t_range = time_ranges.get(window, time_ranges["open"])
+        window_bars = bars_5m[(minutes >= t_range[0]) & (minutes <= t_range[1])]
+
+        if window_bars.empty:
             return None
-        row = today.iloc[0]
-        col = "open" if "open" in window else "close"
-        return Decimal(str(row[col])).quantize(TWO_PLACES)
+        return Decimal(str(window_bars.iloc[-1]["close"])).quantize(TWO_PLACES)
 
     def place_order(
         self,
@@ -298,7 +326,13 @@ class TradingBus:
 
         price = self.get_execution_price(stock_code, window)
         if price is None:
-            return {"success": False, "error": f"{stock_code} 无法获取成交价"}
+            return {
+                "success": False,
+                "error": (
+                    f"{stock_code} 当前子窗口({window})无5分钟K线数据，无法确定成交价。"
+                    "请等待下一交易窗口再下单，或确认该股票当天是否停牌/无行情。"
+                ),
+            }
 
         # 涨跌停检查
         df = self._market.get(stock_code)
@@ -308,16 +342,24 @@ class TradingBus:
                 prev_close = Decimal(str(prev_data.iloc[-1]["close"])).quantize(TWO_PLACES)
                 limit_up, limit_down = self._profile.price_limits(stock_code, prev_close)
                 if price >= limit_up and side == "buy":
-                    return {"success": False, "error": f"{stock_code} 涨停封板，无法买入 (涨停价 {limit_up})"}
+                    return {
+                        "success": False,
+                        "error": f"{stock_code} 涨停封板，无法买入 (涨停价 {limit_up})",
+                    }
                 if price <= limit_down and side == "sell":
-                    return {"success": False, "error": f"{stock_code} 跌停封板，无法卖出 (跌停价 {limit_down})"}
+                    return {
+                        "success": False,
+                        "error": f"{stock_code} 跌停封板，无法卖出 (跌停价 {limit_down})",
+                    }
 
         try:
             if side == "buy":
                 qty = self._profile.round_lot(quantity)
                 if qty <= 0:
                     return {"success": False, "error": f"买入数量 {quantity} 不足1手（100股）"}
-                trade = self._portfolio.buy(stock_code, stock_name or stock_code, price, qty, self._current_date)
+                trade = self._portfolio.buy(
+                    stock_code, stock_name or stock_code, price, qty, self._current_date
+                )
             elif side == "sell":
                 pos = self._portfolio.positions.get(stock_code)
                 if pos is None:
@@ -357,11 +399,14 @@ class BacktestEngine:
         self._event_bus = event_bus or EventBus()
         self._profile = config.profile or AShareProfile()
         self._calendar = config.calendar or TradingCalendar()
+        self._entity_masker = None
 
-        from pathlib import Path
         dataset_dir = Path(config.dataset_dir) if config.dataset_dir else None
         self._dividend_manager = DividendManager(dataset_dir=dataset_dir)
-        self._news_manager = NewsDataManager(dataset_dir=dataset_dir)
+        self._news_manager = NewsDataManager(
+            dataset_dir=dataset_dir,
+            templated=config.mask_entities,
+        )
 
     async def run(
         self,
@@ -390,6 +435,7 @@ class BacktestEngine:
             await market_data.load_all(self._data_provider, data_start, end_date)
         else:
             from traderharness.data.market_data_manager import MarketDataManager
+
             manager = MarketDataManager()
             daily_df = manager.load_daily(start_date=data_start, end_date=end_date)
             market_data._ingest_combined_df(daily_df, is_5min=False)
@@ -397,7 +443,8 @@ class BacktestEngine:
                 min5_df = manager.load_5min(start_date=start_date, end_date=end_date)
                 market_data._ingest_combined_df(min5_df, is_5min=True)
 
-        # Load news, dividend, and fundamentals data (skip if using test provider without dataset_dir)
+        # Load news, dividend, and fundamentals data.
+        # Skip when a test provider has no dataset directory.
         if self._config.dataset_dir or not self._data_provider:
             self._news_manager.load(start_date=start_date, end_date=end_date)
             self._dividend_manager.load()
@@ -409,6 +456,7 @@ class BacktestEngine:
         from pathlib import Path
 
         from traderharness.paths import dataset_dir as default_dataset_dir
+
         if self._config.dataset_dir:
             dataset_dir = Path(self._config.dataset_dir)
         elif not self._data_provider:
@@ -425,17 +473,25 @@ class BacktestEngine:
             self._fundamentals_df = pd.DataFrame()
             if fundamentals_path.exists():
                 self._fundamentals_df = pd.read_parquet(fundamentals_path)
-                logger.info("Fundamentals loaded: %d rows, %d stocks",
-                           len(self._fundamentals_df),
-                           self._fundamentals_df["stock_code"].nunique() if "stock_code" in self._fundamentals_df.columns else 0)
+                logger.info(
+                    "Fundamentals loaded: %d rows, %d stocks",
+                    len(self._fundamentals_df),
+                    self._fundamentals_df["stock_code"].nunique()
+                    if "stock_code" in self._fundamentals_df.columns
+                    else 0,
+                )
 
             segments_path = dataset_dir / "business_segments.parquet"
             self._business_segments_df = pd.DataFrame()
             if segments_path.exists():
                 self._business_segments_df = pd.read_parquet(segments_path)
-                logger.info("Business segments loaded: %d rows, %d stocks",
-                           len(self._business_segments_df),
-                           self._business_segments_df["stock_code"].nunique() if "stock_code" in self._business_segments_df.columns else 0)
+                logger.info(
+                    "Business segments loaded: %d rows, %d stocks",
+                    len(self._business_segments_df),
+                    self._business_segments_df["stock_code"].nunique()
+                    if "stock_code" in self._business_segments_df.columns
+                    else 0,
+                )
 
             valuation_path = dataset_dir / "valuation.parquet"
             self._valuation_df = pd.DataFrame()
@@ -445,14 +501,62 @@ class BacktestEngine:
                     if pd.api.types.is_datetime64_any_dtype(self._valuation_df["date"]):
                         self._valuation_df["date"] = self._valuation_df["date"].dt.date
                     else:
-                        self._valuation_df["date"] = pd.to_datetime(self._valuation_df["date"]).dt.date
-                logger.info("Valuation loaded: %d rows, %d stocks",
-                           len(self._valuation_df),
-                           self._valuation_df["stock_code"].nunique() if "stock_code" in self._valuation_df.columns else 0)
+                        self._valuation_df["date"] = pd.to_datetime(
+                            self._valuation_df["date"]
+                        ).dt.date
+                logger.info(
+                    "Valuation loaded: %d rows, %d stocks",
+                    len(self._valuation_df),
+                    self._valuation_df["stock_code"].nunique()
+                    if "stock_code" in self._valuation_df.columns
+                    else 0,
+                )
 
         # 为每个 agent 创建独立 portfolio + bus（共享同一份 market_data）
         buses: dict[str, TradingBus] = {}
         portfolios: dict[str, Portfolio] = {}
+        entity_masker = None
+        if self._config.mask_entities:
+            from traderharness.core.entity_masking import EntityMasker
+            from traderharness.data.entity_templates import build_alias_map
+            from traderharness.data.stock_registry_loader import get_stock_registry
+            from traderharness.paths import dataset_dir
+
+            registry = get_stock_registry()
+            codes = market_data.all_codes()
+            names = {code: registry.get(code, {}).get("name", code) for code in codes}
+            # Egress masking keeps using the loaded (possibly templated/windowed)
+            # announcement frame so agent-visible prompts stay stable for replay.
+            aliases: dict[str, set[str]] = {}
+            announcements = self._news_manager.announcements
+            if (
+                announcements is not None
+                and not announcements.empty
+                and {"stock_code", "stock_name"}.issubset(announcements.columns)
+            ):
+                for code, group in announcements.groupby("stock_code"):
+                    aliases[str(code)] = {
+                        str(value).strip()
+                        for value in group["stock_name"].dropna().unique()
+                        if str(value).strip()
+                    }
+            # Output scrubbing uses the canonical full announcement table so
+            # historical names (四川金顶 while the registry says ST金顶) are still
+            # removed when the model emits them from prior knowledge.
+            announcements_path = dataset_dir() / "announcements.parquet"
+            canonical_announcements = (
+                pd.read_parquet(announcements_path, columns=["stock_code", "stock_name"])
+                if announcements_path.exists()
+                else None
+            )
+            entity_masker = EntityMasker(
+                codes,
+                names=names,
+                aliases=aliases,
+                sanitize_aliases=build_alias_map(registry, canonical_announcements),
+                seed=self._config.entity_mask_seed,
+            )
+        self._entity_masker = entity_masker
 
         for agent in agents:
             portfolio = Portfolio(self._config.initial_cash)
@@ -463,11 +567,23 @@ class BacktestEngine:
                 portfolio=portfolio,
                 event_bus=self._event_bus,
             )
+            buses[agent.agent_id]._entity_masker = entity_masker
 
         self._check_knowledge_cutoff(end_date)
-        self._event_bus.emit("run_start", start_date=start_date, end_date=end_date)
+        self._event_bus.emit(
+            "run_start",
+            start_date=start_date,
+            end_date=end_date,
+            total_days=len(trading_days),
+        )
 
+        completed_days = 0
+        cancelled = False
+        agent_errors: dict[str, BaseException] = {}
         for day_idx, current_date in enumerate(trading_days):
+            if self._config.cancel_check is not None and self._config.cancel_check():
+                cancelled = True
+                break
             self._event_bus.emit("day_start", date=current_date)
 
             # Phase 1: Set date + attach news manager for all agents
@@ -488,15 +604,28 @@ class BacktestEngine:
                 if actions:
                     buses[agent.agent_id]._corporate_actions_today = actions
 
-            # Phase 3: Agent trading + equity recording
+            # Phase 3: run independent agents. Each owns a separate
+            # Portfolio/TradingBus while sharing market frames by reference.
+            # Execution is sequential within the day so Agent-facing tool
+            # results and morning briefs stay fingerprint-stable for replay:
+            # concurrent asyncio.gather previously raced on shared DataFrame
+            # views and made multi-agent cassettes unreproducible.
             for agent in agents:
                 bus = buses[agent.agent_id]
                 try:
                     await agent.on_day(bus, current_date)
-                except Exception:
+                except Exception as exc:
                     logger.exception("Agent %s error on %s", agent.agent_id, current_date)
+                    # Fail closed: never let an agent exception vanish silently.
+                    # Keep the first failure per agent (most informative root
+                    # cause); remaining agents still run independently.
+                    agent_errors.setdefault(agent.agent_id, exc)
 
-                # 日终：用收盘价记录权益
+            # 日终：用收盘价记录权益
+            day_equity: dict[str, dict[str, float]] = {}
+            initial_cash = float(self._config.initial_cash)
+            for agent in agents:
+                bus = buses[agent.agent_id]
                 portfolio = portfolios[agent.agent_id]
                 prices: dict[str, Decimal] = {}
                 for code in portfolio.positions:
@@ -504,16 +633,34 @@ class BacktestEngine:
                     if p:
                         prices[code] = p
                 portfolio.record_equity(current_date, prices)
+                equity = float(portfolio.equity_curve[-1][1])
+                day_equity[agent.agent_id] = {
+                    "equity": equity,
+                    "return_pct": (equity - initial_cash) / initial_cash * 100
+                    if initial_cash > 0
+                    else 0.0,
+                }
 
-            self._event_bus.emit("day_end", date=current_date)
+            self._event_bus.emit(
+                "day_end",
+                date=current_date,
+                day_index=day_idx,
+                total_days=len(trading_days),
+                equity=day_equity,
+            )
+            completed_days += 1
 
             if current_date in breakpoints_set:
                 self._event_bus.emit("breakpoint_hit", date=current_date)
 
-        self._event_bus.emit("run_end", trading_days=len(trading_days))
+        self._event_bus.emit(
+            "run_end",
+            trading_days=completed_days,
+            cancelled=cancelled,
+        )
 
         result = EngineResult(
-            trading_days=len(trading_days),
+            trading_days=completed_days,
             start_date=start_date,
             end_date=end_date,
         )
@@ -528,36 +675,56 @@ class BacktestEngine:
             if hasattr(agent, "trajectory") and agent.trajectory:
                 traj = agent.trajectory
                 agent_result["trajectory"] = {
-                    "days": [{
-                        "date": str(d.date),
-                        "observation": d.observation,
-                        "actions": d.actions,
-                        "reward": d.reward,
-                    } for d in traj.day_records],
-                    "steps": [{
-                        "date": str(s.date),
-                        "step": s.step,
-                        "type": s.type,
-                        "data": s.data,
-                    } for s in traj.step_records],
+                    "days": [
+                        {
+                            "date": str(d.date),
+                            "observation": d.observation,
+                            "actions": d.actions,
+                            "reward": d.reward,
+                        }
+                        for d in traj.day_records
+                    ],
+                    "steps": [
+                        {
+                            "date": str(s.date),
+                            "step": s.step,
+                            "type": s.type,
+                            "data": s.data,
+                        }
+                        for s in traj.step_records
+                    ],
                 }
+            exc = agent_errors.get(agent.agent_id)
+            if exc is not None:
+                agent_result["error"] = f"{type(exc).__name__}: {exc}"
+                result.failed_agents[agent.agent_id] = agent_result["error"]
             result.agent_data[agent.agent_id] = agent_result
+
+        if agent_errors:
+            first_agent_id, first_exc = next(iter(agent_errors.items()))
+            raise AgentExecutionError(
+                f"{len(agent_errors)} agent(s) failed during backtest; "
+                f"first failure ({first_agent_id}): {type(first_exc).__name__}: {first_exc}",
+                result=result,
+            ) from first_exc
 
         return result
 
     @staticmethod
     def _check_knowledge_cutoff(end_date: date) -> None:
-        KNOWN_CUTOFFS = {
+        known_cutoffs = {
             "deepseek-chat": date(2024, 7, 1),
             "gpt-4o": date(2024, 10, 1),
             "gpt-4-turbo": date(2024, 4, 1),
             "claude-3.5-sonnet": date(2024, 4, 1),
         }
-        for model, cutoff in KNOWN_CUTOFFS.items():
+        for model, cutoff in known_cutoffs.items():
             if end_date > cutoff:
                 logger.warning(
                     "LLM_KNOWLEDGE_CUTOFF_WARNING: 回测结束日 %s 超过 %s 的知识截止日 %s",
-                    end_date, model, cutoff,
+                    end_date,
+                    model,
+                    cutoff,
                 )
 
 

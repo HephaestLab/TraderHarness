@@ -8,9 +8,9 @@ from pathlib import Path
 
 import pandas as pd
 
-logger = logging.getLogger(__name__)
-
 from traderharness.paths import dataset_dir
+
+logger = logging.getLogger(__name__)
 
 DATASET_DIR = dataset_dir()
 
@@ -25,10 +25,25 @@ class NewsDataManager:
     # get_news tool allows max 3 days lookback
     _NEWS_LOOKBACK_DAYS = 3
 
-    def __init__(self, dataset_dir: Path | None = None) -> None:
+    def __init__(self, dataset_dir: Path | None = None, templated: bool = False) -> None:
         self._dir = dataset_dir or DATASET_DIR
+        self._templated = templated
         self._announcements: pd.DataFrame = pd.DataFrame()
         self._news: pd.DataFrame = pd.DataFrame()
+
+    def _select_text_path(self, canonical_name: str, templated_name: str) -> Path:
+        canonical = self._dir / canonical_name
+        templated = self._dir / templated_name
+        if not self._templated or not templated.exists():
+            return canonical
+        if not canonical.exists() or templated.stat().st_mtime >= canonical.stat().st_mtime:
+            return templated
+        logger.warning(
+            "%s is stale; loading canonical %s and applying runtime masking",
+            templated.name,
+            canonical.name,
+        )
+        return canonical
 
     def load(self, start_date: date | None = None, end_date: date | None = None) -> None:
         """Load news data. If date range provided, only loads relevant window.
@@ -39,16 +54,22 @@ class NewsDataManager:
         """
         from datetime import timedelta
 
-        ann_path = self._dir / "announcements.parquet"
+        ann_path = self._select_text_path(
+            "announcements.parquet",
+            "announcements_templated.parquet",
+        )
         if ann_path.exists():
             if start_date:
                 load_from = start_date - timedelta(days=self._ANN_LOOKBACK_DAYS)
-                import pyarrow.dataset as ds
                 import pyarrow as pa
+                import pyarrow.dataset as ds
+
                 dataset = ds.dataset(ann_path, format="parquet")
                 filters = ds.field("announcement_time") >= pa.scalar(pd.Timestamp(load_from))
                 if end_date:
-                    filters = filters & (ds.field("announcement_time") <= pa.scalar(pd.Timestamp(end_date)))
+                    filters = filters & (
+                        ds.field("announcement_time") <= pa.scalar(pd.Timestamp(end_date))
+                    )
                 table = dataset.to_table(filter=filters)
                 self._announcements = table.to_pandas()
             else:
@@ -62,16 +83,22 @@ class NewsDataManager:
         else:
             logger.warning("announcements.parquet not found at %s", ann_path)
 
-        news_path = self._dir / "news_cls.parquet"
+        news_path = self._select_text_path(
+            "news_cls.parquet",
+            "news_cls_templated.parquet",
+        )
         if news_path.exists():
             if start_date:
                 load_from = start_date - timedelta(days=self._NEWS_LOOKBACK_DAYS)
-                import pyarrow.dataset as ds
                 import pyarrow as pa
+                import pyarrow.dataset as ds
+
                 dataset = ds.dataset(news_path, format="parquet")
                 filters = ds.field("display_time") >= pa.scalar(pd.Timestamp(load_from))
                 if end_date:
-                    filters = filters & (ds.field("display_time") <= pa.scalar(pd.Timestamp(end_date)))
+                    filters = filters & (
+                        ds.field("display_time") <= pa.scalar(pd.Timestamp(end_date))
+                    )
                 table = dataset.to_table(filter=filters)
                 self._news = table.to_pandas()
             else:
@@ -112,11 +139,13 @@ class NewsDataManager:
 
         results = []
         for _, row in filtered.head(15).iterrows():
-            results.append({
-                "stock_code": row["stock_code"],
-                "title": row["title"],
-                "time": str(row["announcement_time"]),
-            })
+            results.append(
+                {
+                    "stock_code": row["stock_code"],
+                    "title": row["title"],
+                    "time": str(row["announcement_time"]),
+                }
+            )
         return results
 
     def get_p1_policy_news(
@@ -128,27 +157,26 @@ class NewsDataManager:
         if self._news.empty:
             return []
 
-        mask = (
-            (self._news["display_time"] >= prev_close)
-            & (self._news["display_time"] < today_open)
+        mask = (self._news["display_time"] >= prev_close) & (
+            self._news["display_time"] < today_open
         )
         time_filtered = self._news[mask]
 
         if time_filtered.empty:
             return []
 
-        keyword_mask = time_filtered["content"].str.contains(
-            "|".join(POLICY_KEYWORDS), na=False
-        )
+        keyword_mask = time_filtered["content"].str.contains("|".join(POLICY_KEYWORDS), na=False)
         policy = time_filtered[keyword_mask].sort_values("display_time", ascending=False)
 
         results = []
         for _, row in policy.iterrows():
-            results.append({
-                "time": str(row["display_time"]),
-                "content": str(row["content"])[:200],
-                "level": row.get("level", ""),
-            })
+            results.append(
+                {
+                    "time": str(row["display_time"]),
+                    "content": str(row["content"])[:200],
+                    "level": row.get("level", ""),
+                }
+            )
         return results
 
     def get_window_news(
@@ -166,27 +194,33 @@ class NewsDataManager:
                 & (self._announcements["announcement_time"] < window_end)
             )
             for _, row in self._announcements[mask].head(10).iterrows():
-                p0.append({
-                    "stock_code": row["stock_code"],
-                    "title": row["title"],
-                    "time": str(row["announcement_time"]),
-                })
+                p0.append(
+                    {
+                        "stock_code": row["stock_code"],
+                        "title": row["title"],
+                        "time": str(row["announcement_time"]),
+                    }
+                )
 
         p1 = []
         if not self._news.empty:
-            mask = (
-                (self._news["display_time"] >= window_start)
-                & (self._news["display_time"] < window_end)
+            mask = (self._news["display_time"] >= window_start) & (
+                self._news["display_time"] < window_end
             )
             time_filtered = self._news[mask]
             if not time_filtered.empty:
                 keyword_mask = time_filtered["content"].str.contains(
                     "|".join(POLICY_KEYWORDS), na=False
                 )
-                for _, row in time_filtered[keyword_mask].head(5).iterrows():
-                    p1.append({
-                        "time": str(row["display_time"]),
-                        "content": str(row["content"])[:200],
-                    })
+                policy = time_filtered[keyword_mask].sort_values(
+                    "display_time", ascending=False
+                )
+                for _, row in policy.head(5).iterrows():
+                    p1.append(
+                        {
+                            "time": str(row["display_time"]),
+                            "content": str(row["content"])[:200],
+                        }
+                    )
 
         return p0, p1

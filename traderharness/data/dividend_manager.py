@@ -4,16 +4,15 @@ from __future__ import annotations
 
 import logging
 from datetime import date
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 
 import pandas as pd
 
 from traderharness.core.portfolio import Portfolio
+from traderharness.paths import dataset_dir
 
 logger = logging.getLogger(__name__)
-
-from traderharness.paths import dataset_dir
 
 DATASET_DIR = dataset_dir()
 TWO_PLACES = Decimal("0.01")
@@ -31,16 +30,12 @@ class DividendManager:
         if path.exists():
             self._dividends = pd.read_parquet(path)
             if "ex_date" in self._dividends.columns:
-                self._dividends["ex_date"] = pd.to_datetime(
-                    self._dividends["ex_date"]
-                ).dt.date
+                self._dividends["ex_date"] = pd.to_datetime(self._dividends["ex_date"]).dt.date
             logger.info("Dividends loaded: %d rows", len(self._dividends))
         else:
             logger.warning("dividends.parquet not found at %s", path)
 
-    def process_day(
-        self, current_date: date, portfolio: Portfolio
-    ) -> list[dict]:
+    def process_day(self, current_date: date, portfolio: Portfolio) -> list[dict]:
         """Process corporate actions for current_date. Returns action log."""
         if self._dividends.empty:
             return []
@@ -100,7 +95,10 @@ class DividendManager:
             actions.append(action)
             logger.info(
                 "Corporate action: %s %s (qty %d→%d)",
-                code, action["description"], original_qty, pos.quantity,
+                code,
+                action["description"],
+                original_qty,
+                pos.quantity,
             )
 
         return actions

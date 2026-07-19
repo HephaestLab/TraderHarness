@@ -4,7 +4,12 @@ from datetime import date
 
 import pytest
 
-from traderharness.trajectory.replay import ReplayRecorder, ReplayPlayer
+from traderharness.trajectory.replay import (
+    ReplayExhaustedError,
+    ReplayMismatchError,
+    ReplayPlayer,
+    ReplayRecorder,
+)
 
 
 class TestReplayRecorder:
@@ -16,6 +21,20 @@ class TestReplayRecorder:
         rec.save(path)
         assert path.exists()
         assert len(rec) == 2
+
+    def test_save_embeds_prompt_contract_meta_for_single_file_cassettes(self, tmp_path):
+        path = tmp_path / "replay.jsonl"
+        rec = ReplayRecorder(prompt_contract_version="v2")
+        rec.record_llm_call(
+            messages=[{"role": "user", "content": "hi"}],
+            tools=[],
+            output={"role": "assistant", "content": "ok"},
+        )
+        rec.save(path)
+
+        player = ReplayPlayer(path)
+        assert player.prompt_contract_version == "v2"
+        assert player.total_entries == 1
 
     def test_entries_property(self):
         rec = ReplayRecorder()
@@ -67,3 +86,28 @@ class TestReplayPlayer:
     def test_missing_file(self):
         with pytest.raises(FileNotFoundError):
             ReplayPlayer("/nonexistent.jsonl")
+
+    def test_validates_recorded_request_before_returning_response(self, tmp_path):
+        path = tmp_path / "replay.jsonl"
+        rec = ReplayRecorder()
+        rec.record_llm_call(
+            messages=[{"role": "user", "content": "masked prompt"}],
+            tools=[{"type": "function", "function": {"name": "finish_day"}}],
+            output={"role": "assistant", "content": "done"},
+        )
+        rec.save(path)
+        player = ReplayPlayer(path)
+
+        with pytest.raises(ReplayMismatchError, match="request does not match"):
+            player.next_response(
+                messages=[{"role": "user", "content": "different prompt"}],
+                tools=[{"type": "function", "function": {"name": "finish_day"}}],
+            )
+
+    def test_strict_response_fails_closed_when_cassette_is_exhausted(self, tmp_path):
+        path = tmp_path / "replay.jsonl"
+        ReplayRecorder().save(path)
+        player = ReplayPlayer(path)
+
+        with pytest.raises(ReplayExhaustedError, match="exhausted"):
+            player.require_response(messages=[], tools=[])

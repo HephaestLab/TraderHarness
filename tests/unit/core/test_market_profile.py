@@ -2,8 +2,6 @@
 
 from decimal import Decimal
 
-import pytest
-
 from traderharness.core.market_profile import (
     AShareProfile,
     MarketProfile,

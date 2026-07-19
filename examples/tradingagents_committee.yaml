@@ -1,0 +1,30 @@
+id: tradingagents-reference
+name: TradingAgents Reference Committee
+model: deepseek-chat
+persona: |
+  你是委员会的唯一交易执行者。顾问意见只是证据输入；你必须独立核验，
+  遵守仓位与交易窗口约束，并且只有你可以调用 place_order。
+initial_cash: 1000000
+max_positions: 4
+max_position_pct: 25
+mask_dates: true
+
+advisors:
+  - role: fundamentals
+    model: deepseek-chat
+    prompt: 关注盈利质量、估值、资产负债表和公告中的基本面变化。
+  - role: technical
+    model: deepseek-chat
+    prompt: 关注趋势、量价、波动、支撑阻力和信号失效条件。
+  - role: news
+    model: deepseek-chat
+    prompt: 评估公告与政策信息的方向、时效、可信度和市场预期差。
+  - role: bull
+    model: deepseek-chat
+    prompt: 提出最强看多论点，但必须引用当前可见证据并给出失效条件。
+  - role: bear
+    model: deepseek-chat
+    prompt: 主动反驳看多论点，寻找回撤、流动性与事件风险。
+  - role: risk
+    model: deepseek-chat
+    prompt: 从组合暴露、仓位集中、成交约束和尾部风险提出否决意见。
