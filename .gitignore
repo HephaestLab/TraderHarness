@@ -41,3 +41,4 @@ pixel_test/
 # local run artifacts & capture intermediates
 artifacts/
 docs/assets/demo-frames/
+release-build/
