@@ -7,7 +7,7 @@ import threading
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -61,7 +61,7 @@ class RunManager:
         managed = _ManagedRun(
             id=run_id,
             runner=runner,
-            created_at=datetime.now(UTC).isoformat(),
+            created_at=datetime.now(timezone.utc).isoformat(),
             agents=list(request.agents),
         )
         with self._lock:

@@ -350,7 +350,7 @@ def run(
             click.echo(f"Replay: {record_replay}")
             click.echo("Replay leakage audit: PASS")
         if bundle_recorder is not None and record_replay is not None:
-            from datetime import UTC, datetime
+            from datetime import datetime, timezone
 
             from traderharness import __version__ as th_version
             from traderharness.audit import audit_artifacts
@@ -374,7 +374,7 @@ def run(
                     )
                 ],
                 prompt_contract_version=getattr(agent_obj, "prompt_contract_version", "v1"),
-                created_at=datetime.now(UTC).isoformat(),
+                created_at=datetime.now(timezone.utc).isoformat(),
                 traderharness_version=th_version,
             )
             manifest_path = bundle_recorder.save_bundle(record_replay, manifest)
@@ -498,7 +498,7 @@ def compare(
     import os
     from collections import Counter
     from dataclasses import asdict
-    from datetime import UTC, date, datetime
+    from datetime import date, datetime, timezone
     from decimal import Decimal
     from pathlib import Path
 
@@ -658,7 +658,7 @@ def compare(
                 "v1",
             ),
             thinking=thinking_meta,
-            created_at=datetime.now(UTC).isoformat(),
+            created_at=datetime.now(timezone.utc).isoformat(),
             traderharness_version=th_version,
         )
         manifest_path = replay_recorder.save_bundle(record_replay, manifest)
