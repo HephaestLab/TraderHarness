@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+
+{% block extrahead %}
+  {{ super() }}
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="TraderHarness">
+  <meta property="og:title" content="TraderHarness — 抗数据污染的 LLM 交易 Agent 回测环境">
+  <meta property="og:description" content="严格时点掩码 + 日期/实体双重匿名 + 指纹回放的 A 股 LLM 交易 Agent 回测框架，每次运行同步合成全保真轨迹训练数据。">
+  <meta property="og:image" content="https://hephaestlab.github.io/TraderHarness/assets/social-preview.png">
+  <meta property="og:url" content="https://hephaestlab.github.io/TraderHarness/">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="TraderHarness — 抗数据污染的 LLM 交易 Agent 回测环境">
+  <meta name="twitter:description" content="严格时点掩码 + 日期/实体双重匿名 + 指纹回放的 A 股 LLM 交易 Agent 回测框架与轨迹数据合成器。">
+  <meta name="twitter:image" content="https://hephaestlab.github.io/TraderHarness/assets/social-preview.png">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "TraderHarness",
+    "applicationCategory": "DeveloperApplication",
+    "operatingSystem": "Windows, macOS, Linux",
+    "programmingLanguage": "Python",
+    "description": "Contamination-resistant A-share backtesting, evaluation, replay, and trajectory (SFT) export for autonomous LLM trading agents.",
+    "url": "https://hephaestlab.github.io/TraderHarness/",
+    "codeRepository": "https://github.com/HephaestLab/TraderHarness",
+    "downloadUrl": "https://pypi.org/project/traderharness/",
+    "license": "https://www.apache.org/licenses/LICENSE-2.0",
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+    "author": { "@type": "Organization", "name": "HephaestLab", "url": "https://github.com/HephaestLab" },
+    "keywords": "LLM trading agents, backtesting, A-share, point-in-time masking, trajectory export, SFT, agent benchmark"
+  }
+  </script>
+{% endblock %}

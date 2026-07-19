@@ -368,6 +368,10 @@ Apache-2.0 © HephaestLab。详见 [`LICENSE`](LICENSE)。
 
 <!-- source: docs/quickstart.md -->
 
+---
+description: TraderHarness 快速上手：pip/Docker 安装、五年 A 股数据下载、免密回放演示、本地研究控制台与多 Agent 对比。
+---
+
 # 快速上手
 
 ## 安装
@@ -455,6 +459,10 @@ traderharness compare `
 ---
 
 <!-- source: docs/contamination.md -->
+
+---
+description: TraderHarness 如何在每个数据出口执行时点掩码、日期相对化与公司实体匿名化，防止 LLM 回测中的记忆污染与执行层泄漏。
+---
 
 # 无数据泄漏的 LLM 交易回测
 
@@ -695,6 +703,10 @@ advisors:
 ---
 
 <!-- source: docs/training-data.md -->
+
+---
+description: TraderHarness 全保真轨迹采集与轨迹导出：完整消息、工具 schema、推理内容逐次落盘，导出 OpenAI 风格 SFT JSONL。
+---
 
 # 全保真轨迹与轨迹导出
 

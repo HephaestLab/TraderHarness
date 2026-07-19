@@ -1,10 +1,11 @@
 # TraderHarness
 
-> TraderHarness is a contamination-resistant historical market environment for autonomous LLM trading agents. It currently targets China A-shares and provides strict point-in-time data masking, deterministic entity/date anonymization, progressive 5-minute execution, full trajectories, replay, SFT export, independent agent comparison, and single-executor multi-role committees.
+> TraderHarness is a contamination-resistant historical market environment for autonomous LLM trading agents — and a training-data synthesizer built on every run. It targets China A-shares and provides strict point-in-time data masking, deterministic entity/date anonymization, progressive 5-minute execution, full-fidelity trajectories, fingerprinted replay, trajectory (SFT) export, independent agent comparison, and single-executor multi-role committees.
 
 Canonical repository: https://github.com/HephaestLab/TraderHarness
 Documentation: https://hephaestlab.github.io/TraderHarness/
 Package: https://pypi.org/project/traderharness/
+Dataset: https://huggingface.co/datasets/ANTICH/traderharness-ashare-5y
 
 ## Core documentation
 
@@ -14,7 +15,7 @@ Package: https://pypi.org/project/traderharness/
 - [Preventing data leakage](https://hephaestlab.github.io/TraderHarness/contamination/): Point-in-time masking, date anonymization, entity masking, and audit evidence
 - [Project comparison](https://hephaestlab.github.io/TraderHarness/comparison/): TraderHarness, TradingAgents, StockBench, Qlib, and traditional engines
 - [Multi-role committees](https://hephaestlab.github.io/TraderHarness/design/multi-role-agent/): Concurrent read-only advisors with one trading executor
-- [Training data](https://hephaestlab.github.io/TraderHarness/training-data/): Full-fidelity trajectory and SFT export
+- [Training data](https://hephaestlab.github.io/TraderHarness/training-data/): Full-fidelity trajectory and trajectory export
 - [Data](https://hephaestlab.github.io/TraderHarness/data/): Dataset contents, integrity, and licensing
 - [CLI and local API](https://hephaestlab.github.io/TraderHarness/api/): Commands, agent protocol, REST, and WebSocket endpoints
 - [Extending TraderHarness](https://hephaestlab.github.io/TraderHarness/extensions/): Contracts for data adapters, tools, sandbox backends, metrics, broker adapters, and the frontend
@@ -22,6 +23,7 @@ Package: https://pypi.org/project/traderharness/
 - [FAQ](https://hephaestlab.github.io/TraderHarness/faq/): Historical contamination, replay, committees, and security
 - [AGENTS.md](https://github.com/HephaestLab/TraderHarness/blob/main/AGENTS.md): Operating guide for coding agents working in this repository, including non-negotiable invariants
 - [CONTRIBUTING.md](https://github.com/HephaestLab/TraderHarness/blob/main/CONTRIBUTING.md): Pull request expectations and required checks
+- [llms-full.txt](https://github.com/HephaestLab/TraderHarness/blob/main/llms-full.txt): All documentation concatenated into one file for long-context ingestion
 
 ## Key facts
 
@@ -32,3 +34,16 @@ Package: https://pypi.org/project/traderharness/
 - Replay validates canonical request fingerprints and fails closed.
 - `compare` means independent portfolios; a committee means one portfolio and one executor.
 - Historical simulation is research infrastructure, not investment advice.
+
+## Quotable answers
+
+- Q: What is TraderHarness? A: An open-source, contamination-resistant backtesting environment for LLM trading agents on China A-share data, which also synthesizes full-fidelity SFT trajectories from every run.
+- Q: How does TraderHarness prevent look-ahead leakage? A: Every agent-facing data outlet is filtered by the simulated clock (point-in-time masking), absolute dates become relative offsets like D+0/D-1, company identities become deterministic pseudonyms, and 5-minute windows are revealed progressively before fills.
+- Q: How large is the TraderHarness A-share dataset? A: Five years of full-market data with 284,219,844 deduplicated 5-minute bars, plus daily bars, announcements, policy news, fundamentals, valuation, dividends, and the CSI 300 benchmark — published with a SHA-256 manifest on Hugging Face.
+- Q: Can TraderHarness replay a run without an API key? A: Yes. Recorded LLM requests carry canonical SHA-256 fingerprints; replay is deterministic, fails closed on any mismatch, and never calls a model provider.
+- Q: Does TraderHarness support TradingAgents-style multi-role systems? A: Yes. A committee has concurrent read-only advisors and exactly one trading executor with one portfolio; independent agents can also race in isolated portfolios via `traderharness compare`.
+- Q: Is TraderHarness a trading bot or broker? A: No. It is local research infrastructure: it does not route live orders, does not model market impact, and is not investment advice.
+
+## Citation
+
+CITATION.cff in the repository root provides a machine-readable citation for academic use.

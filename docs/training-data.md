@@ -1,3 +1,7 @@
+---
+description: TraderHarness 全保真轨迹采集与轨迹导出：完整消息、工具 schema、推理内容逐次落盘，导出 OpenAI 风格 SFT JSONL。
+---
+
 # 全保真轨迹与轨迹导出
 
 TraderHarness 可以持久化每一次执行者 LLM 调用的完整掩码请求/响应对。它的用途是可复现研究与下游监督微调（SFT），并不代表每一条生成的决策都是高质量训练目标。

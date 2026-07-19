@@ -1,3 +1,7 @@
+---
+description: TraderHarness 快速上手：pip/Docker 安装、五年 A 股数据下载、免密回放演示、本地研究控制台与多 Agent 对比。
+---
+
 # 快速上手
 
 ## 安装

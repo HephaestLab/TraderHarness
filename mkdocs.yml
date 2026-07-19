@@ -9,6 +9,7 @@ copyright: Apache-2.0 © HephaestLab
 theme:
   name: material
   language: zh
+  custom_dir: docs/overrides
   logo: assets/logo.svg
   favicon: assets/logo.svg
   features:
@@ -33,6 +34,7 @@ markdown_extensions:
   - admonition
   - attr_list
   - md_in_html
+  - meta
   - pymdownx.details
   - pymdownx.highlight
   - pymdownx.superfences:
