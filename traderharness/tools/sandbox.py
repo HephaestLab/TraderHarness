@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from traderharness.agents.sandbox.api import build_api_module
+from traderharness.agents.sandbox.guard import build_sandbox_globals
 from traderharness.tools.registry import ToolContext, ToolDefinition
 
 SANDBOX_TIMEOUT = 60
@@ -66,9 +67,27 @@ def _check_blocked_imports(code: str) -> str | None:
     return None
 
 
+class _BlockingLoader:
+    """Loader that always refuses to create the blocked module."""
+
+    def create_module(self, spec):
+        return None
+
+    def exec_module(self, module):
+        raise ImportError(f"Module '{module.__spec__.name}' is blocked in sandbox")
+
+
 class _ImportBlocker:
     """sys.meta_path hook that blocks dangerous imports at runtime."""
 
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname.split(".")[0] in BLOCKED_IMPORTS:
+            import importlib.util
+
+            return importlib.util.spec_from_loader(fullname, _BlockingLoader())
+        return None
+
+    # Legacy finder protocol, still consulted on Python < 3.12.
     def find_module(self, fullname, path=None):
         if fullname.split(".")[0] in BLOCKED_IMPORTS:
             return self
@@ -114,7 +133,6 @@ async def handle_execute_code(params: dict, ctx: ToolContext) -> dict:
         os.chdir(workspace)
 
         sys.stdout = stdout_capture
-        from traderharness.agents.sandbox.guard import build_sandbox_globals
 
         exec_globals = build_sandbox_globals(fake_module, ctx.workspace_root)
 
