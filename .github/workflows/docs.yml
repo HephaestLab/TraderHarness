@@ -7,7 +7,7 @@ on:
       - "docs/**"
       - "mkdocs.yml"
       - "README.md"
-      - "README_zh.md"
+      - "README_en.md"
       - "llms.txt"
       - "llms-full.txt"
       - "AGENTS.md"

@@ -16,7 +16,7 @@ ROOT_FILES = [
     "Dockerfile",
     "LICENSE",
     "README.md",
-    "README_zh.md",
+    "README_en.md",
     "SECURITY.md",
     "compose.yml",
     "llms-full.txt",

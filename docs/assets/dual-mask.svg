@@ -10,13 +10,13 @@
     </style>
   </defs>
   <rect class="bg" width="1200" height="500" rx="18"/>
-  <text class="tag" x="55" y="55">THE SAME HISTORICAL FACT � TWO IDENTITIES REMOVED</text>
+  <text class="tag" x="55" y="55">THE SAME HISTORICAL FACT · TWO IDENTITIES REMOVED</text>
   <g transform="translate(55 92)">
     <rect class="card" width="425" height="286" rx="10"/>
-    <text class="danger" x="28" y="40" style="font:700 12px ui-monospace,monospace">SOURCE RECORD � ENVIRONMENT ONLY</text>
+    <text class="danger" x="28" y="40" style="font:700 12px ui-monospace,monospace">SOURCE RECORD · ENVIRONMENT ONLY</text>
     <text class="h" x="28" y="82">2024-03-05 08:42</text>
-    <text class="body" x="28" y="128">5��600519	�</text>
-    <text class="body" x="28" y="160">t��J%6Ԟ</text>
+    <text class="body" x="28" y="128">公告：600519 · 贵州茅台</text>
+    <text class="body" x="28" y="160">贵州茅台：2024年度利润分配预案</text>
     <line x1="28" x2="397" y1="193" y2="193" stroke="#2b3745"/>
     <text class="muted" x="28" y="226">Exact calendar date is historically valid,</text>
     <text class="muted" x="28" y="250">but can reveal memorized market knowledge.</text>
@@ -30,8 +30,8 @@
     <rect class="masked" width="425" height="286" rx="10"/>
     <text class="safe" x="28" y="40" style="font:700 12px ui-monospace,monospace">AGENT-FACING VIEW</text>
     <text class="h" x="28" y="82">D-9 08:42</text>
-    <text class="body" x="28" y="128">l�-001000731	�</text>
-    <text class="body" x="28" y="160">t��J%6Ԟ</text>
+    <text class="body" x="28" y="128">公告：600731 · 公司-600731</text>
+    <text class="body" x="28" y="160">公司-600731：年度利润分配预案</text>
     <line x1="28" x2="397" y1="193" y2="193" stroke="#2b4b41"/>
     <text class="muted" x="28" y="226">Market information survives. Calendar and</text>
     <text class="muted" x="28" y="250">identity cues are deterministic pseudonyms.</text>
