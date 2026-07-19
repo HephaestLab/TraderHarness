@@ -368,9 +368,9 @@ Apache-2.0 © HephaestLab。详见 [`LICENSE`](LICENSE)。
 
 <!-- source: docs/quickstart.md -->
 
-# Quickstart
+# 快速上手
 
-## Install
+## 安装
 
 === "pip"
 
@@ -378,7 +378,7 @@ Apache-2.0 © HephaestLab。详见 [`LICENSE`](LICENSE)。
     pip install "traderharness[llm,data,ui]"
     ```
 
-=== "source / Windows"
+=== "源码 / Windows"
 
     ```powershell
     git clone https://github.com/HephaestLab/TraderHarness
@@ -393,31 +393,35 @@ Apache-2.0 © HephaestLab。详见 [`LICENSE`](LICENSE)。
     docker compose up --build
     ```
 
-## Install market data
+## 安装行情数据
 
 ```bash
 traderharness data download --full
 ```
 
-The download is checked against file sizes and SHA-256 hashes before an atomic install to `~/.traderharness/dataset`.
+下载完成后会按发布清单逐项校验文件大小与 SHA-256，再原子安装到 `~/.traderharness/dataset`。
 
-## Run the replay demo
+## 跑免密回放演示
 
 ```bash
 traderharness demo
 ```
 
-The cassette contains a real, masked model trajectory and needs no API key. The engine still evaluates it against real local market data.
+盒带里是一段真实、经过掩码的模型轨迹，不需要 API key；引擎仍然会用本地真实行情对它进行评测。
 
-## Open the web console
+## 打开 Web 控制台
 
 ```bash
 traderharness ui
 ```
 
-Open [http://127.0.0.1:8000](http://127.0.0.1:8000). The server binds to loopback by default and refuses accidental public exposure unless explicitly enabled.
+浏览器打开 [http://127.0.0.1:8000](http://127.0.0.1:8000)。服务默认只绑定回环地址，除非显式开启，否则拒绝意外的公网暴露。
 
-## Run a provider-backed agent
+![回测控制室：像素办公室、实时净值与决策事件流](assets/live-control-room.png)
+
+*回测控制室：左侧像素办公室里每个 Agent 各司其职，右侧实时净值曲线与决策事件流同步滚动。*
+
+## 跑一个真实的模型 Agent
 
 ```powershell
 $env:DEEPSEEK_API_KEY="..."
@@ -428,9 +432,7 @@ traderharness run `
   --mask-entities
 ```
 
-`trend-breakout` is one of four bundled reference agent cards — alongside `quality-compounder`, `event-hawk`, and
-`quant-researcher` — each with a distinct persona and `deepseek-v4-pro` (thinking mode) as the default executor
-model. Compare all four head-to-head:
+`trend-breakout` 是内置的参考 Agent 卡片之一——与 `quality-compounder`、`event-hawk`、`quant-researcher` 并列，各自拥有独立人设，默认执行模型为 `deepseek-v4-pro`（thinking 深度推理模式）。把四位选手放进同一市场时钟正面对决：
 
 ```powershell
 traderharness compare `
@@ -444,193 +446,180 @@ traderharness compare `
   --output showcase
 ```
 
-Use `--record-replay cassette.jsonl` to create a deterministic, leakage-audited recording.
+加 `--record-replay cassette.jsonl` 可以把整段运行录成确定性的、可过泄漏审计的回放盒带。
+
+![多 Agent 对比工作台](assets/compare-workbench.png)
+
+*对比工作台：同一市场时钟下多个 Agent 的权益曲线、风险与行为指标横向排名。*
 
 ---
 
 <!-- source: docs/contamination.md -->
 
-# LLM trading backtests without data leakage
+# 无数据泄漏的 LLM 交易回测
 
-TraderHarness treats historical contamination as an environment boundary, not a prompt convention.
+TraderHarness 把历史污染当作环境边界来处理，而不是提示词层面的口头约定。
 
-## Definitions
+## 基本概念
 
-**Point-in-time masking** means every value exposed to an agent is filtered by the simulated clock before it leaves
-the environment. Daily bars are strictly earlier than the current trading date, 5-minute bars stop at the active
-sub-window, and fundamental records cannot have a future publication date.
+**时点掩码（Point-in-time masking）**：任何暴露给 Agent 的数值，在离开环境之前都要先过模拟时钟的过滤。日线严格早于当前交易日，5 分钟线截断到当前子窗口，基本面记录的发布日期不得晚于当前日期。
 
-**Date anonymization** replaces an absolute agent-facing calendar date with a calendar-day offset from the simulated
-present. The current date is `D+0`; the previous calendar day is `D-1`. Wall-clock times remain visible.
+**日期匿名化**：把 Agent 看到的绝对日历日期替换为相对模拟当前的偏移量。今天是 `D+0`，前一个自然日是 `D-1`。一天内的时刻保持可见。
 
-**Entity masking** is a deterministic run-wide bijection from real A-share codes and known company aliases to neutral
-pseudo-identities. Codes are shuffled within compatible board groups so price-limit rules survive anonymization.
+**实体掩码**：真实 A 股代码与已知公司别名到中性假名之间的确定性、全运行范围双射。代码在兼容的板块分组内打散，使涨跌停规则在匿名化后依然成立。
 
-**The three-phase trading loop** is a bounded market day consisting of pre-market research with orders disabled, a
-progressively revealed 09:30–10:00 open window, and a progressively revealed 14:30–15:00 close window.
+**三阶段交易循环**：一个有边界的交易日——禁止下单的盘前研究、渐进揭示的 09:30–10:00 开盘窗口、渐进揭示的 14:30–15:00 尾盘窗口。
 
-## Egress coverage
+## 掩码覆盖范围 {#egress-coverage}
 
-The masks apply to:
+掩码作用于：
 
-- daily and intraday K-lines;
-- market screens, fundamentals, valuation, announcements, and policy news;
-- portfolio and watchlist views;
-- Python sandbox DataFrames returned by `traderharness_api`;
-- model responses, reasoning fields, tool arguments, and committee memos;
-- cross-day memory, persisted trajectories, replay cassettes, comparisons, and SFT exports.
+- 日线与盘中 K 线；
+- 选股筛查、基本面、估值、公告与政策新闻；
+- 账户与自选股视图；
+- Python 沙箱中 `traderharness_api` 返回的 DataFrame；
+- 模型回复、推理字段、工具参数与委员会备忘录；
+- 跨日记忆、落盘轨迹、回放盒带、对比结果与轨迹导出。
 
-Pseudo-codes sent back through tools are resolved internally before matching. The resulting portfolio is rendered
-through the same forward map, so the agent never needs a real code.
+Agent 通过工具回传的伪代码会在内部解析还原后再撮合；账户视图再经同一正向映射渲染，Agent 全程无需接触真实代码。
 
-![Date and entity mask transformation](assets/dual-mask.svg)
+![日期与实体双重掩码的变换过程](assets/dual-mask.svg)
 
-## Artifact audit
+*同一条历史公告，两种身份：左侧是仅限环境的原始记录（真实日期 + 真实公司），右侧是 Agent 可见的视图（相对日期 `D-9` + 伪身份 `公司-600731`）。*
+
+## 工件审计
 
 ```bash
 traderharness audit result.json replay.jsonl export.parquet
 ```
 
-The auditor checks known real entity aliases, six-digit A-share code leakage, absolute ISO/Chinese dates, and
-month-day forms. The v1.0 release acceptance run audited a serialized one-month DeepSeek trajectory and detected zero
-real entity aliases or absolute dates after the final egress fixes.
+审计器检查已知真实公司别名、六位 A 股代码泄漏、绝对 ISO/中文日期以及月-日形式。v1.0 发布验收中对一段序列化的一个月期 DeepSeek 轨迹做了审计，在最终出口修复之后未检出任何真实实体别名或绝对日期。
 
-That result has a narrow meaning: it verifies the known lexical and calendar egress contract. It does not prove that
-a model cannot infer a famous company from a unique financial pattern, product, executive, or event. For publishable
-evaluations, report the mask configuration and seed, retain the audit output, and compare blinded with unblinded runs
-when semantic re-identification is material.
+这个结论的含义是窄的：它验证的是已知的词法与日历出口契约。它无法证明模型不能从独特的财务模式、产品、高管或事件推断出某家知名公司。要发布可公开的评测结果，请报告掩码配置与种子、保留审计输出，并在语义重识别影响重大时对比遮罩与未遮罩运行。
 
-## Execution leakage
+## 执行层泄漏
 
-Information masking is insufficient if the matching engine lets the model inspect a full intraday window and then
-select an earlier favorable price. TraderHarness reveals each open/close sub-window before its eligible fill and
-routes every order through `TradingBus.place_order()`. The action sequence therefore cannot choose prices that were
-not visible at decision time.
+如果撮合引擎允许模型先看完整个盘中窗口、再回头选择更早的优惠价格，信息掩码就失去了意义。TraderHarness 先揭示每个开盘/尾盘子窗口、再给出该窗口的合格成交，并让每一笔订单都经过 `TradingBus.place_order()`。因此动作序列不可能选中决策时刻不可见的价格。
 
 ---
 
 <!-- source: docs/architecture.md -->
 
-# Core architecture
+# 核心架构
+
+![TraderHarness 数据、引擎、Agent、轨迹与评估架构](assets/architecture.svg)
 
 ```mermaid
 flowchart TD
-    D[(Canonical full-market data)] -->|startup preload| E[BacktestEngine]
-    E --> B[TradingBus per agent]
-    B --> T[Masked tools]
+    D[(规范全市场数据)] -->|启动时预加载| E[BacktestEngine]
+    E --> B[TradingBus（每 Agent）]
+    B --> T[掩码工具]
     B --> V[PortfolioView]
-    B --> X[Python sandbox]
-    T --> A[Agent loop]
+    B --> X[Python 沙箱]
+    T --> A[Agent 循环]
     V --> A
     X --> A
     A -->|place_order| B
-    E --> C[Trajectory collector]
-    C --> R[Replay / SFT / reports]
+    E --> C[轨迹采集器]
+    C --> R[回放 / 轨迹导出 / 报告]
 ```
 
-## Non-negotiable invariants
+## 不可妥协的不变量
 
-### Zero I/O during a run
+### 运行期零 I/O
 
-The engine preloads the full required market slice before the first trading day. Agent tool calls perform in-memory lookups and never fetch provider data or read the canonical dataset.
+引擎在第一个交易日之前预加载所需的全部行情切片。Agent 的工具调用只做内存查询，绝不回源拉取供应商数据，也不直接读取规范数据集。
 
-### Strict historical visibility
+### 严格的历史可见性
 
-Daily bars use `date < current_date`. Fundamentals use `pub_date <= current_date`. Five-minute bars are truncated to the active phase and sub-window. Agent-facing absolute dates become relative offsets.
+日线使用 `date < current_date`；基本面使用 `pub_date <= current_date`；5 分钟线截断到当前阶段与子窗口；面向 Agent 的绝对日期一律变为相对偏移。
 
-### Single order path
+### 唯一下单路径
 
-`TradingBus.place_order()` applies lot size, suspension, cash, position, price-limit, fee, and visible-price checks. There is no second fast path for agents, committees, or the sandbox.
+`TradingBus.place_order()` 统一施加整手、停牌、现金、持仓、涨跌停、费用与可见价格校验。不存在供 Agent、委员会或沙箱绕行的第二条快速通道。
 
-### Environment-owned accounting
+### 环境托管账户
 
-The environment owns the portfolio. Agents receive a read-only view and can only mutate state through validated orders. Dividends, stock distributions, and end-of-day equity are deterministic engine operations.
+账户由环境所有。Agent 只获得只读视图，只能通过校验过的订单改变状态。分红、送转与每日净值是确定性的引擎操作。
 
-## Replay contract
+## 回放契约
 
-Each recorded LLM request has a canonical SHA-256 fingerprint. Replay rejects changed requests and exhausted cassettes. It never falls back to a network model, which makes regression failures explicit rather than silently non-deterministic.
+每条记录的 LLM 请求都有规范的 SHA-256 指纹。回放会拒绝被改动的请求与耗尽的盒带，也绝不回退到联网模型——这让回归失败显式暴露，而不是悄无声息地变得不确定。
 
 ---
 
 <!-- source: docs/comparison.md -->
 
-# TraderHarness compared with adjacent projects
+# 与相邻项目的对比
 
-TraderHarness is an environment and evidence harness. It can host different agent architectures, but it does not
-prescribe their investment methodology.
+TraderHarness 是一套环境与证据基础设施。它可以承载不同的 Agent 架构，但不规定它们的投资方法论。
 
-| Project | Primary responsibility | Native decision unit | What an integration still needs |
+| 项目 | 主要职责 | 原生决策单元 | 集成后还需要什么 |
 |---|---|---|---|
-| **TraderHarness** | Historically valid market, execution, portfolio, evaluation, replay, and training trajectories | Autonomous agent, isolated comparison, or one-executor committee | An agent persona or external framework |
-| **TradingAgents** | Multi-role analyst, debate, risk, and trader workflow | Prescribed role graph | A strict market simulator and order contract for benchmark use |
-| **StockBench** | Standardized stock-reasoning benchmark tasks | Benchmark task/prediction | A persistent portfolio environment for autonomous tool use |
-| **Qlib** | Quantitative data, model, experiment, and strategy research | ML model or coded strategy | An LLM-native tool loop and contamination-resistant language egress |
-| **Backtrader / vn.py** | Strategy execution and trading infrastructure | Coded strategy | The autonomous LLM research loop, masking, and trajectory contract |
+| **TraderHarness** | 历史有效的市场、执行、账户、评估、回放与训练轨迹 | 自主 Agent、隔离对比或单执行者委员会 | 一个 Agent 人设或外部框架 |
+| **TradingAgents** | 多角色分析师、辩论、风控与交易员工作流 | 规定的角色图 | 可用于基准测试的严格市场模拟器与下单契约 |
+| **StockBench** | 标准化的股票推理基准任务 | 基准任务/预测 | 支持自主工具调用的持久账户环境 |
+| **Qlib** | 量化数据、模型、实验与策略研究 | ML 模型或代码策略 | LLM 原生的工具循环与抗污染语言出口 |
+| **Backtrader / vn.py** | 策略执行与交易基础设施 | 代码策略 | 自主 LLM 研究循环、掩码与轨迹契约 |
 
-## Independent agents versus a committee
+## 独立 Agent 与委员会的区别
 
-`traderharness compare` is a race: every agent has its own cash, positions, memory, and portfolio. All agents see the
-same market clock and are scored independently.
+`traderharness compare` 是一场赛跑：每个 Agent 拥有自己的现金、持仓、记忆与账户。所有 Agent 共享同一市场时钟，各自独立计分。
 
-A committee is one contestant: read-only advisors may research concurrently, but one Trader is the only role that
-receives order tools. This produces one accountable action path and one portfolio. See
-[Multi-role committees](design/multi-role-agent.md).
+委员会则是一个选手：只读顾问可以并发研究，但只有 Trader 这一个角色持有下单工具。这保证了一条可问责的动作路径和一个账户。详见[多角色委员会](design/multi-role-agent.md)。
 
-## Bring your own framework
+![跨回测权益曲线叠加与关键指标对比](assets/run-compare.png)
 
-An external LangGraph, TradingAgents, or custom orchestrator should return its final decision through the public agent
-protocol. Market reads and orders still pass through `TradingBus`, so the framework inherits the same temporal mask,
-entity/date anonymization, progressive intraday visibility, and matching rules.
+*跨回测对比：把多次已完成回测的权益曲线叠加在一起，横向比较累计收益、夏普、最大回撤、胜率与成交次数。*
+
+## 接入你自己的框架
+
+外部 LangGraph、TradingAgents 或自定义编排器应通过公开的 Agent 协议返回最终决策。行情读取与下单仍然经过 `TradingBus`，因此框架天然继承同样的时点掩码、实体/日期匿名化、盘中渐进可见性与撮合规则。
 
 ---
 
 <!-- source: docs/design/multi-role-agent.md -->
 
-# Multi-role Agent Adapter
+# 多角色 Agent 适配器
 
-## Goal
+## 目标
 
-Support TradingAgents-style committees without changing TraderHarness's market,
-portfolio, matching, masking, or replay semantics. A committee is one evaluated
-agent with one portfolio. Specialist roles advise; one executor alone may call
-`place_order`.
+在不改变 TraderHarness 的市场、账户、撮合、掩码与回放语义的前提下，支持 TradingAgents 风格的委员会。委员会是被评估的一个 Agent、一个账户。专家角色只提供建议；唯一执行者才能调用
+`place_order`。
 
-This is distinct from `traderharness compare`, where independent agents receive
-separate portfolios and are ranked against each other.
+这与 `traderharness compare` 不同：后者中独立 Agent 各自持有账户并相互排名。
 
-## Model
+## 模型
 
 ```text
-BacktestEngine (shared immutable market snapshot)
-  └─ CommitteeAgent (one Portfolio + one TradingBus)
-       ├─ fundamentals advisor ─┐
-       ├─ technical advisor ───┼─> phase memo
-       ├─ news advisor ────────┤
-       ├─ bull researcher ─────┤
-       ├─ bear researcher ─────┘
-       └─ trader/executor -> existing AgentLoop -> TradingBus.place_order()
+BacktestEngine（共享不可变市场快照）
+  └─ CommitteeAgent（一个 Portfolio + 一个 TradingBus）
+       ├─ 基本面顾问 ───────┐
+       ├─ 技术面顾问 ───────┼─> 阶段备忘录
+       ├─ 新闻顾问 ─────────┤
+       ├─ 多头研究员 ───────┤
+       ├─ 空头研究员 ───────┘
+       └─ trader/执行者 -> 现有 AgentLoop -> TradingBus.place_order()
 ```
 
-Independent committees remain parallelizable by the engine:
+多个独立委员会之间仍可由引擎并行：
 
 ```text
-Committee A + Portfolio A ─┐
-Committee B + Portfolio B ─┼─ asyncio.gather per trading day
-Single Agent + Portfolio C ─┘
+委员会 A + 账户 A ────┐
+委员会 B + 账户 B ────┼─ 每个交易日 asyncio.gather
+单 Agent + 账户 C ────┘
 ```
 
-## Invariants
+## 不变量
 
-1. Advisors only receive already-masked Agent-visible messages.
-2. Advisors have no order tool. Read-only tool access is a later extension.
-3. The executor uses the existing `ToolRegistry`; `TradingBus.place_order()` is
-   still the only matching path.
-4. Committee calls are deterministic for replay: role, phase, prompt, response,
-   model, and ordering are trajectory records.
-5. One run-scoped `EntityMasker` is shared by every advisor and executor.
-6. Advisor failures are explicit in the memo and trace; no silent fallback.
+1. 顾问只收到已经掩码的 Agent 可见消息。
+2. 顾问没有下单工具。只读工具访问是后续扩展。
+3. 执行者使用现有 `ToolRegistry`；`TradingBus.place_order()` 仍是唯一撮合路径。
+4. 委员会调用对回放是确定的：角色、阶段、提示词、响应、模型与顺序都是轨迹记录。
+5. 一个运行级的 `EntityMasker` 由所有顾问与执行者共享。
+6. 顾问失败在备忘录与轨迹中显式可见；不做静默兜底。
 
-## Extension surface
+## 扩展面
 
 ```python
 class Advisor(Protocol):
@@ -646,29 +635,24 @@ class CommitteeCoordinator:
     ) -> CommitteeMemo: ...
 ```
 
-`AgentLoop._run_phase()` requests one memo before the first executor call for
-each `(day, phase, sub_window)`. Advisors run concurrently with
-`asyncio.gather`; their output is inserted as a tagged system message. The
-executor can accept or reject every recommendation.
+`AgentLoop._run_phase()` 在每个 `(day, phase, sub_window)` 的首次执行者调用前请求一份备忘录。顾问通过
+`asyncio.gather` 并发执行；产出作为带标签的系统消息注入。执行者可以接受或否决每一条建议。
 
-## TradingAgents adapter
+## TradingAgents 适配器
 
-The adapter maps external graph nodes to `Advisor` implementations:
+适配器把外部图节点映射为 `Advisor` 实现：
 
-- Market/News/Fundamentals analysts -> specialist advisors
-- Bull/Bear researchers -> adversarial advisors
-- Research manager/Risk manager -> synthesis advisors
-- Trader -> TraderHarness executor
+- 市场/新闻/基本面分析师 -> 专家顾问
+- 多/空研究员 -> 对抗顾问
+- 研究经理/风险经理 -> 综合顾问
+- Trader -> TraderHarness 执行者
 
-External tools and portfolio objects are not imported. They are replaced by
-TraderHarness's masked observations and single portfolio/order path. This keeps
-external reasoning topology while preserving backtest fairness.
+外部工具与账户对象不会被引入，取而代之的是 TraderHarness 的掩码观测与单一账户/下单路径。这样既保留外部推理拓扑，又保证回测公平性。
 
-## Configuration
+## 配置
 
-The loader (`PromptAgent`) detects a committee from a top-level `advisors:` list — there is no nested `committee:`
-or `executor:` block. `id`, `name`, and the executor's own `model`/`persona` sit at the top level, exactly like a
-single-agent card:
+加载器（`PromptAgent`）通过顶层 `advisors:` 列表识别委员会——不存在嵌套的 `committee:`
+或 `executor:` 块。`id`、`name` 与执行者自己的 `model`/`persona` 都在顶层，与单 Agent 卡片完全一致：
 
 ```yaml
 id: tradingagents-reference
@@ -690,40 +674,39 @@ advisors:
     prompt: ...
 ```
 
-See [`examples/tradingagents_committee.yaml`](https://github.com/HephaestLab/TraderHarness/blob/main/examples/tradingagents_committee.yaml)
-for the full, loadable reference committee.
+完整可加载的参考委员会见
+[`examples/tradingagents_committee.yaml`](https://github.com/HephaestLab/TraderHarness/blob/main/examples/tradingagents_committee.yaml)。
 
-## Acceptance criteria
+## 验收标准
 
-- Unit test proves advisors never receive `place_order`.
-- Unit test proves all advisors are scheduled concurrently.
-- Integration test proves exactly one executor can place orders.
-- Replay reproduces the same memo and executor action sequence.
-- Real one-day, three-day, and one-month runs pass leakage audit.
-- `compare` can rank a committee against ordinary agents under identical data,
-  cash, masking seed, and benchmark.
+- 单元测试证明顾问永远不会拿到 `place_order`。
+- 单元测试证明所有顾问被并发调度。
+- 集成测试证明恰好只有一个执行者能下单。
+- 回放能复现同样的备忘录与执行者动作序列。
+- 真实一日、三日与一个月运行通过泄漏审计。
+- `compare` 能在相同数据、现金、掩码种子与基准下，把委员会与普通 Agent 一起排名。
 
-## Deferred
+## 暂缓项
 
-- Advisor-specific read-only tool budgets.
-- Arbitrary cyclic graphs and inter-agent message buses.
-- Shared portfolio controlled by multiple executors (intentionally excluded;
-  it would make order ownership and replay ambiguous).
+- 按顾问划分的只读工具预算。
+- 任意环形图与 Agent 间消息总线。
+- 多执行者共享账户（有意排除——它会让订单归属与回放变得含糊）。
 
 ---
 
 <!-- source: docs/training-data.md -->
 
-# Full-fidelity trajectory and SFT export
+# 全保真轨迹与轨迹导出
 
-TraderHarness can persist the exact masked request/response pair for every
-executor LLM call. This is intended for reproducible research and downstream
-supervised fine-tuning (SFT), not as a claim that every generated decision is a
-high-quality training target.
+TraderHarness 可以持久化每一次执行者 LLM 调用的完整掩码请求/响应对。它的用途是可复现研究与下游监督微调（SFT），并不代表每一条生成的决策都是高质量训练目标。
 
-## Capture a trajectory
+![逐笔复盘：K 线上下文、下单理由与执行证据](assets/trade-review.png)
 
-Run backtests with entity masking enabled:
+*每一次决策都可回放审计：成交时 K 线、已记录的下单理由、工具调用参数与执行结果完整留档。*
+
+## 采集轨迹
+
+开启实体掩码运行回测：
 
 ```bash
 traderharness run \
@@ -733,18 +716,17 @@ traderharness run \
   --mask-entities
 ```
 
-Each `llm_exchange` trajectory step contains:
+每个 `llm_exchange` 轨迹步骤包含：
 
-- the complete message list sent to the executor;
-- the complete tool schema available for that call;
-- assistant content and optional reasoning content;
-- complete tool calls and arguments;
-- phase and sub-window metadata.
+- 发给执行者的完整消息列表；
+- 该次调用可用的完整工具 schema；
+- assistant 内容与可选的推理内容；
+- 完整的工具调用与参数；
+- 阶段与子窗口元数据。
 
-The compatibility `assistant` and `tool_call` steps are also retained. Assistant
-text is no longer truncated in newly generated results.
+兼容性的 `assistant` 与 `tool_call` 步骤也会保留。新生成的结果中 assistant 文本不再截断。
 
-## Export OpenAI-style JSONL
+## 导出 OpenAI 风格 JSONL
 
 ```bash
 traderharness export sft \
@@ -752,7 +734,7 @@ traderharness export sft \
   --output ./training.jsonl
 ```
 
-One line is emitted per LLM call:
+每次 LLM 调用输出一行：
 
 ```json
 {
@@ -772,58 +754,51 @@ One line is emitted per LLM call:
 }
 ```
 
-Absolute trading dates are not copied into export metadata. Agent-visible dates
-remain relative (`D+0`, `D-1`, and so on).
+绝对交易日期不会进入导出元数据；Agent 可见日期保持相对形式（`D+0`、`D-1` 等）。
 
-## Safety gates
+## 安全闸口
 
-By default, export:
+默认情况下，导出会：
 
-1. rejects runs that were not created with entity masking;
-2. rejects legacy trajectories without full-fidelity `llm_exchange` records;
-3. runs the entity/date leakage detector over the output;
-4. exits non-zero if any finding remains.
+1. 拒绝未开启实体掩码的运行；
+2. 拒绝缺少全保真 `llm_exchange` 记录的旧轨迹；
+3. 对输出运行实体/日期泄漏检测；
+4. 只要仍有检出就以非零码退出。
 
-`--allow-unmasked` is an explicit escape hatch for private research. Such
-output must not be published as contamination-resistant training data.
+`--allow-unmasked` 是面向私有研究的显式逃生门，这类输出不得作为抗污染训练数据发布。
 
-## Curation remains necessary
+## 筛选仍然必要
 
-Full fidelity preserves mistakes as well as good decisions. Before training,
-filter trajectories using outcome, drawdown, rule compliance, tool errors, and
-human review. Also verify that the selected model provider's terms permit use
-of generated reasoning and responses for training.
+全保真意味着错误决策与好决策都会被保留。训练前请按结果、回撤、规则合规、工具错误与人工复核过滤轨迹，并确认所选模型供应商的条款允许将生成的推理与回复用于训练。
 
 ---
 
 <!-- source: docs/data.md -->
 
-# Data and licensing
+# 数据与许可
 
-The canonical A-share release contains five years of full-market daily and 5-minute bars plus announcements, policy news, fundamentals, valuation, dividends, and the CSI 300 benchmark.
+规范 A 股发布版包含五年全市场日线与 5 分钟线，以及公告、政策新闻、基本面、估值、分红和沪深 300 基准。
 
-## Integrity
+## 完整性
 
-`traderharness data download --full` verifies every file against the release manifest before atomically replacing the local dataset. `traderharness data update` uses watermarks, deterministic deduplication, and atomic writers.
+`traderharness data download --full` 会按发布清单逐项校验后才原子替换本地数据集；`traderharness data update` 使用水位线、确定性去重与原子写入。
 
-The repository's data doctor checks:
+仓库自带的数据医生（data doctor）检查：
 
-- required schemas and date ranges
-- duplicate natural keys
-- annual 5-minute coverage
-- stale symbols and dataset alignment
-- invalid non-A-share announcement codes
-- metadata consistency
+- 必需 schema 与日期范围
+- 自然键重复
+- 5 分钟线年度覆盖率
+- 过期标的与数据集对齐
+- 非 A 股公告代码非法值
+- 元数据一致性
 
-The v1.0 canonical build contains 284,219,844 deduplicated 5-minute rows. Annual symbol coverage reached 100% for
-the active daily universe in the release audit, with zero lagging symbols at the final 5-minute watermark and zero
-duplicate natural keys in the verification sample.
+v1.0 规范构建包含 284,219,844 条去重后的 5 分钟记录。发布审计中，活跃日线股票池的年度标的覆盖率达到 100%，最终 5 分钟水位线处无滞后标的，验证样本中自然键零重复。
 
-## Public release policy
+## 公开发布策略
 
-The public news table retains templated headlines and removes licensed full text. Company templates are resolved to neutral identities only at runtime. This protects evaluation integrity while keeping the source dataset useful for point-in-time filtering.
+公开新闻表只保留模板化标题，移除有授权限制的正文。公司模板只在运行时解析为中性身份。这在保护评测完整性的同时，让源数据集依然可用于时点过滤。
 
-## Storage
+## 存储结构
 
 ```text
 ~/.traderharness/dataset/
@@ -838,277 +813,223 @@ The public news table retains templated headlines and removes licensed full text
 └── metadata.json
 ```
 
-Market-data licenses vary by provider and jurisdiction. Verify upstream terms before redistribution or commercial deployment.
+行情数据许可因供应商与司法辖区而异。再分发或商用部署前请核实上游条款。
 
 ---
 
 <!-- source: docs/api.md -->
 
-# CLI and local API reference
+# CLI 与本地 API 参考
 
-## Core CLI
+## 核心 CLI
 
 ```text
-traderharness run       Run one agent
-traderharness compare   Run isolated agents against one market clock
-traderharness demo      Replay the bundled masked run without an API key
-traderharness ui        Start the local FastAPI and React console
-traderharness audit     Scan artifacts for entity and calendar leakage
-traderharness export    Convert trajectories to SFT JSONL
-traderharness data      Download, update, and inspect datasets
+traderharness run       运行单个 Agent
+traderharness compare   在同一市场时钟下隔离运行多个 Agent
+traderharness demo      免密回放内置的掩码运行
+traderharness ui        启动本地 FastAPI + React 控制台
+traderharness audit     扫描工件中的实体与日历泄漏
+traderharness export    把轨迹转换为 SFT JSONL
+traderharness data      下载、更新与检查数据集
 ```
 
-Run `traderharness <command> --help` for the installed version's options.
+各命令的具体参数以 `traderharness <command> --help` 为准。
 
-## Agent protocol
+## Agent 协议
 
-Custom agents implement the public protocol in `traderharness.agents.protocol`. They receive environment-controlled
-context for the pre-market, open-window, and close-window phases. Read-only advisors can be composed behind a single
-executor; see [Multi-role committees](design/multi-role-agent.md).
+自定义 Agent 实现 `traderharness.agents.protocol` 中的公开协议，分别在盘前、开盘窗口与尾盘窗口收到环境控制的上下文。只读顾问可以组合在单一执行者之后，详见[多角色委员会](design/multi-role-agent.md)。
 
-## Local HTTP API
+## 本地 HTTP API
 
-`traderharness ui` serves:
+`traderharness ui` 提供：
 
-- `GET /api/status` — dataset, provider, and local security status;
-- `GET/POST /api/agents` — agent-card collection;
-- `GET/PUT/DELETE /api/agents/{id}` — one agent card;
-- `POST /api/runs` — start a backtest;
-- `GET/DELETE /api/runs/{id}` — inspect or cancel a run;
-- `WS /api/runs/{id}/events` — reconnectable sequenced event journal;
-- `GET /api/results` — persisted result summaries;
-- `GET /api/results/{file}` — complete artifact;
-- `GET /api/results/{file}/analysis` — normalized UI research dossier;
-- `POST /api/demo` — start the bundled replay;
-- `GET /api/health` — process health.
+- `GET /api/status` — 数据集、供应商与本地安全状态；
+- `GET/POST /api/agents` — Agent 卡片集合；
+- `GET/PUT/DELETE /api/agents/{id}` — 单张 Agent 卡片；
+- `POST /api/runs` — 启动回测；
+- `GET/DELETE /api/runs/{id}` — 查看或取消运行；
+- `WS /api/runs/{id}/events` — 可重连的序号化事件日志；
+- `GET /api/results` — 已落盘结果摘要；
+- `GET /api/results/{file}` — 完整工件；
+- `GET /api/results/{file}/analysis` — 归一化的 UI 研究档案；
+- `POST /api/demo` — 启动内置回放；
+- `GET /api/health` — 进程健康检查。
 
-The HTTP API is local tooling, not an authenticated public service. Keep the default localhost binding.
+HTTP API 是本地工具，不是带鉴权的公共服务。请保持默认的 localhost 绑定。
 
 ---
 
 <!-- source: docs/extensions.md -->
 
-# Extending TraderHarness
+# 扩展 TraderHarness
 
-TraderHarness is designed to be extended without weakening its core invariants: zero backtest-time I/O, one order
-path, strict point-in-time visibility, deterministic execution, and environment-owned portfolios (see
-[Core architecture](architecture.md) and
-[`AGENTS.md`](https://github.com/HephaestLab/TraderHarness/blob/main/AGENTS.md)). This page is a short contract
-for the most common extension points. Open an issue before starting a large change; see
-[`CONTRIBUTING.md`](https://github.com/HephaestLab/TraderHarness/blob/main/CONTRIBUTING.md).
+TraderHarness 的设计允许在不削弱核心不变量的前提下扩展：回测期零 I/O、唯一下单路径、严格时点可见性、确定性执行、环境托管账户（见[核心架构](architecture.md)与
+[`AGENTS.md`](https://github.com/HephaestLab/TraderHarness/blob/main/AGENTS.md)）。本页是几个常见扩展点的简要契约。大型改动前请先开 issue；流程见
+[`CONTRIBUTING.md`](https://github.com/HephaestLab/TraderHarness/blob/main/CONTRIBUTING.md)。
 
-## Data source adapters
+## 数据源适配器
 
-A new market, or a new provider for the existing A-share dataset, should produce data that fits the canonical
-schema described in [Data and licensing](data.md).
+新市场，或现有 A 股数据集的新供应商，都应产出符合[数据与许可](data.md)中规范 schema 的数据。
 
-Contract:
+契约：
 
-- Implement a provider under `traderharness/data/providers/`; do not bypass `traderharness/data/datasets.py` or
-  write directly into a running backtest's in-memory tables.
-- Preserve point-in-time integrity: every record needs a stable natural key and, for anything not priced at the
-  bar, a publication timestamp (`pub_date`-style column) that the masking layer can filter on.
-- Add or extend a `data doctor` check (`scripts/data_doctor.py`) for the new table's required columns, date
-  coverage, and duplicate-key invariants.
-- Ship a small real-data fixture under `tests/fixtures/` and a loader test; do not substitute synthetic prices for
-  acceptance validation (see the workspace rule on real data).
+- 在 `traderharness/data/providers/` 下实现 provider；不得绕过 `traderharness/data/datasets.py`，也不得直接写入正在运行的回测的内存表。
+- 保持时点完整性：每条记录需要稳定的自然键；非价格类记录还需要可供掩码层过滤的发布时间戳（`pub_date` 式列）。
+- 为新表添加或扩展数据医生检查（`scripts/data_doctor.py`）：必需列、日期覆盖与重复键不变量。
+- 在 `tests/fixtures/` 提供小体量真实数据夹具与加载测试；验收验证不得用合成价格顶替（见真实数据工作区规则）。
 
-## Tools
+## 工具
 
-Agent-facing tools live in `traderharness/tools/` and are registered through `traderharness/tools/registry.py`.
+面向 Agent 的工具位于 `traderharness/tools/`，通过 `traderharness/tools/registry.py` 注册。
 
-Contract:
+契约：
 
-- A tool handler receives the run's masked context; it must never reach past that context to read the canonical
-  dataset or another agent's state.
-- Every failure path returns a structured, actionable error that distinguishes "code does not exist" from "no
-  data before this date" from "suspended" from "an ignored parameter" — a generic exception is not acceptable.
-- New tools need JSON-schema argument validation, a unit test per failure mode, and an entry in the relevant agent
-  card's `allowed_tools` list if a builtin agent should use it.
-- Tools must not add a second order path. Trading stays behind `TradingBus.place_order()`.
+- 工具处理器接收本次运行的掩码上下文；它绝不能越过上下文读取规范数据集或其他 Agent 的状态。
+- 每条失败路径都返回结构化、可行动的错误，区分"代码不存在""该日期前无数据""停牌""参数被忽略"——笼统异常不可接受。
+- 新工具需要 JSON-schema 参数校验、每种失败模式一个单元测试；若内置 Agent 应使用它，还要加入相应 Agent 卡片的 `allowed_tools`。
+- 工具不得新增第二条下单路径。交易始终走 `TradingBus.place_order()`。
 
-## Sandbox backends
+## 沙箱后端
 
-The `execute_code` tool and `traderharness_api` module are the sanctioned way for an agent to run arbitrary
-analysis code against masked data (see [Preventing data leakage](contamination.md#egress-coverage)).
+`execute_code` 工具与 `traderharness_api` 模块是 Agent 对掩码数据运行任意分析代码的受认可方式（见[防数据泄漏](contamination.md#egress-coverage)）。
 
-Contract:
+契约：
 
-- A sandbox backend must enforce the same path guard that blocks direct dataset reads (`sandbox/guard.py`) and the
-  same wall-clock timeout.
-- `traderharness_api` additions must resolve through the existing masked accessors; do not add a code path that
-  returns an unmasked DataFrame or a real entity code.
-- No sandbox backend may start a nested backtest or call back into the engine's order path.
-- See [Roadmap](roadmap.md#planned-a-hardened-sandbox) for where sandbox isolation is headed; contributions that
-  narrow the trusted surface are especially welcome.
+- 沙箱后端必须执行同样的路径防护，阻断直接读取数据集（`sandbox/guard.py`），并使用同样的 wall-clock 超时。
+- `traderharness_api` 的新增能力必须经由现有掩码访问器解析；不得添加返回未掩码 DataFrame 或真实实体代码的代码路径。
+- 任何沙箱后端都不得启动嵌套回测，也不得回调引擎的下单路径。
+- 沙箱隔离的演进方向见[路线图](roadmap.md#hardened-sandbox)；缩小可信面的贡献尤其受欢迎。
 
-## Evaluation metrics
+## 评估指标
 
-Performance and behavioral metrics live in `traderharness/metrics/`.
+绩效与行为指标位于 `traderharness/metrics/`。
 
-Contract:
+契约：
 
-- A new metric is a pure function over an already-completed run's daily equity, trades, and decisions — it must
-  not require re-running the backtest or touching provider APIs.
-- Document the formula and its edge cases (empty trade history, single trading day, missing benchmark data) in the
-  docstring, and add a report/JSON-export test.
-- If the metric is agent-comparative (e.g., a ranking), it belongs in `traderharness/metrics/comparison.py`, not in
-  the per-agent report.
+- 新指标是对已完成运行的每日净值、成交与决策的纯函数——不得要求重跑回测或调用供应商 API。
+- 在 docstring 中写清公式与边界情况（空成交历史、单交易日、缺基准数据），并添加报告/JSON 导出测试。
+- Agent 间比较类指标（如排名）属于 `traderharness/metrics/comparison.py`，不属于单 Agent 报告。
 
-## Broker adapters
+## 券商适配器
 
-There is no live broker adapter in v1.0; see [Roadmap](roadmap.md#planned-live-broker-adapter). Design
-discussions and prototypes are welcome as issues, but a broker integration should not be wired into the backtest
-`TradingBus` — historical simulation and live order routing are different trust boundaries and must stay
-separated.
+v1.0 没有实盘券商适配器，见[路线图](roadmap.md#live-broker-adapter)。欢迎以 issue 形式讨论设计与原型，但券商集成不应接进回测用
+`TradingBus`——历史模拟与实盘下单是不同的信任边界，必须保持分离。
 
-## Frontend (webui)
+## 前端（webui）
 
-The research console is a local-only React app in `webui/`.
+研究控制台是 `webui/` 下的纯本地 React 应用。
 
-Contract:
+契约：
 
-- New views read from the existing REST/WebSocket API (`traderharness/server/app.py`); do not add client-side
-  logic that re-derives masked data from raw fields.
-- Keep Chinese-language labels consistent with `webui/src/locale.ts` rather than hardcoding literal strings in
-  components.
-- Add a Vitest unit test for new components and, for a new page or workflow, a Playwright scenario under
-  `webui/tests/e2e` (or extend `webui/scripts/capture-demo.mjs` if it should also appear in the README GIF).
+- 新视图从现有 REST/WebSocket API（`traderharness/server/app.py`）取数；不得在客户端用原始字段重新推导掩码数据。
+- 中文文案统一走 `webui/src/locale.ts`，不要在组件里硬编码字面量。
+- 新组件配 Vitest 单元测试；新页面或新流程配 `webui/tests/e2e` 下的 Playwright 场景（若应出现在 README GIF 中，同步扩展 `webui/scripts/capture-demo.mjs`）。
 
-## Before opening a pull request
+## 提交 PR 之前
 
-1. Add a failing test that demonstrates the new contract.
-2. Implement without weakening any invariant in
-   [`AGENTS.md`](https://github.com/HephaestLab/TraderHarness/blob/main/AGENTS.md#non-negotiable-invariants).
-3. Run the focused suite, then the full suite (`pytest tests/ --no-header -q`, `ruff check`, and for
-   engine/masking/tools/data/sandbox changes, a real replay or backtest with trace inspection).
-4. State plainly which real-data runs were performed and which were not.
+1. 先写一个能证明新契约的失败测试。
+2. 实现时不得削弱
+   [`AGENTS.md`](https://github.com/HephaestLab/TraderHarness/blob/main/AGENTS.md#non-negotiable-invariants) 中任何不变量。
+3. 跑聚焦测试套件，再跑全量（`pytest tests/ --no-header -q`、`ruff check`；涉及引擎/掩码/工具/数据/沙箱的改动还需一次真实回放或回测并检查轨迹）。
+4. 如实声明做过哪些真实数据运行、哪些没做。
 
 ---
 
 <!-- source: docs/roadmap.md -->
 
-# Roadmap
+# 路线图
 
-This page tracks what TraderHarness actually ships versus what is planned. It exists so integrators can make
-build-or-wait decisions without guessing from issue threads. Nothing below is a date commitment.
+本页记录 TraderHarness 已经交付了什么、计划做什么，方便集成方做"自建还是等待"的决策，而不必从 issue 列表里猜。以下内容均不构成日期承诺。
 
-## ✅ Delivered in v1.0
+## ✅ v1.0 已交付
 
-- Five-year full-market A-share dataset (daily, 5-minute, announcements, policy news, fundamentals, valuation,
-  dividends, CSI 300) with atomic incremental updates and integrity checks.
-- Zero backtest-time market-data I/O after preload; a single order path through `TradingBus.place_order()`.
-- Strict point-in-time masking across daily, intraday, news, announcement, fundamental, and sandbox egress.
-- Deterministic calendar (`D+0`, `D-1`, …) and company-entity anonymization with board-semantics preservation.
-- The three-phase pre-market / open-window / close-window agent loop with progressive intraday visibility.
-- Independent multi-agent comparison (`traderharness compare`) and a single-executor, multi-role committee
-  reference implementation (advisors are read-only; one Trader holds the order tool).
-- Full-fidelity LLM exchange trajectories, fail-closed fingerprinted replay, and OpenAI-style SFT export.
-- Serialized-artifact leakage auditing (`traderharness audit`).
-- A local FastAPI + React research console, an unprivileged Docker image, PyPI packaging, and CI.
+- 五年全市场 A 股数据集（日线、5 分钟、公告、政策新闻、基本面、估值、分红、沪深 300），带原子增量更新与完整性检查。
+- 预加载后回测期零行情 I/O；`TradingBus.place_order()` 唯一下单路径。
+- 日线、盘中、新闻、公告、基本面与沙箱出口的严格时点掩码。
+- 确定性日历（`D+0`、`D-1`……）与保留板块语义的公司实体匿名化。
+- 盘前 / 开盘窗口 / 尾盘窗口三阶段 Agent 循环，盘中渐进可见。
+- 独立多 Agent 对比（`traderharness compare`），以及单执行者多角色委员会参考实现（顾问只读；唯一 Trader 持有下单工具）。
+- 全保真 LLM 交互轨迹、失败即报错的指纹回放、OpenAI 风格轨迹导出。
+- 序列化工件泄漏审计（`traderharness audit`）。
+- 本地 FastAPI + React 研究控制台、非特权 Docker 镜像、PyPI 打包与 CI。
 
-See [`CHANGELOG.md`](https://github.com/HephaestLab/TraderHarness/blob/main/CHANGELOG.md) for the itemized release
-notes.
+逐项发布说明见 [`CHANGELOG.md`](https://github.com/HephaestLab/TraderHarness/blob/main/CHANGELOG.md)。
 
-## 🚧 Next: paper trading
+## 🚧 下一步：模拟实盘（paper trading）
 
-A simulated live-forward mode that reuses the existing engine, masking, and tool contract against a streaming
-(rather than fully preloaded) market feed, so an agent card can be evaluated forward-in-time without code changes.
-This is in design; it is **not available today** and nothing in this repository should be read as a claim
-otherwise.
+一种模拟的实时前推模式：复用现有引擎、掩码与工具契约，但数据源从全量预加载改为流式推送，从而无需改动代码就能对一张 Agent 卡片做面向未来的评估。该功能在设计中，**目前不可用**，仓库中任何内容都不应被解读为相反 claim。
 
-Constraints carried over from the backtest engine:
+从回测引擎继承的约束：
 
-- the same `TradingBus.place_order()` path and risk checks;
-- the same masking contract for any agent-facing egress;
-- no shortcut that lets the sandbox or a tool observe data ahead of the simulated clock.
+- 同样的 `TradingBus.place_order()` 路径与风控检查；
+- 任何面向 Agent 的出口都遵守同样的掩码契约；
+- 不存在让沙箱或工具看到模拟时钟之后数据的捷径。
 
-## 📋 Planned: live broker adapter
+## 📋 规划：实盘券商适配器 {#live-broker-adapter}
 
-An adapter boundary so a paper-trading or research agent can be pointed at a real brokerage API. This depends on
-paper trading landing first, and on a threat model for credentials and order authorization that matches the rest
-of the project's security posture (see
-[`SECURITY.md`](https://github.com/HephaestLab/TraderHarness/blob/main/SECURITY.md)). No broker integration
-exists today.
+一个适配器边界，让模拟实盘或研究 Agent 可以对接真实券商 API。它依赖模拟实盘先落地，并需要与项目整体安全姿态相匹配的凭据与下单授权威胁模型（见
+[`SECURITY.md`](https://github.com/HephaestLab/TraderHarness/blob/main/SECURITY.md)）。目前没有任何券商集成。
 
-## 📋 Planned: a hardened sandbox
+## 📋 规划：沙箱加固 {#hardened-sandbox}
 
-The current Python sandbox (`execute_code` + `traderharness_api`) is scoped to keep a single trusted researcher
-from accidentally reading the canonical dataset or starting a nested backtest — see
-[Local server security](https://github.com/HephaestLab/TraderHarness/blob/main/AGENTS.md#local-server-security).
-Hardening planned for a future release:
+当前 Python 沙箱（`execute_code` + `traderharness_api`）的定位是防止单一可信研究者意外读取规范数据集或启动嵌套回测——见
+[本地服务器安全](https://github.com/HephaestLab/TraderHarness/blob/main/AGENTS.md#local-server-security)。未来版本计划的加固：
 
-- resource and wall-clock isolation suitable for running untrusted or third-party agent cards;
-- a narrower default `traderharness_api` surface with per-tool capability scoping;
-- structured sandbox audit logs alongside the existing trajectory records.
+- 适合运行不可信或第三方 Agent 卡片的资源与 wall-clock 隔离；
+- 更窄的默认 `traderharness_api` 面，按工具做能力域划分；
+- 与现有轨迹记录并列的结构化沙箱审计日志。
 
-## ❌ Non-goals
+## ❌ 非目标
 
-- **A public leaderboard or hosted multi-tenant service.** TraderHarness is local research infrastructure; see
-  [Local server security](https://github.com/HephaestLab/TraderHarness/blob/main/AGENTS.md#local-server-security).
-- **Market-impact modeling.** Historical fills use unadjusted prices and do not simulate how an agent's own orders
-  would move the market.
-- **Prescribing a trading methodology.** The environment stays agent-architecture-agnostic; see
-  [Project comparison](comparison.md).
-- **Real-time multi-agent interaction where agents affect each other's fills.** Every agent (or committee) trades
-  against the same historical clock in its own isolated portfolio.
+- **公开排行榜或托管多租户服务。** TraderHarness 是本地研究基础设施；见[本地服务器安全](https://github.com/HephaestLab/TraderHarness/blob/main/AGENTS.md#local-server-security)。
+- **市场冲击建模。** 历史成交使用不复权价格，不模拟 Agent 自己的订单对市场的推动。
+- **规定交易方法论。** 环境保持 Agent 架构中立；见[项目对比](comparison.md)。
+- **Agent 之间实时互动、互相影响成交。** 每个 Agent（或委员会）都在自己的隔离账户中对同一历史时钟交易。
 
-## How to help
+## 如何参与
 
-Roadmap items above are the areas most likely to be accepted quickly. See
-[Extending TraderHarness](extensions.md) for contribution contracts and
-[`CONTRIBUTING.md`](https://github.com/HephaestLab/TraderHarness/blob/main/CONTRIBUTING.md) for the process.
+上述路线图条目是最可能被快速接受的贡献方向。贡献契约见[扩展开发](extensions.md)，流程见
+[`CONTRIBUTING.md`](https://github.com/HephaestLab/TraderHarness/blob/main/CONTRIBUTING.md)。
 
 ---
 
 <!-- source: docs/faq.md -->
 
-# Frequently asked questions
+# 常见问题
 
-## Why evaluate a new LLM on history it may have seen?
+## 为什么要在模型可能见过的历史上评测新 LLM？
 
-A knowledge cutoff is not an information barrier. TraderHarness removes the absolute date and company identity at
-every agent-facing boundary, reveals intraday bars progressively, and audits serialized artifacts for lexical
-leakage. Famous events can still be inferred semantically, so rigorous work should report mask settings and include a
-blinded/unblinded comparison where appropriate.
+知识截止日不是信息屏障。TraderHarness 在每一个面向 Agent 的边界移除绝对日期与公司身份，盘中分钟线渐进揭示，并对序列化工件做词法泄漏审计。著名事件仍可能被语义推断出来，因此严谨的工作应报告掩码设置，并在合适时加入遮罩/未遮罩对照。
 
-## Does entity masking change trading rules?
+## 实体掩码会改变交易规则吗？
 
-No. Real codes are shuffled within compatible A-share board groups. A ChiNext or STAR Market pseudo-code retains the
-historical board's price-limit behavior. Matching always uses the internally resolved real instrument.
+不会。真实代码在兼容的 A 股板块分组内打散。创业板或科创板的伪代码保留其历史板块的涨跌停行为。撮合始终使用内部解析还原后的真实标的。
 
-## Is the full dataset synthetic?
+## 完整数据集是合成的吗？
 
-No. Acceptance tests and published runs use historical full-market data. The no-key demo is a deterministic replay of
-a real masked run; it does not substitute generated prices.
+不是。验收测试与公开运行都使用历史全市场真实数据。免密演示是一段真实掩码运行的确定性回放，不用生成的价格顶替。
 
-## Is `compare` a shared multi-agent portfolio?
+## `compare` 是共享账户的多 Agent 吗？
 
-No. `compare` gives each agent an isolated portfolio. For a TradingAgents-style setup, use a committee: advisors are
-read-only and one Trader controls one portfolio.
+不是。`compare` 给每个 Agent 一个隔离账户。想要 TradingAgents 式的结构，请用委员会：顾问只读，唯一 Trader 管理一个账户。
 
-## Can replay silently call the model provider?
+## 回放会偷偷调用模型供应商吗？
 
-No. Requests are fingerprinted. A mismatch or exhausted cassette fails closed.
+不会。请求带指纹。指纹不匹配或盒带耗尽都会直接失败（fail-closed）。
 
-## Can the UI be exposed as a hosted service?
+## 控制台能暴露成托管服务吗？
 
-Not safely in its current form. Agent-authored Python is executable behind the local HTTP server. The sandbox guard
-protects backtest data boundaries, not a hostile multi-tenant deployment. Keep the server on localhost.
+以当前形态不安全。Agent 编写的 Python 在本地 HTTP 服务后可执行。沙箱防护保护的是回测数据边界，而不是敌意多租户部署。请保持 localhost 绑定。
 
-## Does a profitable backtest imply a deployable strategy?
+## 回测盈利等于可上线策略吗？
 
-No. TraderHarness does not model market impact and historical performance does not guarantee future returns. It is
-research infrastructure, not investment advice or a broker.
+不等于。TraderHarness 不建模市场冲击，历史表现不保证未来收益。它是研究基础设施，不是投资建议，也不是券商。
 
-## Which agents and model does the README showcase use?
+## README 展示用哪些 Agent 和模型？
 
-The four-agent showcase compares the bundled `trend-breakout`, `quality-compounder`, `event-hawk`, and
-`quant-researcher` cards over 2024-03-04 to 2024-03-29 with entity masking enabled, using `deepseek-v4-pro` in
-thinking mode as the executor. Performance figures are published only after that exact run completes and passes
-`traderharness audit`; the README does not publish estimated or placeholder numbers as if they were real.
+四 Agent 展示对比内置的 `trend-breakout`、`quality-compounder`、`event-hawk`、`quant-researcher` 四张卡片，区间为 2024-03-04 至 2024-03-29，开启实体掩码，执行模型为 thinking 模式的
+`deepseek-v4-pro`。绩效数字只在该次运行真实完成并通过 `traderharness audit` 后发布——README 不会把估算或占位数字当作真实结果发布。
 
-## Is `traderharness demo` the same as paper trading?
+## `traderharness demo` 等于模拟实盘吗？
 
-No. `demo` replays a single recorded, masked historical day with no network calls. Paper trading — a forward
-simulated mode against a streaming feed — does not exist yet; see [Roadmap](roadmap.md).
+不等于。`demo` 回放一段已录制的掩码历史运行，全程无网络调用。模拟实盘——面向流式行情的前推模拟模式——尚不存在，见[路线图](roadmap.md)。

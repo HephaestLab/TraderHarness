@@ -1,56 +1,44 @@
-# LLM trading backtests without data leakage
+# 无数据泄漏的 LLM 交易回测
 
-TraderHarness treats historical contamination as an environment boundary, not a prompt convention.
+TraderHarness 把历史污染当作环境边界来处理，而不是提示词层面的口头约定。
 
-## Definitions
+## 基本概念
 
-**Point-in-time masking** means every value exposed to an agent is filtered by the simulated clock before it leaves
-the environment. Daily bars are strictly earlier than the current trading date, 5-minute bars stop at the active
-sub-window, and fundamental records cannot have a future publication date.
+**时点掩码（Point-in-time masking）**：任何暴露给 Agent 的数值，在离开环境之前都要先过模拟时钟的过滤。日线严格早于当前交易日，5 分钟线截断到当前子窗口，基本面记录的发布日期不得晚于当前日期。
 
-**Date anonymization** replaces an absolute agent-facing calendar date with a calendar-day offset from the simulated
-present. The current date is `D+0`; the previous calendar day is `D-1`. Wall-clock times remain visible.
+**日期匿名化**：把 Agent 看到的绝对日历日期替换为相对模拟当前的偏移量。今天是 `D+0`，前一个自然日是 `D-1`。一天内的时刻保持可见。
 
-**Entity masking** is a deterministic run-wide bijection from real A-share codes and known company aliases to neutral
-pseudo-identities. Codes are shuffled within compatible board groups so price-limit rules survive anonymization.
+**实体掩码**：真实 A 股代码与已知公司别名到中性假名之间的确定性、全运行范围双射。代码在兼容的板块分组内打散，使涨跌停规则在匿名化后依然成立。
 
-**The three-phase trading loop** is a bounded market day consisting of pre-market research with orders disabled, a
-progressively revealed 09:30–10:00 open window, and a progressively revealed 14:30–15:00 close window.
+**三阶段交易循环**：一个有边界的交易日——禁止下单的盘前研究、渐进揭示的 09:30–10:00 开盘窗口、渐进揭示的 14:30–15:00 尾盘窗口。
 
-## Egress coverage
+## 掩码覆盖范围 {#egress-coverage}
 
-The masks apply to:
+掩码作用于：
 
-- daily and intraday K-lines;
-- market screens, fundamentals, valuation, announcements, and policy news;
-- portfolio and watchlist views;
-- Python sandbox DataFrames returned by `traderharness_api`;
-- model responses, reasoning fields, tool arguments, and committee memos;
-- cross-day memory, persisted trajectories, replay cassettes, comparisons, and SFT exports.
+- 日线与盘中 K 线；
+- 选股筛查、基本面、估值、公告与政策新闻；
+- 账户与自选股视图；
+- Python 沙箱中 `traderharness_api` 返回的 DataFrame；
+- 模型回复、推理字段、工具参数与委员会备忘录；
+- 跨日记忆、落盘轨迹、回放盒带、对比结果与轨迹导出。
 
-Pseudo-codes sent back through tools are resolved internally before matching. The resulting portfolio is rendered
-through the same forward map, so the agent never needs a real code.
+Agent 通过工具回传的伪代码会在内部解析还原后再撮合；账户视图再经同一正向映射渲染，Agent 全程无需接触真实代码。
 
-![Date and entity mask transformation](assets/dual-mask.svg)
+![日期与实体双重掩码的变换过程](assets/dual-mask.svg)
 
-## Artifact audit
+*同一条历史公告，两种身份：左侧是仅限环境的原始记录（真实日期 + 真实公司），右侧是 Agent 可见的视图（相对日期 `D-9` + 伪身份 `公司-600731`）。*
+
+## 工件审计
 
 ```bash
 traderharness audit result.json replay.jsonl export.parquet
 ```
 
-The auditor checks known real entity aliases, six-digit A-share code leakage, absolute ISO/Chinese dates, and
-month-day forms. The v1.0 release acceptance run audited a serialized one-month DeepSeek trajectory and detected zero
-real entity aliases or absolute dates after the final egress fixes.
+审计器检查已知真实公司别名、六位 A 股代码泄漏、绝对 ISO/中文日期以及月-日形式。v1.0 发布验收中对一段序列化的一个月期 DeepSeek 轨迹做了审计，在最终出口修复之后未检出任何真实实体别名或绝对日期。
 
-That result has a narrow meaning: it verifies the known lexical and calendar egress contract. It does not prove that
-a model cannot infer a famous company from a unique financial pattern, product, executive, or event. For publishable
-evaluations, report the mask configuration and seed, retain the audit output, and compare blinded with unblinded runs
-when semantic re-identification is material.
+这个结论的含义是窄的：它验证的是已知的词法与日历出口契约。它无法证明模型不能从独特的财务模式、产品、高管或事件推断出某家知名公司。要发布可公开的评测结果，请报告掩码配置与种子、保留审计输出，并在语义重识别影响重大时对比遮罩与未遮罩运行。
 
-## Execution leakage
+## 执行层泄漏
 
-Information masking is insufficient if the matching engine lets the model inspect a full intraday window and then
-select an earlier favorable price. TraderHarness reveals each open/close sub-window before its eligible fill and
-routes every order through `TradingBus.place_order()`. The action sequence therefore cannot choose prices that were
-not visible at decision time.
+如果撮合引擎允许模型先看完整个盘中窗口、再回头选择更早的优惠价格，信息掩码就失去了意义。TraderHarness 先揭示每个开盘/尾盘子窗口、再给出该窗口的合格成交，并让每一笔订单都经过 `TradingBus.place_order()`。因此动作序列不可能选中决策时刻不可见的价格。

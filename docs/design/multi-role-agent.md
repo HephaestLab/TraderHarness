@@ -1,48 +1,43 @@
-# Multi-role Agent Adapter
+# 多角色 Agent 适配器
 
-## Goal
+## 目标
 
-Support TradingAgents-style committees without changing TraderHarness's market,
-portfolio, matching, masking, or replay semantics. A committee is one evaluated
-agent with one portfolio. Specialist roles advise; one executor alone may call
-`place_order`.
+在不改变 TraderHarness 的市场、账户、撮合、掩码与回放语义的前提下，支持 TradingAgents 风格的委员会。委员会是被评估的一个 Agent、一个账户。专家角色只提供建议；唯一执行者才能调用
+`place_order`。
 
-This is distinct from `traderharness compare`, where independent agents receive
-separate portfolios and are ranked against each other.
+这与 `traderharness compare` 不同：后者中独立 Agent 各自持有账户并相互排名。
 
-## Model
+## 模型
 
 ```text
-BacktestEngine (shared immutable market snapshot)
-  └─ CommitteeAgent (one Portfolio + one TradingBus)
-       ├─ fundamentals advisor ─┐
-       ├─ technical advisor ───┼─> phase memo
-       ├─ news advisor ────────┤
-       ├─ bull researcher ─────┤
-       ├─ bear researcher ─────┘
-       └─ trader/executor -> existing AgentLoop -> TradingBus.place_order()
+BacktestEngine（共享不可变市场快照）
+  └─ CommitteeAgent（一个 Portfolio + 一个 TradingBus）
+       ├─ 基本面顾问 ───────┐
+       ├─ 技术面顾问 ───────┼─> 阶段备忘录
+       ├─ 新闻顾问 ─────────┤
+       ├─ 多头研究员 ───────┤
+       ├─ 空头研究员 ───────┘
+       └─ trader/执行者 -> 现有 AgentLoop -> TradingBus.place_order()
 ```
 
-Independent committees remain parallelizable by the engine:
+多个独立委员会之间仍可由引擎并行：
 
 ```text
-Committee A + Portfolio A ─┐
-Committee B + Portfolio B ─┼─ asyncio.gather per trading day
-Single Agent + Portfolio C ─┘
+委员会 A + 账户 A ────┐
+委员会 B + 账户 B ────┼─ 每个交易日 asyncio.gather
+单 Agent + 账户 C ────┘
 ```
 
-## Invariants
+## 不变量
 
-1. Advisors only receive already-masked Agent-visible messages.
-2. Advisors have no order tool. Read-only tool access is a later extension.
-3. The executor uses the existing `ToolRegistry`; `TradingBus.place_order()` is
-   still the only matching path.
-4. Committee calls are deterministic for replay: role, phase, prompt, response,
-   model, and ordering are trajectory records.
-5. One run-scoped `EntityMasker` is shared by every advisor and executor.
-6. Advisor failures are explicit in the memo and trace; no silent fallback.
+1. 顾问只收到已经掩码的 Agent 可见消息。
+2. 顾问没有下单工具。只读工具访问是后续扩展。
+3. 执行者使用现有 `ToolRegistry`；`TradingBus.place_order()` 仍是唯一撮合路径。
+4. 委员会调用对回放是确定的：角色、阶段、提示词、响应、模型与顺序都是轨迹记录。
+5. 一个运行级的 `EntityMasker` 由所有顾问与执行者共享。
+6. 顾问失败在备忘录与轨迹中显式可见；不做静默兜底。
 
-## Extension surface
+## 扩展面
 
 ```python
 class Advisor(Protocol):
@@ -58,29 +53,24 @@ class CommitteeCoordinator:
     ) -> CommitteeMemo: ...
 ```
 
-`AgentLoop._run_phase()` requests one memo before the first executor call for
-each `(day, phase, sub_window)`. Advisors run concurrently with
-`asyncio.gather`; their output is inserted as a tagged system message. The
-executor can accept or reject every recommendation.
+`AgentLoop._run_phase()` 在每个 `(day, phase, sub_window)` 的首次执行者调用前请求一份备忘录。顾问通过
+`asyncio.gather` 并发执行；产出作为带标签的系统消息注入。执行者可以接受或否决每一条建议。
 
-## TradingAgents adapter
+## TradingAgents 适配器
 
-The adapter maps external graph nodes to `Advisor` implementations:
+适配器把外部图节点映射为 `Advisor` 实现：
 
-- Market/News/Fundamentals analysts -> specialist advisors
-- Bull/Bear researchers -> adversarial advisors
-- Research manager/Risk manager -> synthesis advisors
-- Trader -> TraderHarness executor
+- 市场/新闻/基本面分析师 -> 专家顾问
+- 多/空研究员 -> 对抗顾问
+- 研究经理/风险经理 -> 综合顾问
+- Trader -> TraderHarness 执行者
 
-External tools and portfolio objects are not imported. They are replaced by
-TraderHarness's masked observations and single portfolio/order path. This keeps
-external reasoning topology while preserving backtest fairness.
+外部工具与账户对象不会被引入，取而代之的是 TraderHarness 的掩码观测与单一账户/下单路径。这样既保留外部推理拓扑，又保证回测公平性。
 
-## Configuration
+## 配置
 
-The loader (`PromptAgent`) detects a committee from a top-level `advisors:` list — there is no nested `committee:`
-or `executor:` block. `id`, `name`, and the executor's own `model`/`persona` sit at the top level, exactly like a
-single-agent card:
+加载器（`PromptAgent`）通过顶层 `advisors:` 列表识别委员会——不存在嵌套的 `committee:`
+或 `executor:` 块。`id`、`name` 与执行者自己的 `model`/`persona` 都在顶层，与单 Agent 卡片完全一致：
 
 ```yaml
 id: tradingagents-reference
@@ -102,22 +92,20 @@ advisors:
     prompt: ...
 ```
 
-See [`examples/tradingagents_committee.yaml`](https://github.com/HephaestLab/TraderHarness/blob/main/examples/tradingagents_committee.yaml)
-for the full, loadable reference committee.
+完整可加载的参考委员会见
+[`examples/tradingagents_committee.yaml`](https://github.com/HephaestLab/TraderHarness/blob/main/examples/tradingagents_committee.yaml)。
 
-## Acceptance criteria
+## 验收标准
 
-- Unit test proves advisors never receive `place_order`.
-- Unit test proves all advisors are scheduled concurrently.
-- Integration test proves exactly one executor can place orders.
-- Replay reproduces the same memo and executor action sequence.
-- Real one-day, three-day, and one-month runs pass leakage audit.
-- `compare` can rank a committee against ordinary agents under identical data,
-  cash, masking seed, and benchmark.
+- 单元测试证明顾问永远不会拿到 `place_order`。
+- 单元测试证明所有顾问被并发调度。
+- 集成测试证明恰好只有一个执行者能下单。
+- 回放能复现同样的备忘录与执行者动作序列。
+- 真实一日、三日与一个月运行通过泄漏审计。
+- `compare` 能在相同数据、现金、掩码种子与基准下，把委员会与普通 Agent 一起排名。
 
-## Deferred
+## 暂缓项
 
-- Advisor-specific read-only tool budgets.
-- Arbitrary cyclic graphs and inter-agent message buses.
-- Shared portfolio controlled by multiple executors (intentionally excluded;
-  it would make order ownership and replay ambiguous).
+- 按顾问划分的只读工具预算。
+- 任意环形图与 Agent 间消息总线。
+- 多执行者共享账户（有意排除——它会让订单归属与回放变得含糊）。

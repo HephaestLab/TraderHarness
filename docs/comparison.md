@@ -1,27 +1,25 @@
-# TraderHarness compared with adjacent projects
+# 与相邻项目的对比
 
-TraderHarness is an environment and evidence harness. It can host different agent architectures, but it does not
-prescribe their investment methodology.
+TraderHarness 是一套环境与证据基础设施。它可以承载不同的 Agent 架构，但不规定它们的投资方法论。
 
-| Project | Primary responsibility | Native decision unit | What an integration still needs |
+| 项目 | 主要职责 | 原生决策单元 | 集成后还需要什么 |
 |---|---|---|---|
-| **TraderHarness** | Historically valid market, execution, portfolio, evaluation, replay, and training trajectories | Autonomous agent, isolated comparison, or one-executor committee | An agent persona or external framework |
-| **TradingAgents** | Multi-role analyst, debate, risk, and trader workflow | Prescribed role graph | A strict market simulator and order contract for benchmark use |
-| **StockBench** | Standardized stock-reasoning benchmark tasks | Benchmark task/prediction | A persistent portfolio environment for autonomous tool use |
-| **Qlib** | Quantitative data, model, experiment, and strategy research | ML model or coded strategy | An LLM-native tool loop and contamination-resistant language egress |
-| **Backtrader / vn.py** | Strategy execution and trading infrastructure | Coded strategy | The autonomous LLM research loop, masking, and trajectory contract |
+| **TraderHarness** | 历史有效的市场、执行、账户、评估、回放与训练轨迹 | 自主 Agent、隔离对比或单执行者委员会 | 一个 Agent 人设或外部框架 |
+| **TradingAgents** | 多角色分析师、辩论、风控与交易员工作流 | 规定的角色图 | 可用于基准测试的严格市场模拟器与下单契约 |
+| **StockBench** | 标准化的股票推理基准任务 | 基准任务/预测 | 支持自主工具调用的持久账户环境 |
+| **Qlib** | 量化数据、模型、实验与策略研究 | ML 模型或代码策略 | LLM 原生的工具循环与抗污染语言出口 |
+| **Backtrader / vn.py** | 策略执行与交易基础设施 | 代码策略 | 自主 LLM 研究循环、掩码与轨迹契约 |
 
-## Independent agents versus a committee
+## 独立 Agent 与委员会的区别
 
-`traderharness compare` is a race: every agent has its own cash, positions, memory, and portfolio. All agents see the
-same market clock and are scored independently.
+`traderharness compare` 是一场赛跑：每个 Agent 拥有自己的现金、持仓、记忆与账户。所有 Agent 共享同一市场时钟，各自独立计分。
 
-A committee is one contestant: read-only advisors may research concurrently, but one Trader is the only role that
-receives order tools. This produces one accountable action path and one portfolio. See
-[Multi-role committees](design/multi-role-agent.md).
+委员会则是一个选手：只读顾问可以并发研究，但只有 Trader 这一个角色持有下单工具。这保证了一条可问责的动作路径和一个账户。详见[多角色委员会](design/multi-role-agent.md)。
 
-## Bring your own framework
+![跨回测权益曲线叠加与关键指标对比](assets/run-compare.png)
 
-An external LangGraph, TradingAgents, or custom orchestrator should return its final decision through the public agent
-protocol. Market reads and orders still pass through `TradingBus`, so the framework inherits the same temporal mask,
-entity/date anonymization, progressive intraday visibility, and matching rules.
+*跨回测对比：把多次已完成回测的权益曲线叠加在一起，横向比较累计收益、夏普、最大回撤、胜率与成交次数。*
+
+## 接入你自己的框架
+
+外部 LangGraph、TradingAgents 或自定义编排器应通过公开的 Agent 协议返回最终决策。行情读取与下单仍然经过 `TradingBus`，因此框架天然继承同样的时点掩码、实体/日期匿名化、盘中渐进可见性与撮合规则。

@@ -1,49 +1,38 @@
-# Frequently asked questions
+# 常见问题
 
-## Why evaluate a new LLM on history it may have seen?
+## 为什么要在模型可能见过的历史上评测新 LLM？
 
-A knowledge cutoff is not an information barrier. TraderHarness removes the absolute date and company identity at
-every agent-facing boundary, reveals intraday bars progressively, and audits serialized artifacts for lexical
-leakage. Famous events can still be inferred semantically, so rigorous work should report mask settings and include a
-blinded/unblinded comparison where appropriate.
+知识截止日不是信息屏障。TraderHarness 在每一个面向 Agent 的边界移除绝对日期与公司身份，盘中分钟线渐进揭示，并对序列化工件做词法泄漏审计。著名事件仍可能被语义推断出来，因此严谨的工作应报告掩码设置，并在合适时加入遮罩/未遮罩对照。
 
-## Does entity masking change trading rules?
+## 实体掩码会改变交易规则吗？
 
-No. Real codes are shuffled within compatible A-share board groups. A ChiNext or STAR Market pseudo-code retains the
-historical board's price-limit behavior. Matching always uses the internally resolved real instrument.
+不会。真实代码在兼容的 A 股板块分组内打散。创业板或科创板的伪代码保留其历史板块的涨跌停行为。撮合始终使用内部解析还原后的真实标的。
 
-## Is the full dataset synthetic?
+## 完整数据集是合成的吗？
 
-No. Acceptance tests and published runs use historical full-market data. The no-key demo is a deterministic replay of
-a real masked run; it does not substitute generated prices.
+不是。验收测试与公开运行都使用历史全市场真实数据。免密演示是一段真实掩码运行的确定性回放，不用生成的价格顶替。
 
-## Is `compare` a shared multi-agent portfolio?
+## `compare` 是共享账户的多 Agent 吗？
 
-No. `compare` gives each agent an isolated portfolio. For a TradingAgents-style setup, use a committee: advisors are
-read-only and one Trader controls one portfolio.
+不是。`compare` 给每个 Agent 一个隔离账户。想要 TradingAgents 式的结构，请用委员会：顾问只读，唯一 Trader 管理一个账户。
 
-## Can replay silently call the model provider?
+## 回放会偷偷调用模型供应商吗？
 
-No. Requests are fingerprinted. A mismatch or exhausted cassette fails closed.
+不会。请求带指纹。指纹不匹配或盒带耗尽都会直接失败（fail-closed）。
 
-## Can the UI be exposed as a hosted service?
+## 控制台能暴露成托管服务吗？
 
-Not safely in its current form. Agent-authored Python is executable behind the local HTTP server. The sandbox guard
-protects backtest data boundaries, not a hostile multi-tenant deployment. Keep the server on localhost.
+以当前形态不安全。Agent 编写的 Python 在本地 HTTP 服务后可执行。沙箱防护保护的是回测数据边界，而不是敌意多租户部署。请保持 localhost 绑定。
 
-## Does a profitable backtest imply a deployable strategy?
+## 回测盈利等于可上线策略吗？
 
-No. TraderHarness does not model market impact and historical performance does not guarantee future returns. It is
-research infrastructure, not investment advice or a broker.
+不等于。TraderHarness 不建模市场冲击，历史表现不保证未来收益。它是研究基础设施，不是投资建议，也不是券商。
 
-## Which agents and model does the README showcase use?
+## README 展示用哪些 Agent 和模型？
 
-The four-agent showcase compares the bundled `trend-breakout`, `quality-compounder`, `event-hawk`, and
-`quant-researcher` cards over 2024-03-04 to 2024-03-29 with entity masking enabled, using `deepseek-v4-pro` in
-thinking mode as the executor. Performance figures are published only after that exact run completes and passes
-`traderharness audit`; the README does not publish estimated or placeholder numbers as if they were real.
+四 Agent 展示对比内置的 `trend-breakout`、`quality-compounder`、`event-hawk`、`quant-researcher` 四张卡片，区间为 2024-03-04 至 2024-03-29，开启实体掩码，执行模型为 thinking 模式的
+`deepseek-v4-pro`。绩效数字只在该次运行真实完成并通过 `traderharness audit` 后发布——README 不会把估算或占位数字当作真实结果发布。
 
-## Is `traderharness demo` the same as paper trading?
+## `traderharness demo` 等于模拟实盘吗？
 
-No. `demo` replays a single recorded, masked historical day with no network calls. Paper trading — a forward
-simulated mode against a streaming feed — does not exist yet; see [Roadmap](roadmap.md).
+不等于。`demo` 回放一段已录制的掩码历史运行，全程无网络调用。模拟实盘——面向流式行情的前推模拟模式——尚不存在，见[路线图](roadmap.md)。

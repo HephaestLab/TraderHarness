@@ -1,34 +1,52 @@
 # TraderHarness
 
-**TraderHarness is a contamination-resistant market environment for autonomous trading agents.**
+**抗数据污染的 LLM 交易 Agent 回测环境——也是建立在每一次运行之上的轨迹训练数据合成器。**
 
-It gives an LLM a historically valid A-share market, a controlled research toolkit, and an environment-owned portfolio. The agent may investigate, execute Python analysis, revise its thesis, and trade through one auditable order path.
+它为 LLM 提供一个历史有效的 A 股市场、一套受控的研究工具，以及由环境托管的账户。Agent 可以调查研究、执行 Python 分析、修正论点，并通过唯一可审计的下单路径完成交易。
 
-[Install and run :material-arrow-right:](quickstart.md){ .md-button .md-button--primary }
-[View on GitHub](https://github.com/HephaestLab/TraderHarness){ .md-button }
+[安装并运行 →](quickstart.md){ .md-button .md-button--primary }
+[在 GitHub 查看](https://github.com/HephaestLab/TraderHarness){ .md-button }
 
-## What makes it an evaluation harness
+![TraderHarness 流式历史回放控制台](assets/traderharness-demo.gif)
 
-- Strict point-in-time masks on bars, fundamentals, announcements, and news
-- Deterministic company and calendar anonymization
-- Progressive 5-minute visibility with minute-level order matching
-- Zero market-data I/O after the engine preload
-- Full-fidelity trajectories and fail-closed replay cassettes
-- Independent multi-agent comparison and single-executor committees
-- CSI 300 benchmark, risk metrics, and behavioral diagnostics
+*本地研究控制台实拍：回测逐日展开，像素办公室里的 Agent 实时研究、下单、复盘。*
 
-## Three phases, one order path
+## 为什么它是"评测框架"而不只是"回测器"
+
+通用大模型可能认得自己被测试的那段历史——日期、公司、行情都可能在训练语料里出现过，这种泄漏会悄悄让评测结论失效。TraderHarness 把抗污染做成环境边界，而不是提示词约定：
+
+- 日线、分钟线、基本面、公告、新闻全部经过严格时点掩码
+- 公司实体与日历日期的确定性匿名化（`D+0`、`公司-600731`）
+- 5 分钟级渐进可见，分钟级撮合，决策时不可见的价格不可成交
+- 引擎预加载后零行情 I/O，同一输入必然复现同一结果
+- 全保真轨迹记录与失败即报错（fail-closed）的指纹回放
+- 独立多 Agent 对比，以及单执行者多角色委员会
+- 沪深 300 基准、风险指标与行为诊断
+
+## 三阶段交易循环，唯一下单路径
 
 ```mermaid
 flowchart LR
-    P[Pre-market research<br/>orders disabled] --> O[Open window<br/>09:30–10:00]
-    O --> C[Close window<br/>14:30–15:00]
-    C --> N[Next trading day]
+    P[盘前研究<br/>禁止下单] --> O[开盘窗口<br/>09:30–10:00]
+    O --> C[尾盘窗口<br/>14:30–15:00]
+    C --> N[下一交易日]
     O --> B[TradingBus.place_order]
     C --> B
 ```
 
-Every agent-facing data outlet is masked. Every order is validated and matched by the same `TradingBus.place_order()` path. The environment—not the model—owns cash, positions, corporate actions, and equity accounting.
+每一个面向 Agent 的数据出口都经过掩码；每一笔订单都由同一条 `TradingBus.place_order()` 路径校验与撮合。现金、持仓、公司行动与净值核算由环境——而不是模型——掌握。
 
-!!! warning "Research infrastructure"
-    Historical simulation does not guarantee live performance and does not model market impact. TraderHarness is not investment advice or a brokerage service.
+## 研究控制台实拍
+
+| 实时运行 | 逐笔复盘 |
+|---|---|
+| ![像素办公室实时运行](assets/office-live.png) | ![逐笔成交复盘](assets/trade-review.png) |
+| 像素办公室 + 决策事件流 + 实时净值 | K 线上下文 + 下单理由 + 执行证据 |
+
+| 回测研究档案 | 跨回测对比 |
+|---|---|
+| ![回测结果工作台](assets/results-workbench.png) | ![跨回测权益曲线对比](assets/run-compare.png) |
+| 绩效、行为、基准与逐笔证据归一档 | 多次回测权益曲线叠加与关键指标横评 |
+
+!!! warning "研究基础设施"
+    历史模拟不保证实盘表现，也不建模市场冲击。TraderHarness 不是投资建议，也不是券商服务。

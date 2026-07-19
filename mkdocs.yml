@@ -1,5 +1,5 @@
 site_name: TraderHarness
-site_description: Contamination-resistant market environment for autonomous trading agents
+site_description: 抗数据污染的 LLM 交易 Agent 回测环境与轨迹数据合成器
 site_url: https://hephaestlab.github.io/TraderHarness/
 repo_url: https://github.com/HephaestLab/TraderHarness
 repo_name: HephaestLab/TraderHarness
@@ -8,7 +8,7 @@ copyright: Apache-2.0 © HephaestLab
 
 theme:
   name: material
-  language: en
+  language: zh
   logo: assets/logo.svg
   favicon: assets/logo.svg
   features:
@@ -47,16 +47,16 @@ markdown_extensions:
       permalink: true
 
 nav:
-  - Overview: index.md
-  - Quickstart: quickstart.md
-  - Preventing data leakage: contamination.md
-  - Core architecture: architecture.md
-  - Project comparison: comparison.md
-  - Multi-role committees: design/multi-role-agent.md
-  - Training data: training-data.md
-  - Data and licensing: data.md
-  - CLI and local API: api.md
-  - Extending TraderHarness: extensions.md
-  - Roadmap: roadmap.md
-  - FAQ: faq.md
-  - Release distribution: release-playbook.md
+  - 概览: index.md
+  - 快速上手: quickstart.md
+  - 防数据泄漏: contamination.md
+  - 核心架构: architecture.md
+  - 项目对比: comparison.md
+  - 多角色委员会: design/multi-role-agent.md
+  - 训练数据与轨迹导出: training-data.md
+  - 数据与许可: data.md
+  - CLI 与本地 API: api.md
+  - 扩展开发: extensions.md
+  - 路线图: roadmap.md
+  - 常见问题: faq.md
+  - 发布分发手册: release-playbook.md

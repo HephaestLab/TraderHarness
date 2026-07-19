@@ -1,38 +1,40 @@
-# Core architecture
+# 核心架构
+
+![TraderHarness 数据、引擎、Agent、轨迹与评估架构](assets/architecture.svg)
 
 ```mermaid
 flowchart TD
-    D[(Canonical full-market data)] -->|startup preload| E[BacktestEngine]
-    E --> B[TradingBus per agent]
-    B --> T[Masked tools]
+    D[(规范全市场数据)] -->|启动时预加载| E[BacktestEngine]
+    E --> B[TradingBus（每 Agent）]
+    B --> T[掩码工具]
     B --> V[PortfolioView]
-    B --> X[Python sandbox]
-    T --> A[Agent loop]
+    B --> X[Python 沙箱]
+    T --> A[Agent 循环]
     V --> A
     X --> A
     A -->|place_order| B
-    E --> C[Trajectory collector]
-    C --> R[Replay / SFT / reports]
+    E --> C[轨迹采集器]
+    C --> R[回放 / 轨迹导出 / 报告]
 ```
 
-## Non-negotiable invariants
+## 不可妥协的不变量
 
-### Zero I/O during a run
+### 运行期零 I/O
 
-The engine preloads the full required market slice before the first trading day. Agent tool calls perform in-memory lookups and never fetch provider data or read the canonical dataset.
+引擎在第一个交易日之前预加载所需的全部行情切片。Agent 的工具调用只做内存查询，绝不回源拉取供应商数据，也不直接读取规范数据集。
 
-### Strict historical visibility
+### 严格的历史可见性
 
-Daily bars use `date < current_date`. Fundamentals use `pub_date <= current_date`. Five-minute bars are truncated to the active phase and sub-window. Agent-facing absolute dates become relative offsets.
+日线使用 `date < current_date`；基本面使用 `pub_date <= current_date`；5 分钟线截断到当前阶段与子窗口；面向 Agent 的绝对日期一律变为相对偏移。
 
-### Single order path
+### 唯一下单路径
 
-`TradingBus.place_order()` applies lot size, suspension, cash, position, price-limit, fee, and visible-price checks. There is no second fast path for agents, committees, or the sandbox.
+`TradingBus.place_order()` 统一施加整手、停牌、现金、持仓、涨跌停、费用与可见价格校验。不存在供 Agent、委员会或沙箱绕行的第二条快速通道。
 
-### Environment-owned accounting
+### 环境托管账户
 
-The environment owns the portfolio. Agents receive a read-only view and can only mutate state through validated orders. Dividends, stock distributions, and end-of-day equity are deterministic engine operations.
+账户由环境所有。Agent 只获得只读视图，只能通过校验过的订单改变状态。分红、送转与每日净值是确定性的引擎操作。
 
-## Replay contract
+## 回放契约
 
-Each recorded LLM request has a canonical SHA-256 fingerprint. Replay rejects changed requests and exhausted cassettes. It never falls back to a network model, which makes regression failures explicit rather than silently non-deterministic.
+每条记录的 LLM 请求都有规范的 SHA-256 指纹。回放会拒绝被改动的请求与耗尽的盒带，也绝不回退到联网模型——这让回归失败显式暴露，而不是悄无声息地变得不确定。

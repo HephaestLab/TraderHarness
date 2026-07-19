@@ -1,13 +1,14 @@
-# Full-fidelity trajectory and SFT export
+# 全保真轨迹与轨迹导出
 
-TraderHarness can persist the exact masked request/response pair for every
-executor LLM call. This is intended for reproducible research and downstream
-supervised fine-tuning (SFT), not as a claim that every generated decision is a
-high-quality training target.
+TraderHarness 可以持久化每一次执行者 LLM 调用的完整掩码请求/响应对。它的用途是可复现研究与下游监督微调（SFT），并不代表每一条生成的决策都是高质量训练目标。
 
-## Capture a trajectory
+![逐笔复盘：K 线上下文、下单理由与执行证据](assets/trade-review.png)
 
-Run backtests with entity masking enabled:
+*每一次决策都可回放审计：成交时 K 线、已记录的下单理由、工具调用参数与执行结果完整留档。*
+
+## 采集轨迹
+
+开启实体掩码运行回测：
 
 ```bash
 traderharness run \
@@ -17,18 +18,17 @@ traderharness run \
   --mask-entities
 ```
 
-Each `llm_exchange` trajectory step contains:
+每个 `llm_exchange` 轨迹步骤包含：
 
-- the complete message list sent to the executor;
-- the complete tool schema available for that call;
-- assistant content and optional reasoning content;
-- complete tool calls and arguments;
-- phase and sub-window metadata.
+- 发给执行者的完整消息列表；
+- 该次调用可用的完整工具 schema；
+- assistant 内容与可选的推理内容；
+- 完整的工具调用与参数；
+- 阶段与子窗口元数据。
 
-The compatibility `assistant` and `tool_call` steps are also retained. Assistant
-text is no longer truncated in newly generated results.
+兼容性的 `assistant` 与 `tool_call` 步骤也会保留。新生成的结果中 assistant 文本不再截断。
 
-## Export OpenAI-style JSONL
+## 导出 OpenAI 风格 JSONL
 
 ```bash
 traderharness export sft \
@@ -36,7 +36,7 @@ traderharness export sft \
   --output ./training.jsonl
 ```
 
-One line is emitted per LLM call:
+每次 LLM 调用输出一行：
 
 ```json
 {
@@ -56,24 +56,19 @@ One line is emitted per LLM call:
 }
 ```
 
-Absolute trading dates are not copied into export metadata. Agent-visible dates
-remain relative (`D+0`, `D-1`, and so on).
+绝对交易日期不会进入导出元数据；Agent 可见日期保持相对形式（`D+0`、`D-1` 等）。
 
-## Safety gates
+## 安全闸口
 
-By default, export:
+默认情况下，导出会：
 
-1. rejects runs that were not created with entity masking;
-2. rejects legacy trajectories without full-fidelity `llm_exchange` records;
-3. runs the entity/date leakage detector over the output;
-4. exits non-zero if any finding remains.
+1. 拒绝未开启实体掩码的运行；
+2. 拒绝缺少全保真 `llm_exchange` 记录的旧轨迹；
+3. 对输出运行实体/日期泄漏检测；
+4. 只要仍有检出就以非零码退出。
 
-`--allow-unmasked` is an explicit escape hatch for private research. Such
-output must not be published as contamination-resistant training data.
+`--allow-unmasked` 是面向私有研究的显式逃生门，这类输出不得作为抗污染训练数据发布。
 
-## Curation remains necessary
+## 筛选仍然必要
 
-Full fidelity preserves mistakes as well as good decisions. Before training,
-filter trajectories using outcome, drawdown, rule compliance, tool errors, and
-human review. Also verify that the selected model provider's terms permit use
-of generated reasoning and responses for training.
+全保真意味着错误决策与好决策都会被保留。训练前请按结果、回撤、规则合规、工具错误与人工复核过滤轨迹，并确认所选模型供应商的条款允许将生成的推理与回复用于训练。
