@@ -11,8 +11,8 @@ This file is generated from the public README and documentation pages.
 # TraderHarness
 
 <p align="center">
-  <strong>An execution and evidence environment for autonomous LLM trading agents — not another strategy library.</strong><br>
-  Real A-share data · strict point-in-time masking · reproducible trajectories
+  <strong>A contamination-resistant backtesting environment for LLM trading agents — and a training-data synthesizer built on every run.</strong><br>
+  Real A-share data · strict point-in-time masking · fingerprinted replay → SFT export
 </p>
 
 <p align="center">
@@ -21,8 +21,18 @@ This file is generated from the public README and documentation pages.
   <a href="https://github.com/HephaestLab/TraderHarness/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>
   <a href="https://pypi.org/project/traderharness/"><img alt="Python" src="https://img.shields.io/pypi/pyversions/traderharness"></a>
   <a href="CHANGELOG.md"><img alt="Status" src="https://img.shields.io/badge/status-research%20beta-orange"></a>
-  · <a href="README_zh.md">中文</a>
+  · <a href="README_zh.md">中文</a> · <a href="https://hephaestlab.github.io/TraderHarness/">Docs</a>
 </p>
+
+LLM agents are moving into real trading. Research, decision-making, and order placement are increasingly done
+end-to-end by a model, not by a hand-coded strategy.
+
+But "backtest the agent" still has no standardized rig. A general-purpose model may recognize the dates, the
+companies, or the very history it is being tested on — leakage that quietly invalidates the evaluation. Fill
+conventions are ad hoc, runs cannot be reproduced, and the conclusions are hard to trust.
+
+TraderHarness is that rig: a contamination-resistant execution environment for LLM trading agents — and, because
+every model call is recorded at full fidelity, a data synthesizer that turns those runs into SFT training data.
 
 <p align="center">
   <img src="docs/assets/traderharness-demo.gif" alt="TraderHarness streaming historical replay console" width="920">
@@ -30,9 +40,77 @@ This file is generated from the public README and documentation pages.
 
 <p align="center"><sub>Captured from the local research console (<code>webui/scripts/capture-demo.mjs</code>). Regenerate with <code>npm run capture:demo</code> after any UI change; this GIF will be refreshed alongside the v1.0 acceptance run.</sub></p>
 
-TraderHarness is an execution environment and evaluation harness for LLM trading agents. The model receives a historically valid market, research tools, and a portfolio. It can investigate, write analysis code, revise its thesis, and place orders through one controlled path — nothing about the environment is a live market or a broker.
+## A standardized harness for LLM trading agents
 
-The first production dataset targets China A-shares: five years of full-market daily and 5-minute bars, announcements, policy news, fundamentals, valuation, dividends, and the CSI 300 benchmark.
+TraderHarness hands the model a historically valid market, research tools, and a portfolio. It can investigate,
+write analysis code, revise its thesis, and place orders through one controlled path — nothing about the
+environment is a live market or a broker. The first production dataset covers China A-shares: five years of
+full-market daily and 5-minute bars, announcements, policy news, fundamentals, valuation, dividends, and the
+CSI 300 benchmark.
+
+- **Contamination-resistant by construction.** Strict point-in-time masking at every data boundary, plus
+  deterministic calendar and company anonymization, so the agent cannot recognize the period or the stocks it
+  is being tested on.
+- **Fair execution.** Progressive 5-minute visibility with minute-level matching; every fill goes through one
+  path, `TradingBus.place_order()`, at unadjusted historical prices.
+- **Deterministic.** Zero data I/O after preload — the same visible data and action sequence always produce the
+  same environment result.
+
+## An LLM trading data synthesizer
+
+Every run doubles as a data-generation pass, with a three-step chain:
+
+1. **Full-fidelity trajectory.** Each LLM call is persisted with the complete message list, the full tool
+   schema, assistant content and reasoning, every tool call and its arguments, and phase/sub-window metadata.
+2. **Fingerprinted replay.** The cassette replays deterministically with no API key, and `traderharness audit`
+   scans serialized artifacts for leaked entities or dates before anything is shared.
+3. **SFT export.** `traderharness export sft` emits OpenAI-style JSONL, gated by masking and leakage checks.
+
+```bash
+traderharness audit result.json replay.jsonl
+traderharness export sft result.json --output training.jsonl
+```
+
+The research console renders the same evidence as a per-trade dossier: the executing 5-minute K-line, the
+agent's stated reasoning, and the exact tool call that produced the fill.
+
+<p align="center">
+  <img src="docs/assets/results-workbench.png" alt="TraderHarness result research workbench with benchmark, drawdown, K-lines, trades, and decision evidence" width="920">
+</p>
+
+The full contract is in [Training data](docs/training-data.md); curated exports will be published as the
+[traderharness-a-share dataset](https://huggingface.co/datasets/HephaestLab/traderharness-a-share) on Hugging
+Face (rolling out in Phase 2).
+
+## The research console
+
+The bundled local console (FastAPI + React) turns a run into something you can watch: a pixel-art operations
+floor streams the replay live, while performance, per-trade dossiers, and cross-run comparisons update in the
+same window. It is a local research tool — keep it bound to localhost and never expose it to the public
+internet.
+
+<p align="center">
+  <img src="docs/assets/live-control-room.png" alt="TraderHarness live control room streaming a historical replay" width="920">
+</p>
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/assets/office-live.png" alt="Pixel-office operations floor, close-up"></td>
+    <td width="50%"><img src="docs/assets/live-performance.png" alt="Live performance panel during a run"></td>
+  </tr>
+  <tr>
+    <td><sub><strong>Pixel office.</strong> Each agent is a desk on the floor; the replay clock, phases, and tool activity stream in real time.</sub></td>
+    <td><sub><strong>Live performance.</strong> Equity curve, benchmark, drawdown, and positions update as the day unfolds.</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/assets/trade-review.png" alt="Per-trade review with execution K-line and agent reasoning"></td>
+    <td width="50%"><img src="docs/assets/run-compare.png" alt="Cross-run comparison view"></td>
+  </tr>
+  <tr>
+    <td><sub><strong>Trade review.</strong> Every fill links back to the 5-minute K-line, the agent's reasoning, and the tool call behind it.</sub></td>
+    <td><sub><strong>Run compare.</strong> Rank agents or checkpoints across runs on identical masked data.</sub></td>
+  </tr>
+</table>
 
 ## Why TraderHarness
 
@@ -84,34 +162,17 @@ traderharness compare \
 `--record-replay` captures a fingerprinted cassette so the exact run can be replayed deterministically without an
 API key, then audited and shared. See [Quick start](#quick-start) and [Training data](docs/training-data.md).
 
-**Result table (skeleton).** These figures are intentionally left blank rather than estimated. They will be filled
-in once this exact run completes and passes `traderharness audit`, per the release process in
-[`docs/release-playbook.md`](docs/release-playbook.md):
+**Acceptance result** (2024-03-04 → 2024-03-29, entity mask seed `42`, `deepseek-v4-pro` thinking high).
+Ranked by Sharpe after `traderharness audit` passed with zero findings; replay the recorded bundle with
+`--replay showcase_mar2024` to reproduce without an API key:
 
 | Agent | Total return | Annualized return | Sharpe | Max drawdown | Win rate | Trades |
 |---|---:|---:|---:|---:|---:|---:|
-| `trend-breakout` | _pending acceptance run_ | — | — | — | — | — |
-| `quality-compounder` | _pending acceptance run_ | — | — | — | — | — |
-| `event-hawk` | _pending acceptance run_ | — | — | — | — | — |
-| `quant-researcher` | _pending acceptance run_ | — | — | — | — | — |
-| CSI 300 (benchmark) | _pending acceptance run_ | — | — | — | — | — |
-
-## Evidence chain
-
-Every claim above is meant to be checked, not taken on faith. Each completed run keeps, per LLM call: the full
-message list, the full tool schema, assistant content and reasoning, every tool call and its arguments, and phase
-and sub-window metadata — see [Training data](docs/training-data.md). The research console renders the same
-evidence as a per-trade dossier: the executing 5-minute K-line, the agent's stated reasoning, and the exact tool
-call that produced the fill.
-
-<p align="center">
-  <img src="docs/assets/results-workbench.png" alt="TraderHarness result research workbench with benchmark, drawdown, K-lines, trades, and decision evidence" width="920">
-</p>
-
-```bash
-traderharness audit result.json replay.jsonl
-traderharness export sft result.json --output training.jsonl
-```
+| `quality-compounder` | +0.52% | +7.92% | 1.09 | 0.76% | 33% | 9 |
+| `trend-breakout` | +0.09% | +1.32% | −0.20 | 1.07% | 38% | 16 |
+| `event-hawk` | −0.70% | −9.74% | −3.22 | 0.93% | 0% | 5 |
+| `quant-researcher` | −1.33% | −17.75% | −4.19 | 1.73% | 40% | 19 |
+| CSI 300 (benchmark) | −0.10% | — | — | — | — | — |
 
 ## Dual masking
 
@@ -127,13 +188,13 @@ Evaluation leakage is a systems problem, not a prompt instruction.
   <img src="docs/assets/dual-mask.svg" alt="Original historical announcement transformed by date and entity masks" width="920">
 </p>
 
-The v1.0 acceptance gate requires a complete one-month DeepSeek trajectory to pass `traderharness audit` with zero
-detected real entity aliases or absolute calendar dates after serialization. That is an automated egress audit, not a
-claim that semantic re-identification is impossible — see [Preventing data leakage](docs/contamination.md).
+The v1.0 acceptance run scanned the complete one-month DeepSeek trajectory after serialization and reported zero
+detected real entity aliases or absolute calendar dates. That is an automated egress audit, not a claim that semantic
+re-identification is impossible — see [Preventing data leakage](docs/contamination.md).
 
 ## Quick start
 
-Python 3.10–3.12 is supported.
+Python 3.10–3.12 is supported. Sixty seconds, no API key:
 
 ```bash
 pip install "traderharness[llm,data,ui]"
@@ -203,6 +264,10 @@ traderharness compare \
   --mask-entities \
   --output comparison
 ```
+
+<p align="center">
+  <img src="docs/assets/compare-workbench.png" alt="TraderHarness comparison workbench ranking isolated agent portfolios" width="920">
+</p>
 
 ### TradingAgents-style committee
 
@@ -335,9 +400,16 @@ A short version — see [`docs/roadmap.md`](docs/roadmap.md) for the full pictur
 - Provider terms may restrict redistribution of some source fields.
 - TraderHarness is research infrastructure, not investment advice or a brokerage system.
 
+## Star History
+
+<a href="https://star-history.com/#HephaestLab/TraderHarness&Date">
+  <img src="https://api.star-history.com/svg?repos=HephaestLab/TraderHarness&type=Date" alt="Star History Chart" width="600">
+</a>
+
 ## Citation
 
-If TraderHarness supports your research, please cite it:
+If TraderHarness supports your research, please cite it. A machine-readable record is in
+[`CITATION.cff`](CITATION.cff) — GitHub's "Cite this repository" button reads it directly:
 
 ```bibtex
 @software{traderharness2026,
@@ -349,9 +421,9 @@ If TraderHarness supports your research, please cite it:
 }
 ```
 
-See [`CITATION.cff`](CITATION.cff) for the machine-readable record.
+## License
 
-Apache-2.0 © HephaestLab.
+Apache-2.0 © HephaestLab. See [`LICENSE`](LICENSE).
 
 ---
 
