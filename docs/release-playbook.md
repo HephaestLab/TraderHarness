@@ -141,3 +141,49 @@ market-simulation, fastapi, react, python
 - `awesome-systematic-trading` → 同上（链接到 [核心架构](architecture.md)）
 - `awesome-financial-ai` →
   `| [TraderHarness](https://github.com/HephaestLab/TraderHarness) | Evaluate LLM trading agents on masked five-year A-share data; exports full-fidelity SFT trajectories. |`
+
+## HelloGitHub 投稿草稿（暂缓投递，先攒背书）
+
+投递方式：在 [HelloGitHub 仓库](https://github.com/521xueweihan/HelloGitHub) 开 issue，选"项目推荐"模板。
+**投递时机**：建议等 2-3 个 awesome-list PR 合并、star 数破百后再投，过稿率更高。
+
+**项目标题**
+
+> TraderHarness：给 LLM 交易 Agent 一个无法偷看答案的 A 股回测考场
+
+**项目地址**
+
+> https://github.com/HephaestLab/TraderHarness
+
+**类别**
+
+> Python / 人工智能 / 量化金融
+
+**项目描述**
+
+> LLM 正在走进真实交易，但"回测 LLM 交易 Agent"一直没有规范化的考场：模型可能认得考题（日期、公司、行情），记忆污染会让评测结论悄悄失效。TraderHarness 是一套抗污染的 A 股回测环境——五年全市场真实数据、每个数据出口严格时点掩码、日期与公司确定性匿名化、分钟级渐进撮合、全保真轨迹可指纹回放可审计；同时它也是一个 LLM 交易专项数据合成器，每次运行自动产出可导出的 SFT 轨迹数据。
+
+**亮点**
+
+- 抗污染是环境不变量而非提示词约定：时点掩码 + 日期相对化（D+0/D-1）+ 公司伪身份（600519 → 公司-600731）
+- 五年 A 股全市场真实数据：2.8 亿条 5 分钟 K 线、公告、新闻、基本面、估值、分红、沪深 300
+- 公平撮合：分钟线随窗口渐进揭示，决策时不可见的价格不可成交，所有订单只走一条 TradingBus 路径
+- 多 Agent 赛马 + 单执行者委员会，本地像素办公室研究台可实时观战、逐笔复盘
+- 免密回放演示开箱即跑；轨迹一键导出 OpenAI 风格 SFT JSONL，配套 Hugging Face 数据集
+
+**截图**
+
+> 使用仓库 `docs/assets/` 下的 GIF 与截图（首页 GIF + 2×2 实拍矩阵）：
+>
+> - https://github.com/HephaestLab/TraderHarness/blob/main/docs/assets/traderharness-demo.gif
+> - https://github.com/HephaestLab/TraderHarness/blob/main/docs/assets/office-live.png
+> - https://github.com/HephaestLab/TraderHarness/blob/main/docs/assets/trade-review.png
+
+**示例代码**
+
+> ```bash
+> pip install "traderharness[llm,data,ui]"
+> traderharness data download --full
+> traderharness demo        # 免密回放，开箱即看
+> traderharness ui          # 打开本地研究台 http://127.0.0.1:8000
+> ```
