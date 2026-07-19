@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Self
 
 from traderharness.paths import agents_dir
 from traderharness.tools.catalog import normalize_allowed_tools
@@ -46,7 +45,7 @@ class AgentCard:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> Self:
+    def from_dict(cls, data: dict) -> AgentCard:
         return cls(
             id=data["id"],
             name=data["name"],
