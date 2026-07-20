@@ -16,7 +16,7 @@ description: TraderHarness 发布分发手册：GitHub 元数据、Show HN、Red
 
 **描述**
 
-> Contamination-resistant A-share backtesting, evaluation, replay, and trajectory (SFT) export for autonomous LLM trading agents.
+> Contamination-resistant A-share backtesting, evaluation, replay, and trajectory export for autonomous LLM trading agents.
 
 **Topics**
 

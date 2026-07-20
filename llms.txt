@@ -1,6 +1,6 @@
 # TraderHarness
 
-> TraderHarness is a contamination-resistant historical market environment for autonomous LLM trading agents — and a training-data synthesizer built on every run. It targets China A-shares and provides strict point-in-time data masking, deterministic entity/date anonymization, progressive 5-minute execution, full-fidelity trajectories, fingerprinted replay, trajectory (SFT) export, independent agent comparison, and single-executor multi-role committees.
+> TraderHarness is a contamination-resistant historical market environment for autonomous LLM trading agents — and a training-data synthesizer built on every run. It targets China A-shares and provides strict point-in-time data masking, deterministic entity/date anonymization, progressive 5-minute execution, full-fidelity trajectories, fingerprinted replay, trajectory export, independent agent comparison, and single-executor multi-role committees.
 
 Canonical repository: https://github.com/HephaestLab/TraderHarness
 Documentation: https://hephaestlab.github.io/TraderHarness/
