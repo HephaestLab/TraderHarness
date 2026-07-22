@@ -44,6 +44,13 @@ const RISKS: Record<string, string> = {
   aggressive: "进取",
 };
 
+const LLM_SOURCES: Record<string, string> = {
+  env: "环境变量",
+  settings: "页面设置",
+  default: "内置默认",
+  none: "未配置",
+};
+
 const TOOLS: Record<string, string> = {
   get_kline: "查询 K 线",
   get_stock_price: "查询最新可见价格",
@@ -157,6 +164,12 @@ export function sideLabel(value?: string | null) {
 export function riskLabel(value?: string | null) {
   if (!value) return "未知";
   return RISKS[value] ?? value;
+}
+
+/** Maps an LLM credential/base_url source to a Chinese label. */
+export function llmSourceLabel(value?: string | null) {
+  if (!value) return "未知";
+  return LLM_SOURCES[value] ?? value;
 }
 
 export function toolLabel(value?: string | null) {

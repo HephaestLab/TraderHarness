@@ -1,5 +1,7 @@
 import type {
   AgentCard,
+  LLMConfig,
+  LLMTestResult,
   ResultAnalysis,
   ResultDocument,
   ResultSummary,
@@ -64,6 +66,17 @@ export const api = {
   run: (id: string) => request<RunState>(`/api/runs/${encodeURIComponent(id)}`),
   cancelRun: (id: string) =>
     request<RunState>(`/api/runs/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  getLLMConfig: () => request<LLMConfig>("/api/config/llm"),
+  saveLLMConfig: (payload: { api_key?: string; base_url?: string; clear?: boolean }) =>
+    request<LLMConfig>("/api/config/llm", {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
+  testLLMConfig: (payload: { api_key?: string; base_url?: string; model?: string }) =>
+    request<LLMTestResult>("/api/config/llm/test", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
 };
 
 export function eventSocketUrl(runId: string): string {

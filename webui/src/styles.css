@@ -817,7 +817,7 @@ input[type="range"] { accent-color: var(--green); padding: 4px 0; }
 @media (max-width: 760px) {
   .sidebar { inset: auto 0 0; height: 64px; padding: 6px; width: auto; }
   .brand, .sidebar-footer { display: none; }
-  .nav { display: grid; grid-template-columns: repeat(5, 1fr); }
+  .nav { display: grid; grid-template-columns: repeat(6, 1fr); }
   .nav a { flex-direction: column; font-size: var(--text-xs); gap: 3px; justify-content: center; padding: 6px 2px; }
   .main-column { margin-left: 0; padding-bottom: 64px; }
   .topbar { height: 48px; padding: 0 16px; }
@@ -857,4 +857,21 @@ input[type="range"] { accent-color: var(--green); padding: 4px 0; }
   .strategy-template-rail button { flex: 0 0 200px; }
   .identity-fields, .range-grid, .tool-groups { grid-template-columns: 1fr; }
   .agent-editor-footer > span { display: none; }
+}
+
+/* Settings page — LLM API configuration */
+.settings-grid { align-items: start; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); }
+.settings-status { display: grid; gap: 12px; margin: 0 0 18px; }
+.settings-status > div { align-items: baseline; display: grid; grid-template-columns: 90px 1fr; }
+.settings-status dt { color: var(--muted); font: var(--text-xs) var(--font-mono); letter-spacing: .08em; text-transform: uppercase; }
+.settings-status dd { align-items: center; display: flex; gap: 8px; margin: 0; overflow-wrap: anywhere; }
+.settings-status dd.mono { font-family: var(--font-mono); font-size: var(--text-sm); }
+.settings-notes { border-top: 1px solid var(--line); color: var(--muted); display: grid; font-size: var(--text-xs); gap: 8px; line-height: 1.7; list-style: none; margin: 0; padding: 16px 0 0; }
+.settings-notes li::before { color: var(--green); content: "·"; font-weight: 700; margin-right: 6px; }
+.settings-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.notice-ok { background: #12241c; border: 1px solid #2c5c46; border-radius: var(--radius-sm); color: #7fe3b2; font-size: var(--text-base); padding: 12px 14px; }
+.settings-test-result { margin-top: 16px; }
+
+@media (max-width: 1100px) {
+  .settings-grid { grid-template-columns: 1fr; }
 }

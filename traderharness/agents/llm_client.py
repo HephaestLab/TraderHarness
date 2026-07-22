@@ -78,6 +78,7 @@ class LLMClient:
         messages: list[dict],
         tools: list[dict] | None = None,
         temperature: float | None = None,
+        max_tokens: int | None = None,
     ) -> dict:
         """Send chat completion request. Returns the response message dict.
 
@@ -93,7 +94,7 @@ class LLMClient:
             if cached is not None:
                 return cached
 
-        response = await self._call_with_retry(messages, tools, temperature)
+        response = await self._call_with_retry(messages, tools, temperature, max_tokens)
 
         if self.cache_enabled and not tools:
             self._cache_put(messages, tools, response)
@@ -114,7 +115,11 @@ class LLMClient:
         self._replay_step += 1
 
     async def _call_with_retry(
-        self, messages: list[dict], tools: list[dict] | None, temperature: float | None
+        self,
+        messages: list[dict],
+        tools: list[dict] | None,
+        temperature: float | None,
+        max_tokens: int | None = None,
     ) -> dict:
         self._ensure_client()
 
@@ -124,6 +129,8 @@ class LLMClient:
                     "model": self.model,
                     "messages": messages,
                 }
+                if max_tokens is not None:
+                    kwargs["max_tokens"] = max_tokens
                 if self._thinking:
                     # DeepSeek-style thinking mode: enabled via extra_body,
                     # reasoning_effort forwarded as a top-level param.

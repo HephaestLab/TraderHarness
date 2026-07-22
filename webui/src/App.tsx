@@ -6,6 +6,7 @@ import { Compare } from "./pages/Compare";
 import { Dashboard } from "./pages/Dashboard";
 import { LiveRun } from "./pages/LiveRun";
 import { Results } from "./pages/Results";
+import { Settings } from "./pages/Settings";
 
 export default function App() {
   return (
@@ -18,6 +19,7 @@ export default function App() {
             <Route path="results" element={<Results />} />
             <Route path="compare" element={<Compare />} />
             <Route path="agents" element={<Agents />} />
+            <Route path="settings" element={<Settings />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
         </Routes>

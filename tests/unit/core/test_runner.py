@@ -130,3 +130,75 @@ class TestBundleMultiAgentReplay:
 
         with pytest.raises(FileNotFoundError):
             runner._build_agents()
+
+
+class TestLLMCredentialWiring:
+    """Server-side runs must resolve credentials via llm_settings
+    (env > settings.json > default) instead of relying on env only."""
+
+    @pytest.fixture(autouse=True)
+    def _isolated(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("TRADERHARNESS_HOME", str(tmp_path))
+        for var in ("DEEPSEEK_API_KEY", "DEEPSEEK_BASE_URL"):
+            monkeypatch.delenv(var, raising=False)
+
+    def _capture_clients(self, monkeypatch) -> list[dict]:
+        captured: list[dict] = []
+
+        class FakeLLMClient:
+            def __init__(self, **kwargs):
+                captured.append(kwargs)
+
+        class FakeToolAgent:
+            def __init__(self, **kwargs):
+                self.agent_id = kwargs["agent_id"]
+
+        monkeypatch.setattr("traderharness.agents.llm_client.LLMClient", FakeLLMClient)
+        monkeypatch.setattr("traderharness.agents.tool_agent.ToolAgent", FakeToolAgent)
+        return captured
+
+    def test_non_replay_agents_receive_settings_credentials(self, monkeypatch):
+        from traderharness.config.llm_settings import save_llm_settings
+
+        save_llm_settings(api_key="sk-fromsettings", base_url="https://proxy.example.com/v1")
+        captured = self._capture_clients(monkeypatch)
+        config = RunConfig(
+            start_date=date(2024, 3, 4),
+            end_date=date(2024, 3, 4),
+            agents=[{"id": "agent-a", "model": "deepseek-chat"}],
+        )
+
+        BacktestRunner(config)._build_agents()
+
+        assert captured[0]["api_key"] == "sk-fromsettings"
+        assert captured[0]["base_url"] == "https://proxy.example.com/v1"
+
+    def test_non_replay_agents_fall_back_to_deepseek_default_base_url(self, monkeypatch):
+        captured = self._capture_clients(monkeypatch)
+        config = RunConfig(
+            start_date=date(2024, 3, 4),
+            end_date=date(2024, 3, 4),
+            agents=[{"id": "agent-a"}],
+        )
+
+        BacktestRunner(config)._build_agents()
+
+        assert captured[0]["api_key"] == ""
+        assert captured[0]["base_url"] == "https://api.deepseek.com"
+
+    def test_replay_agents_keep_replay_key(self, tmp_path, monkeypatch):
+        from traderharness.trajectory.replay import ReplayRecorder
+
+        cassette = tmp_path / "cassette.jsonl"
+        ReplayRecorder().save(cassette)
+        captured = self._capture_clients(monkeypatch)
+        config = RunConfig(
+            start_date=date(2024, 3, 4),
+            end_date=date(2024, 3, 4),
+            agents=[{"id": "agent-a"}],
+            replay_path=cassette,
+        )
+
+        BacktestRunner(config)._build_agents()
+
+        assert captured[0]["api_key"] == "replay"

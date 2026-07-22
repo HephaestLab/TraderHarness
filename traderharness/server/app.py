@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from pathlib import Path
@@ -19,6 +20,12 @@ from traderharness.agents.agent_card import (
     list_cards,
     load_card,
     save_card,
+)
+from traderharness.config.llm_settings import (
+    clear_llm_settings,
+    llm_config_status,
+    resolve_llm_credentials,
+    save_llm_settings,
 )
 from traderharness.paths import agents_dir, dataset_dir, results_dir
 from traderharness.result_analysis import (
@@ -85,6 +92,38 @@ class RunRequest(BaseModel):
         if self.start_date > self.end_date:
             raise ValueError("开始日期不能晚于结束日期")
         return self
+
+
+def _validate_http_url(value: str | None) -> str | None:
+    if value and not value.startswith(("http://", "https://")):
+        raise ValueError("请求地址必须以 http:// 或 https:// 开头")
+    return value
+
+
+class LLMConfigPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    api_key: str | None = Field(default=None, max_length=500)
+    base_url: str | None = Field(default=None, max_length=500)
+    clear: bool = False
+
+    @field_validator("base_url")
+    @classmethod
+    def valid_base_url(cls, value: str | None) -> str | None:
+        return _validate_http_url(value)
+
+
+class LLMTestPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    api_key: str | None = Field(default=None, max_length=500)
+    base_url: str | None = Field(default=None, max_length=500)
+    model: str | None = Field(default=None, max_length=100)
+
+    @field_validator("base_url")
+    @classmethod
+    def valid_base_url(cls, value: str | None) -> str | None:
+        return _validate_http_url(value)
 
 
 def _result_summary(path: Path) -> dict[str, Any]:
@@ -184,12 +223,59 @@ def create_app(
             },
             "providers": {
                 "deepseek_configured": bool(os.environ.get("DEEPSEEK_API_KEY")),
+                "llm_source": llm_config_status()["source"],
             },
             "security": {
                 "scope": "local-only",
                 "public_exposure_supported": False,
             },
         }
+
+    @app.get("/api/config/llm")
+    def get_llm_config() -> dict[str, Any]:
+        """Effective LLM credentials status. Never returns the full API key."""
+        return llm_config_status()
+
+    @app.put("/api/config/llm")
+    def put_llm_config(payload: LLMConfigPayload) -> dict[str, Any]:
+        if payload.clear:
+            clear_llm_settings()
+        else:
+            save_llm_settings(api_key=payload.api_key, base_url=payload.base_url)
+        return llm_config_status()
+
+    @app.post("/api/config/llm/test")
+    async def test_llm_config(payload: LLMTestPayload) -> dict[str, Any]:
+        """Connectivity check: one minimal chat call with a 20s overall timeout."""
+        from traderharness.agents.llm_client import LLMClient
+
+        model = payload.model or "deepseek-chat"
+        saved_key, saved_url = resolve_llm_credentials(model)
+        api_key = payload.api_key or saved_key
+        base_url = payload.base_url or saved_url
+        if not api_key:
+            return {"ok": False, "detail": "未配置 API Key", "model": model}
+
+        client = LLMClient(
+            model=model,
+            api_key=api_key,
+            base_url=base_url,
+            cache_enabled=False,
+            max_retries=1,
+        )
+        try:
+            await asyncio.wait_for(
+                client.chat([{"role": "user", "content": "ping"}], max_tokens=1),
+                timeout=20,
+            )
+        except asyncio.TimeoutError:
+            return {"ok": False, "detail": "连接超时（20 秒）", "model": model}
+        except Exception as e:  # noqa: BLE001 — surface any provider/network error
+            detail = str(e) or type(e).__name__
+            # Provider errors may echo request details; never leak the key.
+            detail = detail.replace(api_key, "***")
+            return {"ok": False, "detail": detail[:300], "model": model}
+        return {"ok": True, "detail": "连接成功", "model": model}
 
     @app.get("/api/agents")
     def get_agents() -> list[dict[str, Any]]:

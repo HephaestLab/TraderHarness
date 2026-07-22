@@ -72,11 +72,11 @@ def run(
 ):
     """Run a backtest with the specified agent card."""
     import asyncio
-    import os
     from datetime import date
     from decimal import Decimal
     from pathlib import Path
 
+    from traderharness.config.llm_settings import resolve_llm_credentials
     from traderharness.results import (
         RESULTS_DIR,
         generate_result_filename,
@@ -170,7 +170,7 @@ def run(
             raise SystemExit(1)
 
         use_model = model or card.model
-        base_url = os.environ.get("DEEPSEEK_BASE_URL", "")
+        resolved_key, resolved_url = resolve_llm_credentials(use_model)
 
         if bundle_player is not None or bundle_recorder is not None:
             scope = executor_scope_id(card.id, is_committee=False)
@@ -178,31 +178,35 @@ def run(
             scoped_recorder = (
                 bundle_recorder.scope(scope) if bundle_recorder is not None else None
             )
-            api_key = "replay" if scoped_player is not None else os.environ.get(
-                "DEEPSEEK_API_KEY", ""
-            )
+            api_key = "replay" if scoped_player is not None else resolved_key
             if not api_key:
-                click.echo("Error: DEEPSEEK_API_KEY not set.", err=True)
+                click.echo(
+                    "Error: 未配置 LLM API Key。请设置环境变量 DEEPSEEK_API_KEY，"
+                    "或在 Web 控制台设置页配置。",
+                    err=True,
+                )
                 raise SystemExit(1)
             llm = LLMClient(
                 model=use_model,
                 api_key=api_key,
-                base_url=base_url,
+                base_url=resolved_url,
                 cache_enabled=False,
                 replay_recorder=scoped_recorder,
                 replay_player=scoped_player,
             )
         else:
-            api_key = (
-                "replay" if replay_player is not None else os.environ.get("DEEPSEEK_API_KEY", "")
-            )
+            api_key = "replay" if replay_player is not None else resolved_key
             if not api_key:
-                click.echo("Error: DEEPSEEK_API_KEY not set.", err=True)
+                click.echo(
+                    "Error: 未配置 LLM API Key。请设置环境变量 DEEPSEEK_API_KEY，"
+                    "或在 Web 控制台设置页配置。",
+                    err=True,
+                )
                 raise SystemExit(1)
             llm = LLMClient(
                 model=use_model,
                 api_key=api_key,
-                base_url=base_url,
+                base_url=resolved_url,
                 cache_enabled=False,
                 replay_recorder=replay_recorder,
                 replay_player=replay_player,
@@ -507,6 +511,7 @@ def compare(
     from traderharness.agents.llm_client import LLMClient
     from traderharness.agents.prompt_agent import PromptAgent
     from traderharness.agents.tool_agent import ToolAgent
+    from traderharness.config.llm_settings import resolve_llm_credentials
     from traderharness.core.engine import AgentExecutionError, BacktestEngine, EngineConfig
     from traderharness.metrics.behavior import calculate_behavior
     from traderharness.metrics.benchmark import load_csi300_curve
@@ -559,15 +564,17 @@ def compare(
             scoped_recorder = (
                 replay_recorder.scope(scope) if replay_recorder is not None else None
             )
-            api_key = (
-                "replay" if scoped_player is not None else os.environ.get("DEEPSEEK_API_KEY", "")
-            )
+            resolved_key, resolved_url = resolve_llm_credentials(card.model)
+            api_key = "replay" if scoped_player is not None else resolved_key
             if not api_key:
-                raise click.ClickException("DEEPSEEK_API_KEY not set")
+                raise click.ClickException(
+                    "未配置 LLM API Key。请设置环境变量 DEEPSEEK_API_KEY，"
+                    "或在 Web 控制台设置页配置。"
+                )
             llm = LLMClient(
                 model=card.model,
                 api_key=api_key,
-                base_url=os.environ.get("DEEPSEEK_BASE_URL", ""),
+                base_url=resolved_url,
                 cache_enabled=False,
                 max_retries=int(os.environ.get("TRADERHARNESS_LLM_MAX_RETRIES", "6")),
                 replay_recorder=scoped_recorder,

@@ -2,6 +2,7 @@ import {
   Activity,
   Bot,
   ChartNoAxesCombined,
+  Cog,
   GitCompareArrows,
   LayoutDashboard,
   Radio,
@@ -14,6 +15,7 @@ const navigation = [
   { to: "/live", label: "实时运行", icon: Radio },
   { to: "/results", label: "回测结果", icon: ChartNoAxesCombined },
   { to: "/compare", label: "智能体对比", icon: GitCompareArrows },
+  { to: "/settings", label: "设置", icon: Cog },
 ];
 
 export function Shell() {

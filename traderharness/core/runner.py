@@ -152,6 +152,7 @@ class BacktestRunner:
     def _build_agents(self) -> list:
         from traderharness.agents.llm_client import LLMClient
         from traderharness.agents.tool_agent import ToolAgent
+        from traderharness.config.llm_settings import resolve_llm_credentials
         from traderharness.trajectory.bundle import ScopedReplayPlayer, is_bundle_path
         from traderharness.trajectory.replay import ReplayPlayer
 
@@ -184,12 +185,25 @@ class BacktestRunner:
         for cfg in agent_configs:
             agent_id = cfg.get("id", "agent_0")
             player = bundle_player.scope(agent_id) if bundle_player is not None else replay_player
-            llm_client = LLMClient(
-                model=cfg.get("model") or "deepseek-chat",
-                api_key="replay" if player is not None else None,
-                cache_enabled=False,
-                replay_player=player,
-            )
+            if player is not None:
+                llm_client = LLMClient(
+                    model=cfg.get("model") or "deepseek-chat",
+                    api_key="replay",
+                    cache_enabled=False,
+                    replay_player=player,
+                )
+            else:
+                # Live runs resolve credentials through llm_settings
+                # (env > Web console settings.json > built-in default) so a
+                # key saved from the UI works without exporting env vars.
+                model = cfg.get("model") or "deepseek-chat"
+                api_key, base_url = resolve_llm_credentials(model)
+                llm_client = LLMClient(
+                    model=model,
+                    api_key=api_key,
+                    base_url=base_url,
+                    cache_enabled=False,
+                )
             agent = ToolAgent(
                 agent_id=agent_id,
                 name=cfg.get("name", "Agent"),

@@ -1,7 +1,25 @@
 export interface RuntimeStatus {
   dataset: Record<string, boolean>;
-  providers: { deepseek_configured: boolean };
+  providers: { deepseek_configured: boolean; llm_source: "env" | "settings" | "none" };
   security: { scope: string; public_exposure_supported: boolean };
+}
+
+export type LLMConfigSource = "env" | "settings" | "none";
+
+export type LLMBaseUrlSource = "env" | "settings" | "default" | "none";
+
+export interface LLMConfig {
+  configured: boolean;
+  source: LLMConfigSource;
+  api_key_masked: string;
+  base_url: string;
+  base_url_source: LLMBaseUrlSource;
+}
+
+export interface LLMTestResult {
+  ok: boolean;
+  detail: string;
+  model: string;
 }
 
 export interface AgentCard {
