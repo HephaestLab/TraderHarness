@@ -108,6 +108,41 @@ def test_get_stock_price():
     assert "change_pct" in quote
 
 
+def _bars_with_volumes(closes, volumes):
+    return pd.DataFrame(
+        {
+            "date": [date(2024, 3, d) for d in range(1, 1 + len(closes))],
+            "open": closes,
+            "high": closes,
+            "low": closes,
+            "close": closes,
+            "volume": volumes,
+        }
+    )
+
+
+def test_get_stock_price_tolerates_nan_volume():
+    ctx = _ctx()
+    ctx.preloaded_daily[A] = _bars_with_volumes(
+        [100, 102, 104, 106, 108, 110],
+        [10000, 10000, 10000, 10000, 10000, float("nan")],
+    )
+    quote = MarketAPI(ctx).get_stock_price(A)
+    assert quote["volume"] == 0
+
+
+@patch("traderharness.tools.analysis.get_stock_industry", side_effect=_industries)
+def test_screen_stocks_tolerates_nan_volume(_mock):
+    ctx = _ctx()
+    ctx.preloaded_daily[A] = _bars_with_volumes(
+        [100, 102, 104, 106, 108, 110],
+        [10000, 10000, 10000, 10000, 10000, float("nan")],
+    )
+    result = MarketAPI(ctx).screen_stocks(max_results=5, sort_by="change_1d")
+    a_rows = [s for s in result["stocks"] if s["code"] == A]
+    assert a_rows and a_rows[0]["volume"] == 0
+
+
 def test_entity_mask_on_sector_summary():
     ctx = _ctx()
     ctx.entity_masker = EntityMasker(

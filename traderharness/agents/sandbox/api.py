@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
+from traderharness.tools._coerce import safe_int
+
 if TYPE_CHECKING:
     from traderharness.tools.registry import ToolContext
 
@@ -199,7 +201,7 @@ class MarketAPI:
                 "high": round(float(last["high"]), 2),
                 "low": round(float(last["low"]), 2),
                 "close": round(float(last["close"]), 2),
-                "volume": int(last.get("volume", 0)),
+                "volume": safe_int(last.get("volume", 0)),
                 "change_pct": round(change_pct, 2),
             },
         )

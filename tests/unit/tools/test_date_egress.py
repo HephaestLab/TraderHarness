@@ -140,3 +140,12 @@ class TestMarketToolEgress:
         ctx = _make_ctx(True)
         out = await handle_get_stock_price({"stock_code": "600519"}, ctx)
         assert out["day"] == "D-1"
+
+    @pytest.mark.asyncio
+    async def test_get_stock_price_tolerates_nan_volume(self):
+        ctx = _make_ctx(None)
+        df = ctx.preloaded_daily["600519"].copy()
+        df.loc[df.index[-2], "volume"] = float("nan")  # last visible bar (D-1)
+        ctx.preloaded_daily["600519"] = df
+        out = await handle_get_stock_price({"stock_code": "600519"}, ctx)
+        assert out["volume"] == 0

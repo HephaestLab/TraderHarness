@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 
 from traderharness.data.stock_registry_loader import get_stock_industry
+from traderharness.tools._coerce import safe_int
 from traderharness.tools.registry import ToolContext, ToolDefinition
 
 logger = logging.getLogger(__name__)
@@ -85,7 +86,7 @@ def build_screen_stocks(ctx: ToolContext, params: dict | None = None) -> dict:
 
         last = filtered.iloc[-1]
         close = float(last["close"])
-        volume = int(last.get("volume", 0))
+        volume = safe_int(last.get("volume", 0))
 
         if close < price_min or close > price_max:
             continue

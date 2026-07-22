@@ -9,6 +9,7 @@ import logging
 
 import pandas as pd
 
+from traderharness.tools._coerce import safe_int
 from traderharness.tools.dedup import with_dedup
 from traderharness.tools.registry import ToolContext, ToolDefinition
 
@@ -60,7 +61,7 @@ async def handle_get_kline(params: dict, ctx: ToolContext) -> dict:
                 "high": round(float(row["high"]), 2),
                 "low": round(float(row["low"]), 2),
                 "close": round(float(row["close"]), 2),
-                "volume": int(row.get("volume", 0)),
+                "volume": safe_int(row.get("volume", 0)),
             }
         )
 
@@ -120,7 +121,7 @@ async def handle_get_stock_price(params: dict, ctx: ToolContext) -> dict:
         "high": round(float(last["high"]), 2),
         "low": round(float(last["low"]), 2),
         "close": round(float(last["close"]), 2),
-        "volume": int(last.get("volume", 0)),
+        "volume": safe_int(last.get("volume", 0)),
         "change_pct": round(change_pct, 2),
     }
 

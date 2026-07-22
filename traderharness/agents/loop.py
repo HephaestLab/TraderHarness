@@ -18,6 +18,7 @@ import pandas as pd
 from traderharness.agents.context import ContextManager
 from traderharness.agents.llm_client import LLMClient
 from traderharness.agents.memory import DailyMemory
+from traderharness.tools._coerce import safe_int
 from traderharness.tools.registry import ToolContext, ToolRegistry
 
 if TYPE_CHECKING:
@@ -888,6 +889,6 @@ class AgentLoop:
                 lines.append(
                     f"  {float(row['open']):8.2f} {float(row['high']):7.2f} "
                     f"{float(row['low']):7.2f} {float(row['close']):7.2f} "
-                    f"{int(row.get('volume', 0)):>8}"
+                    f"{safe_int(row.get('volume', 0)):>8}"
                 )
         return mask("\n".join(lines))
