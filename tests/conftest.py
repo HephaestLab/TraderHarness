@@ -1,8 +1,15 @@
 """Shared test fixtures for FinHarness."""
 
-from datetime import date
+from traderharness._hashseed import ensure_fixed_hash_seed
 
-import pytest
+# Replay-backed tests execute sandboxed agent code in-process; pin the hash
+# seed (via re-exec on first conftest import) so set iteration order — and
+# therefore cassette fingerprints — is stable across test processes.
+ensure_fixed_hash_seed()
+
+from datetime import date  # noqa: E402
+
+import pytest  # noqa: E402
 
 
 @pytest.fixture

@@ -25,6 +25,9 @@ The Python import package and CLI name are both `traderharness`. The default loc
 4. Agent-facing calendar dates and entities must pass through the configured masks.
 5. Agents receive read-only portfolio views; the environment owns portfolio state.
 6. The same visible data and action sequence must produce the same environment result.
+   Sandbox code runs in-process, so entry points (CLI group, pytest conftest) pin `PYTHONHASHSEED`
+   via `traderharness._hashseed.ensure_fixed_hash_seed()` — otherwise `set` iteration order leaks
+   into tool output and breaks cassette fingerprints across processes.
 7. Historical fills and corporate actions use unadjusted prices.
 8. Sandbox code may analyze visible data, but must not read the canonical dataset directly or start nested backtests.
 9. Independent multi-agent compare runs agents **sequentially within each trading day** (still isolated portfolios).

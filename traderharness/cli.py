@@ -8,6 +8,7 @@ import click
 from dotenv import load_dotenv
 
 from traderharness import __version__
+from traderharness._hashseed import ensure_fixed_hash_seed
 
 load_dotenv()
 
@@ -16,7 +17,10 @@ load_dotenv()
 @click.version_option(version=__version__)
 def main():
     """TraderHarness — LLM-native trading agent harness."""
-    pass
+    # Pin the hash seed (re-exec once if unset) so sandboxed agent code —
+    # which runs in-process — produces identical set iteration order in the
+    # recording process and every later replay process.
+    ensure_fixed_hash_seed()
 
 
 def _is_committee(agent) -> bool:

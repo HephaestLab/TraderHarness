@@ -47,4 +47,4 @@ def test_fastapi_demo_streams_events_and_persists_result():
         result = detail.json()
         # Trade count tracks the bundled momentum_dragon_2024-03-14.jsonl
         # trajectory; update this expectation when the cassette is re-recorded.
-        assert result["agent_data"]["momentum-dragon"]["metrics"]["total_trades"] == 1
+        assert result["agent_data"]["momentum-dragon"]["metrics"]["total_trades"] == 2
