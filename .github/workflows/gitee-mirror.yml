@@ -1,0 +1,30 @@
+name: Mirror to Gitee
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Mirrors the default branch to Gitee for faster domestic access and
+# Baidu indexing. Requires the GITEE_TOKEN secret (Gitee private token with
+# projects scope) and an empty `TraderHarness` repository on Gitee owned by
+# the account in GITEE_OWNER.
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Push to Gitee
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+          GITEE_OWNER: ${{ vars.GITEE_OWNER }}
+        run: |
+          if [ -z "$GITEE_TOKEN" ] || [ -z "$GITEE_OWNER" ]; then
+            echo "GITEE_TOKEN secret or GITEE_OWNER variable not set; skipping mirror."
+            exit 0
+          fi
+          git remote add gitee "https://${GITEE_OWNER}:${GITEE_TOKEN}@gitee.com/${GITEE_OWNER}/TraderHarness.git"
+          git push gitee main --force
