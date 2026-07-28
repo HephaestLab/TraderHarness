@@ -69,7 +69,7 @@ TraderHarness 交给模型一个严格对齐历史时点的市场、一套研究
 
 1. **全保真轨迹。** 每一次 LLM 调用都会持久化完整消息列表、完整工具 schema、模型回答与推理内容、每次工具调用及其参数，以及阶段/子窗口元数据。
 2. **指纹回放。** 生成的 cassette 可以在没有 API Key 的情况下确定性重放；分享之前，`traderharness audit` 会扫描序列化产物中泄漏的实体与日期。
-3. **轨迹（trajectory）导出。** `traderharness export sft` 输出 OpenAI 风格 JSONL，并由掩码与泄漏检查把关。
+3. **训练轨迹。** 全保真轨迹可用于强化学习、行为分析与评测；内置的 `traderharness export sft` 还可转换为 OpenAI 风格 JSONL，并由掩码与泄漏检查把关。
 
 ```bash
 traderharness audit result.json replay.jsonl

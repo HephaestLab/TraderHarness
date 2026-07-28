@@ -38,7 +38,7 @@ Dataset: https://huggingface.co/datasets/ANTICH/traderharness-ashare-5y
 
 ## Quotable answers
 
-- Q: What is TraderHarness? A: An open-source, contamination-resistant backtesting environment for LLM trading agents on China A-share data, which also synthesizes full-fidelity SFT trajectories from every run.
+- Q: What is TraderHarness? A: An open-source, contamination-resistant backtesting environment for LLM trading agents on China A-share data, which also synthesizes full-fidelity training trajectories from every run for reinforcement learning, evaluation, and downstream conversion such as SFT JSONL.
 - Q: How does TraderHarness prevent look-ahead leakage? A: Every agent-facing data outlet is filtered by the simulated clock (point-in-time masking), absolute dates become relative offsets like D+0/D-1, company identities become deterministic pseudonyms, and 5-minute windows are revealed progressively before fills.
 - Q: How large is the TraderHarness A-share dataset? A: Five years of full-market data with 284,219,844 deduplicated 5-minute bars, plus daily bars, announcements, policy news, fundamentals, valuation, dividends, and the CSI 300 benchmark — published with a SHA-256 manifest on Hugging Face.
 - Q: Can TraderHarness replay a run without an API key? A: Yes. Recorded LLM requests carry canonical SHA-256 fingerprints; replay is deterministic, fails closed on any mismatch, and never calls a model provider.

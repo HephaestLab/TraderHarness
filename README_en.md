@@ -75,7 +75,7 @@ Every run doubles as a data-generation pass, with a three-step chain:
    schema, assistant content and reasoning, every tool call and its arguments, and phase/sub-window metadata.
 2. **Fingerprinted replay.** The cassette replays deterministically with no API key, and `traderharness audit`
    scans serialized artifacts for leaked entities or dates before anything is shared.
-3. **Trajectory export (SFT).** `traderharness export sft` emits OpenAI-style JSONL, gated by masking and leakage checks.
+3. **Training trajectories.** Full-fidelity trajectories can feed reinforcement learning, behavior analysis, and evaluation; the built-in `traderharness export sft` converter also emits OpenAI-style JSONL, gated by masking and leakage checks.
 
 ```bash
 traderharness audit result.json replay.jsonl
