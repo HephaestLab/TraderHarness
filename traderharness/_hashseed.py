@@ -31,7 +31,10 @@ def _rerun_command() -> list[str]:
     package's ``-m`` entry point instead.
     """
     argv0 = sys.argv[0] if sys.argv else ""
-    base = os.path.basename(argv0).lower()
+    # ``sys.argv[0]`` can use either separator when invocations are replayed or
+    # tested across platforms.  Normalize both instead of relying on the host
+    # OS path rules so Windows console-script paths are recognized on POSIX.
+    base = argv0.replace("\\", "/").rsplit("/", 1)[-1].lower()
     if base.endswith(".py"):
         return [sys.executable, *sys.argv]
     if base.startswith("pytest"):

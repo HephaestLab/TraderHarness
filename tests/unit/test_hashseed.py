@@ -52,6 +52,12 @@ def test_rerun_command_routes_pytest_via_module(monkeypatch):
     assert cmd[1:] == ["-m", "pytest", "tests/", "-q"]
 
 
+def test_rerun_command_routes_posix_pytest_via_module(monkeypatch):
+    monkeypatch.setattr(_hashseed.sys, "argv", ["/opt/venv/bin/pytest", "tests/", "-q"])
+    cmd = _hashseed._rerun_command()
+    assert cmd[1:] == ["-m", "pytest", "tests/", "-q"]
+
+
 def test_rerun_command_keeps_plain_script(monkeypatch):
     monkeypatch.setattr(_hashseed.sys, "argv", ["scripts/run_backtest.py", "--fast"])
     cmd = _hashseed._rerun_command()
