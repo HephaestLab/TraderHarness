@@ -30,11 +30,30 @@ LLM Agent 正在走进真实交易：研究、决策、下单，越来越多地�
 
 TraderHarness 就是这套规范：一个抗污染的 LLM 交易 Agent 回测执行环境——同时，由于每次模型调用都被全保真记录，它也是一个把这些运行一键变成轨迹训练数据的数据合成器。
 
+**先判断它是否适合你：** [三步运行免 Key 回放](#快速开始) · [看它和 TradingAgents / StockBench / Qlib 的边界](docs/comparison.md) · [阅读英文 LLM Agent 回测方法指南](docs/guides/llm-trading-agent-backtesting.md)
+
 <p align="center">
   <img src="docs/assets/traderharness-demo.gif" alt="TraderHarness 流式历史回放控制台" width="920">
 </p>
 
 <p align="center"><sub>该 GIF 由本地研究控制台截图生成（<code>webui/scripts/capture-demo.mjs</code>）。UI 有变化时执行 <code>npm run capture:demo</code> 重新生成；将随 v1.0 验收跑一并更新。</sub></p>
+
+> 如果你也在解决 LLM 交易评测里的数据泄漏、成交公平或结果复现问题，欢迎在仓库右上角点 **Star**。后续公开 benchmark、回放盒带和数据集更新都会在这里发布。
+
+## 魔鬼行情实测：21 个交易日小基准
+
+2026 年 6 月 20 日 – 7 月 20 日，A 股经历一轮急速回撤，沪深 300 区间收益 **-9.12%**。我们在这个"魔鬼窗口"里用同一张「趋势波段」Agent 卡（日期与实体双重遮罩、种子 42、初始资金 100 万）实测了 4 个主流模型——每个模型独立跑完 21 个交易日，看不到真实日期与公司名，只能靠行情结构、公告和基本面做判断：
+
+| 模型 | 区间收益 | 相对沪深 300 | 夏普比率 | 最大回撤 | 交易笔数 | 胜率 |
+|---|---|---|---|---|---|---|
+| Claude Opus 4.8 | **+1.45%** | +10.57 | 2.61 | 0.76% | 6 | 66.7% |
+| Kimi K2.6 | +0.34% | +9.46 | 0.69 | 0.37% | 2 | 100% |
+| Qwen3.7-Max | -1.64% | +7.48 | -3.77 | 1.64% | 12 | 0% |
+| DeepSeek V4-Pro | -2.69% | +6.43 | -6.57 | 2.69% | 10 | 20.0% |
+
+四个模型全部大幅跑赢基准。更有意思的是风格差异：Kimi 全月只出手 2 次、Qwen 出手 12 次却无一盈利——同样的市场、同样的工具、同样的提示词，模型性格一目了然。这正是规范化回测框架要回答的问题。
+
+> 这是一组小样本、单 Agent 风格的冒烟基准，用于演示评测链路，不构成模型排名或投资建议。每一次调用都可指纹回放，完整契约见[训练数据](docs/training-data.md)。
 
 ## 规范化回测框架
 
@@ -166,7 +185,7 @@ v1.0 发布验收已对完整的一月 DeepSeek 轨迹做序列化后出口审�
 
 ## 快速开始
 
-支持 Python 3.10–3.12。六十秒上手，无需 API Key：
+支持 Python 3.10–3.12。三步上手，无需 API Key（首次运行需要下载并校验完整数据集）：
 
 ```bash
 pip install "traderharness[llm,data,ui]"
@@ -212,6 +231,21 @@ Compose 会把本机 `~/.traderharness` 挂载到 `/data`，不会把完整数�
 3. **尾盘窗口**：14:30–15:00 的数据逐步可见；允许下单并结束当天。
 
 Agent 可查询历史 K 线、基本面、估值、公告和新闻，进行全市场筛选，在沙箱里自由使用 `numpy/pandas/scipy`，并查看只读账户。所有成交都必须经过 `TradingBus.place_order()`。
+
+## 面向 AI 的入口
+
+TraderHarness 提供机器可读的操作指南，让编程助手不用猜测上面这些不变量：
+
+- [`llms.txt`](llms.txt) —— 官方文档的精简索引。
+- [`llms-full.txt`](llms-full.txt) —— 同一份文档集合合并成一个文件，由 `scripts/build_llms_full.py` 生成。
+- [`AGENTS.md`](AGENTS.md) —— 公开操作指南：项目地图、不可协商的不变量与工作流程。
+
+推荐先给 Cursor、Claude Code 等工具以下指令：
+
+```text
+先阅读 AGENTS.md 和 docs/architecture.md。新增 Agent 时不得绕过
+TradingBus、时点遮罩和单一下单路径；先写失败测试，再运行相关测试和 replay demo。
+```
 
 ## 独立赛马 vs 单执行者委员会
 
@@ -290,21 +324,6 @@ traderharness data update
 ```
 
 公开新闻数据保留模板化标题，去除有版权的正文。数据再分发和商业使用前请确认上游许可。详见[数据与许可](docs/data.md)和[核心架构](docs/architecture.md)。
-
-## 面向 AI 的入口
-
-TraderHarness 提供机器可读的操作指南，让编程助手不用猜测上面这些不变量：
-
-- [`llms.txt`](llms.txt) —— 官方文档的精简索引。
-- [`llms-full.txt`](llms-full.txt) —— 同一份文档集合合并成一个文件，由 `scripts/build_llms_full.py` 生成。
-- [`AGENTS.md`](AGENTS.md) —— 公开操作指南：项目地图、不可协商的不变量与工作流程。
-
-推荐先给 Cursor、Claude Code 等工具以下指令：
-
-```text
-先阅读 AGENTS.md 和 docs/architecture.md。新增 Agent 时不得绕过
-TradingBus、时点遮罩和单一下单路径；先写失败测试，再运行相关测试和 replay demo。
-```
 
 ## 和我们一起建设
 
@@ -455,6 +474,133 @@ traderharness compare `
 ![多 Agent 对比工作台](assets/compare-workbench.png)
 
 *对比工作台：同一市场时钟下多个 Agent 的权益曲线、风险与行为指标横向排名。*
+
+---
+
+<!-- source: docs/guides/llm-trading-agent-backtesting.md -->
+
+---
+title: How to Backtest LLM Trading Agents Without Look-Ahead Bias
+description: A practical framework for point-in-time data, fair execution, deterministic replay, contamination controls, and auditable trajectories in LLM trading-agent backtests.
+---
+
+# How to Backtest LLM Trading Agents Without Look-Ahead Bias
+
+An LLM trading-agent backtest is credible only when the agent sees exactly what would have been public at the simulated time, can trade only at prices revealed after its decision, and leaves enough evidence for the run to be reproduced and audited. A prompt that says “do not use future information” is not sufficient: the restriction must be enforced by the environment.
+
+[TraderHarness](https://github.com/HephaestLab/TraderHarness) is an open-source Python environment built around that contract. It currently targets China A-shares and combines point-in-time data masking, date and entity anonymization, progressive 5-minute execution, fingerprinted replay, and full-fidelity trajectory export.
+
+## The three leakage problems
+
+### 1. Ordinary look-ahead bias
+
+This is the familiar backtesting error: a decision made at time *t* receives a closing price, filing, revised fundamental, or news item that was not available until after *t*. Filtering rows by calendar date alone is not enough when different sources have publication timestamps and revision histories.
+
+The environment should enforce the information boundary at every data outlet:
+
+- daily bars must end before the simulated trading day;
+- intraday bars must stop at the current sub-window;
+- announcements and news must satisfy their publication-time constraints;
+- fundamentals must be selected by publication date, not only by reporting period;
+- portfolio state must be read-only to the agent.
+
+### 2. Historical memorization by the model
+
+A general-purpose LLM may recognize a famous company, date, crash, rally, or announcement from its training data. The model can then answer from memory even when the data pipeline itself is point-in-time correct.
+
+Deterministic pseudonyms reduce these cues. TraderHarness can replace absolute dates with relative offsets such as `D+0` and map company names and stock codes to neutral identities while preserving market-rule metadata. This is a contamination control, not proof that semantic re-identification is impossible; serialized outputs still need a leakage audit.
+
+### 3. Non-reproducible model calls
+
+Even at temperature zero, a hosted model may change or return a different response. Saving only the final trade is therefore inadequate. A useful replay artifact must retain the complete messages, tool schemas, model response, reasoning fields made available by the provider, tool calls, tool results, and the phase of the simulated market.
+
+TraderHarness fingerprints the canonical request behind each recorded response. Replay fails closed when a prompt, tool schema, visible input, or call sequence differs, rather than silently returning the wrong cached answer.
+
+## A minimum credible evaluation contract
+
+| Boundary | Requirement | Evidence to retain |
+|---|---|---|
+| Data | Point-in-time filtering at every agent-facing outlet | source timestamp, simulated clock, visible rows |
+| Identity | Mask dates and entities when testing memorization risk | seed, mapping policy, post-run leakage audit |
+| Execution | Reveal intraday data progressively and fill only after a decision | order time, visible window, fill time and price |
+| Portfolio | Give the model a read-only view; let the environment own state | orders, fills, cash, positions, corporate actions |
+| LLM | Record the full request/response/tool sequence | provider/model metadata and request fingerprint |
+| Comparison | Isolate portfolios and keep the market clock identical | resolved configuration, seed, benchmark series |
+| Publication | Audit artifacts before sharing | audit report, dataset manifest, code version |
+
+The key principle is simple: the same visible market data and action sequence should produce the same environment result. Model generation can be recorded once and replayed; market accounting and matching must remain deterministic.
+
+## A practical TraderHarness workflow
+
+Install the package and canonical dataset, then run the bundled masked replay:
+
+```bash
+pip install "traderharness[llm,data,ui]"
+traderharness data download --full
+traderharness demo
+```
+
+The demo does not call an LLM provider, but it does evaluate the recorded trajectory against the local canonical market data. The full dataset is downloaded separately and verified against its release manifest.
+
+To record a new run:
+
+```bash
+traderharness run \
+  --agent trend-breakout \
+  --start 2024-03-04 \
+  --end 2024-03-29 \
+  --mask-entities \
+  --record-replay run.jsonl
+```
+
+Before publishing a result or converting it into training data:
+
+```bash
+traderharness audit result.json run.jsonl
+traderharness export sft result.json --output training.jsonl
+```
+
+For multiple independent agents, `traderharness compare` gives each agent an isolated portfolio. For a TradingAgents-style committee, advisors remain read-only and exactly one executor receives trading tools. These are different evaluation contracts and should not be reported as if they were interchangeable.
+
+## What a backtest result should report
+
+Return and Sharpe ratio are not enough. A reproducible LLM-agent result should also state:
+
+- the exact date range, universe, benchmark, initial capital, fees, and execution rules;
+- the model and provider configuration, agent card, tool schemas, and masking seed;
+- whether calls were live, recorded, or replayed;
+- the number of decisions, orders, fills, rejected orders, and no-trade days;
+- maximum drawdown, turnover, exposure, concentration, and behavior diagnostics;
+- the artifact audit result and code/data versions;
+- important omissions such as market impact, live latency, or survivorship treatment.
+
+This makes the claim inspectable. It also separates “the model produced an interesting behavior under a controlled historical environment” from “this strategy is safe or profitable in live trading.” The latter does not follow from a historical simulation.
+
+## Frequently asked questions
+
+### Can an LLM trading backtest be deterministic?
+
+The historical environment, matching, accounting, and replay can be deterministic. A fresh hosted-model call generally cannot be guaranteed deterministic, so record the full exchange and use fingerprint-validated replay for exact reproduction.
+
+### Does point-in-time data eliminate all backtest bias?
+
+No. It addresses information timing, but universe construction, survivorship, transaction costs, market impact, missing data, multiple testing, and model-selection bias still require explicit treatment and disclosure.
+
+### Why mask company names as well as dates?
+
+Date masking hides the calendar period, but a recognizable ticker, company, product, or announcement can still reveal the event. Entity masking reduces that second channel while retaining the trading rules the simulator needs.
+
+### Is TraderHarness a live trading bot?
+
+No. It is local research infrastructure for historical evaluation and trajectory generation. It does not route live orders and does not claim that historical performance predicts live returns.
+
+## Next steps
+
+- Follow the [quickstart](../quickstart.md) for installation and the local research console.
+- Read the [contamination model](../contamination.md) for precise data-egress rules.
+- Review the [architecture invariants](../architecture.md) before adding an agent or tool.
+- Inspect the [comparison matrix](../comparison.md) to decide whether you need an agent framework, a market environment, or both.
+- Use the [GitHub repository](https://github.com/HephaestLab/TraderHarness) for source code, issues, and releases.
 
 ---
 

@@ -12,11 +12,36 @@ description: TraderHarness 发布分发手册：GitHub 元数据、Show HN、Red
 - 数据集：<https://huggingface.co/datasets/ANTICH/traderharness-ashare-5y>
 - PyPI：<https://pypi.org/project/traderharness/>
 
-## GitHub 仓库元数据（已配置）
+## 外发前硬门槛
+
+不要只看 GitHub Release 是否存在；标签发布工作流中的 PyPI、容器和 Release job 必须全部成功。用一个没有项目源码的干净环境验证公开安装路径：
+
+```bash
+python -m pip index versions traderharness
+python -m pip install --no-cache-dir "traderharness[llm,data,ui]"
+traderharness --version
+curl --fail https://hephaestlab.github.io/TraderHarness/robots.txt
+curl --fail https://hephaestlab.github.io/TraderHarness/llms.txt
+curl --fail https://hephaestlab.github.io/TraderHarness/llms-full.txt
+```
+
+任一命令失败时，不发布含 `pip install` 或“开箱即用”表述的外发稿。PyPI 首发使用 GitHub Actions Trusted Publisher 时，先在 PyPI 建立 pending publisher，并确保 owner、repository、workflow filename 与 GitHub environment 四项完全匹配。
+
+TraderHarness 的 pending publisher 必须使用以下精确值：
+
+```text
+PyPI project name: traderharness
+Owner: HephaestLab
+Repository: TraderHarness
+Workflow name: release.yml
+Environment name: pypi
+```
+
+## GitHub 仓库元数据（建议配置）
 
 **描述**
 
-> Contamination-resistant A-share backtesting, evaluation, replay, and trajectory export for autonomous LLM trading agents.
+> Leakage-resistant backtesting and deterministic replay for LLM trading agents, with A-share data and SFT trajectory export.
 
 **Topics**
 

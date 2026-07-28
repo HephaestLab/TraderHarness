@@ -20,11 +20,15 @@ LLM Agent 正在走进真实交易：研究、决策、下单，越来越多地�
 
 TraderHarness 就是这套规范：一个抗污染的 LLM 交易 Agent 回测执行环境——同时，由于每次模型调用都被全保真记录，它也是一个把这些运行一键变成轨迹训练数据的数据合成器。
 
+**先判断它是否适合你：** [三步运行免 Key 回放](#快速开始) · [看它和 TradingAgents / StockBench / Qlib 的边界](docs/comparison.md) · [阅读英文 LLM Agent 回测方法指南](docs/guides/llm-trading-agent-backtesting.md)
+
 <p align="center">
   <img src="docs/assets/traderharness-demo.gif" alt="TraderHarness 流式历史回放控制台" width="920">
 </p>
 
 <p align="center"><sub>该 GIF 由本地研究控制台截图生成（<code>webui/scripts/capture-demo.mjs</code>）。UI 有变化时执行 <code>npm run capture:demo</code> 重新生成；将随 v1.0 验收跑一并更新。</sub></p>
+
+> 如果你也在解决 LLM 交易评测里的数据泄漏、成交公平或结果复现问题，欢迎在仓库右上角点 **Star**。后续公开 benchmark、回放盒带和数据集更新都会在这里发布。
 
 ## 魔鬼行情实测：21 个交易日小基准
 
@@ -171,7 +175,7 @@ v1.0 发布验收已对完整的一月 DeepSeek 轨迹做序列化后出口审�
 
 ## 快速开始
 
-支持 Python 3.10–3.12。六十秒上手，无需 API Key：
+支持 Python 3.10–3.12。三步上手，无需 API Key（首次运行需要下载并校验完整数据集）：
 
 ```bash
 pip install "traderharness[llm,data,ui]"

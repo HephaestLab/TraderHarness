@@ -24,11 +24,17 @@ conventions are ad hoc, runs cannot be reproduced, and the conclusions are hard 
 TraderHarness is that rig: a contamination-resistant execution environment for LLM trading agents — and, because
 every model call is recorded at full fidelity, a data synthesizer that turns those runs into trajectory training data.
 
+**Decide quickly whether it fits:** [run the no-key replay](#quick-start) · [compare its scope with TradingAgents,
+StockBench, and Qlib](docs/comparison.md) · [read the LLM-agent backtesting guide](docs/guides/llm-trading-agent-backtesting.md)
+
 <p align="center">
   <img src="docs/assets/traderharness-demo.gif" alt="TraderHarness streaming historical replay console" width="920">
 </p>
 
 <p align="center"><sub>Captured from the local research console (<code>webui/scripts/capture-demo.mjs</code>). Regenerate with <code>npm run capture:demo</code> after any UI change; this GIF will be refreshed alongside the v1.0 acceptance run.</sub></p>
+
+> If leakage control, execution fairness, or reproducible LLM evaluation matters to your work, consider starring the
+> repository. New public benchmarks, replay cassettes, and dataset updates will land here.
 
 ## Field test: a 21-trading-day mini benchmark in a brutal drawdown
 
@@ -199,7 +205,7 @@ re-identification is impossible — see [Preventing data leakage](docs/contamina
 
 ## Quick start
 
-Python 3.10–3.12 is supported. Sixty seconds, no API key:
+Python 3.10–3.12 is supported. Three commands, no API key (the first run downloads and verifies the full dataset):
 
 ```bash
 pip install "traderharness[llm,data,ui]"

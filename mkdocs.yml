@@ -51,6 +51,7 @@ markdown_extensions:
 nav:
   - 概览: index.md
   - 快速上手: quickstart.md
+  - LLM Agent Backtesting Guide: guides/llm-trading-agent-backtesting.md
   - 防数据泄漏: contamination.md
   - 核心架构: architecture.md
   - 项目对比: comparison.md

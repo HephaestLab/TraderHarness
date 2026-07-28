@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://hephaestlab.github.io/TraderHarness/sitemap.xml

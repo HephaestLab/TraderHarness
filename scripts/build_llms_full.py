@@ -6,6 +6,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DOCUMENTS = [
     ROOT / "README.md",
     ROOT / "docs" / "quickstart.md",
+    ROOT / "docs" / "guides" / "llm-trading-agent-backtesting.md",
     ROOT / "docs" / "contamination.md",
     ROOT / "docs" / "architecture.md",
     ROOT / "docs" / "comparison.md",

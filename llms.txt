@@ -11,6 +11,7 @@ Dataset: https://huggingface.co/datasets/ANTICH/traderharness-ashare-5y
 
 - [Overview](https://hephaestlab.github.io/TraderHarness/): Product scope and evaluation guarantees
 - [Quickstart](https://hephaestlab.github.io/TraderHarness/quickstart/): Install, dataset, replay demo, and UI
+- [How to backtest LLM trading agents without look-ahead bias](https://hephaestlab.github.io/TraderHarness/guides/llm-trading-agent-backtesting/): Practical evaluation contract for point-in-time data, fair execution, deterministic replay, and auditable trajectories
 - [Architecture](https://hephaestlab.github.io/TraderHarness/architecture/): Engine invariants and replay contract
 - [Preventing data leakage](https://hephaestlab.github.io/TraderHarness/contamination/): Point-in-time masking, date anonymization, entity masking, and audit evidence
 - [Project comparison](https://hephaestlab.github.io/TraderHarness/comparison/): TraderHarness, TradingAgents, StockBench, Qlib, and traditional engines

@@ -8,13 +8,8 @@ permissions:
   contents: read
 
 jobs:
-  pypi:
+  package:
     runs-on: ubuntu-latest
-    environment:
-      name: pypi
-      url: https://pypi.org/p/traderharness
-    permissions:
-      id-token: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -27,9 +22,69 @@ jobs:
           cache-dependency-path: webui/package-lock.json
       - run: npm ci && npm run build
         working-directory: webui
-      - run: python -m pip install build
+      - name: Match tag to package version
+        run: |
+          python - <<'PY'
+          import os
+          import pathlib
+          import tomllib
+
+          tag = os.environ["GITHUB_REF_NAME"].removeprefix("v")
+          with pathlib.Path("pyproject.toml").open("rb") as handle:
+              version = tomllib.load(handle)["project"]["version"]
+          if tag != version:
+              raise SystemExit(f"Tag v{tag} does not match package version {version}")
+          PY
+      - run: python -m pip install build twine
       - run: python -m build
+      - run: python -m twine check dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-dist
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+
+  pypi:
+    needs: package
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/traderharness
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-dist
+          path: dist
       - uses: pypa/gh-action-pypi-publish@release/v1
+
+  verify-pypi:
+    needs: pypi
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Wait for the tagged version on public PyPI
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          for attempt in {1..18}; do
+            if curl --fail --silent --show-error \
+              "https://pypi.org/pypi/traderharness/${VERSION}/json" > /dev/null; then
+              available=true
+              break
+            fi
+            echo "PyPI has not exposed ${VERSION} yet (attempt ${attempt}/18)"
+            sleep 10
+          done
+          test "${available:-false}" = true
+          python -m venv "${RUNNER_TEMP}/traderharness-public"
+          "${RUNNER_TEMP}/traderharness-public/bin/python" -m pip install \
+            --no-deps --index-url https://pypi.org/simple "traderharness==${VERSION}"
+          "${RUNNER_TEMP}/traderharness-public/bin/python" -c \
+            "import importlib.metadata; assert importlib.metadata.version('traderharness') == '${VERSION}'"
 
   container:
     runs-on: ubuntu-latest
@@ -67,12 +122,16 @@ jobs:
 
   github-release:
     name: Publish GitHub Release
-    needs: [pypi, container]
+    needs: [package, verify-pypi, container]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-dist
+          path: dist
       - name: Extract this version's CHANGELOG section
         id: notes
         run: |
@@ -93,3 +152,5 @@ jobs:
         with:
           name: TraderHarness ${{ github.ref_name }}
           body_path: release-notes.md
+          files: dist/*
+          fail_on_unmatched_files: true

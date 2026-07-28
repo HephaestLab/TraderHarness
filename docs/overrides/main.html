@@ -2,32 +2,64 @@
 
 {% block extrahead %}
   {{ super() }}
+  {% if page %}
+    {% set social_title = page.meta.title | default(page.title, true) | default(config.site_name, true) %}
+    {% set social_description = page.meta.description | default(config.site_description, true) %}
+    {% set social_url = page.canonical_url | default(config.site_url, true) %}
+  {% else %}
+    {% set social_title = config.site_name %}
+    {% set social_description = config.site_description %}
+    {% set social_url = config.site_url %}
+  {% endif %}
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="TraderHarness">
-  <meta property="og:title" content="TraderHarness — 抗数据污染的 LLM 交易 Agent 回测环境">
-  <meta property="og:description" content="严格时点掩码 + 日期/实体双重匿名 + 指纹回放的 A 股 LLM 交易 Agent 回测框架，每次运行同步合成全保真轨迹训练数据。">
+  <meta property="og:title" content="{{ social_title | e }}">
+  <meta property="og:description" content="{{ social_description | e }}">
   <meta property="og:image" content="https://hephaestlab.github.io/TraderHarness/assets/social-preview.png">
-  <meta property="og:url" content="https://hephaestlab.github.io/TraderHarness/">
+  <meta property="og:url" content="{{ social_url | e }}">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="TraderHarness — 抗数据污染的 LLM 交易 Agent 回测环境">
-  <meta name="twitter:description" content="严格时点掩码 + 日期/实体双重匿名 + 指纹回放的 A 股 LLM 交易 Agent 回测框架与轨迹数据合成器。">
+  <meta name="twitter:title" content="{{ social_title | e }}">
+  <meta name="twitter:description" content="{{ social_description | e }}">
   <meta name="twitter:image" content="https://hephaestlab.github.io/TraderHarness/assets/social-preview.png">
+  <link rel="alternate" type="text/plain" href="https://hephaestlab.github.io/TraderHarness/llms.txt" title="TraderHarness llms.txt">
+  <link rel="alternate" type="text/plain" href="https://hephaestlab.github.io/TraderHarness/llms-full.txt" title="TraderHarness full AI-readable documentation">
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
-    "@type": "SoftwareApplication",
-    "name": "TraderHarness",
-    "applicationCategory": "DeveloperApplication",
-    "operatingSystem": "Windows, macOS, Linux",
-    "programmingLanguage": "Python",
-    "description": "Contamination-resistant A-share backtesting, evaluation, replay, and trajectory export for autonomous LLM trading agents.",
-    "url": "https://hephaestlab.github.io/TraderHarness/",
-    "codeRepository": "https://github.com/HephaestLab/TraderHarness",
-    "downloadUrl": "https://pypi.org/project/traderharness/",
-    "license": "https://www.apache.org/licenses/LICENSE-2.0",
-    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
-    "author": { "@type": "Organization", "name": "HephaestLab", "url": "https://github.com/HephaestLab" },
-    "keywords": "LLM trading agents, backtesting, A-share, point-in-time masking, trajectory export, SFT, agent benchmark"
+    "@graph": [
+      {
+        "@type": "Organization",
+        "@id": "https://hephaestlab.github.io/TraderHarness/#organization",
+        "name": "HephaestLab",
+        "url": "https://github.com/HephaestLab"
+      },
+      {
+        "@type": ["SoftwareApplication", "SoftwareSourceCode"],
+        "@id": "https://hephaestlab.github.io/TraderHarness/#software",
+        "name": "TraderHarness",
+        "applicationCategory": "DeveloperApplication",
+        "operatingSystem": "Windows, macOS, Linux",
+        "programmingLanguage": "Python",
+        "runtimePlatform": "Python 3.10-3.12",
+        "description": "Contamination-resistant A-share backtesting, evaluation, replay, and trajectory export for autonomous LLM trading agents.",
+        "url": "https://hephaestlab.github.io/TraderHarness/",
+        "codeRepository": "https://github.com/HephaestLab/TraderHarness",
+        "downloadUrl": "https://pypi.org/project/traderharness/",
+        "license": "https://www.apache.org/licenses/LICENSE-2.0",
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+        "author": { "@id": "https://hephaestlab.github.io/TraderHarness/#organization" },
+        "keywords": "LLM trading agents, agent evaluation, backtesting, A-share, point-in-time masking, deterministic replay, trajectory export, SFT"
+      },
+      {
+        "@type": "Dataset",
+        "@id": "https://hephaestlab.github.io/TraderHarness/#dataset",
+        "name": "TraderHarness A-share 5-year dataset",
+        "description": "Five years of full-market China A-share daily and 5-minute bars with announcements, policy news, fundamentals, valuation, dividends, and a CSI 300 benchmark.",
+        "url": "https://huggingface.co/datasets/ANTICH/traderharness-ashare-5y",
+        "creator": { "@id": "https://hephaestlab.github.io/TraderHarness/#organization" },
+        "isPartOf": { "@id": "https://hephaestlab.github.io/TraderHarness/#software" }
+      }
+    ]
   }
   </script>
 {% endblock %}

@@ -11,6 +11,8 @@ description: 抗数据污染的 LLM 交易 Agent 回测环境：严格时点掩�
 [安装并运行 →](quickstart.md){ .md-button .md-button--primary }
 [在 GitHub 查看](https://github.com/HephaestLab/TraderHarness){ .md-button }
 
+English: [How to backtest LLM trading agents without look-ahead bias](guides/llm-trading-agent-backtesting.md)
+
 ![TraderHarness 流式历史回放控制台](assets/traderharness-demo.gif)
 
 *本地研究控制台实拍：回测逐日展开，像素办公室里的 Agent 实时研究、下单、复盘。*
