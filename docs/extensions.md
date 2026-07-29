@@ -1,3 +1,9 @@
+---
+seo_title: 如何扩展 TraderHarness：数据 Provider、Agent 工具与评估指标
+description: 为 TraderHarness 添加数据 Provider、Agent 工具、沙箱后端、评估指标和前端视图时必须遵守的时点安全、唯一下单路径与确定性边界。
+lang: zh-CN
+---
+
 # 扩展 TraderHarness
 
 TraderHarness 的设计允许在不削弱核心不变量的前提下扩展：回测期零 I/O、唯一下单路径、严格时点可见性、确定性执行、环境托管账户（见[核心架构](architecture.md)与

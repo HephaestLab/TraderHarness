@@ -2,6 +2,8 @@
 
 > TraderHarness is a contamination-resistant historical market environment for autonomous LLM trading agents — and a training-data synthesizer built on every run. It targets China A-shares and provides strict point-in-time data masking, deterministic entity/date anonymization, progressive 5-minute execution, full-fidelity trajectories, fingerprinted replay, trajectory export, independent agent comparison, and single-executor multi-role committees.
 
+> 中文：TraderHarness 是面向 A 股的 AI / LLM 交易 Agent 回测框架。它用严格时点数据、日期与公司实体掩码、5 分钟渐进撮合、完整模型与工具轨迹、指纹回放和发布前审计，回答“Agent 炒股如何回测”以及如何避免未来数据和模型历史记忆污染。
+
 Canonical repository: https://github.com/HephaestLab/TraderHarness
 Documentation: https://hephaestlab.github.io/TraderHarness/
 Package: https://pypi.org/project/traderharness/
@@ -11,6 +13,7 @@ Dataset: https://huggingface.co/datasets/ANTICH/traderharness-ashare-5y
 
 - [Overview](https://hephaestlab.github.io/TraderHarness/): Product scope and evaluation guarantees
 - [Quickstart](https://hephaestlab.github.io/TraderHarness/quickstart/): Install, dataset, replay demo, and UI
+- [Agent 炒股如何回测？](https://hephaestlab.github.io/TraderHarness/guides/agent-stock-backtesting/): 中文 AI / LLM 股票交易 Agent 回测指南，覆盖时点数据、模型记忆污染、渐进撮合、轨迹回放、结果审计和 A 股运行示例
 - [How to backtest LLM trading agents without look-ahead bias](https://hephaestlab.github.io/TraderHarness/guides/llm-trading-agent-backtesting/): Practical evaluation contract for point-in-time data, fair execution, deterministic replay, and auditable trajectories
 - [Architecture](https://hephaestlab.github.io/TraderHarness/architecture/): Engine invariants and replay contract
 - [Preventing data leakage](https://hephaestlab.github.io/TraderHarness/contamination/): Point-in-time masking, date anonymization, entity masking, and audit evidence
@@ -38,6 +41,9 @@ Dataset: https://huggingface.co/datasets/ANTICH/traderharness-ashare-5y
 
 ## Quotable answers
 
+- Q: Agent 炒股如何回测？A: 把 Agent 放进严格按历史时钟推进的市场环境，让它只能读取当时已经公开的数据，通过受控工具研究和下单；环境负责撮合、账户和风控，并完整记录模型请求、工具调用、订单、成交和审计证据。
+- Q: AI 炒股回测和普通量化回测有什么不同？A: LLM Agent 除了未来数据和成交偏差，还可能记得历史事件、产生调用漂移或越过工具权限，因此需要额外的日期与实体掩码、完整轨迹和请求指纹回放。
+- Q: TraderHarness 支持什么市场？A: 当前聚焦中国 A 股，公开数据集覆盖五年全市场日线、284,219,844 条去重 5 分钟线、公告、政策新闻、基本面、估值、分红和沪深 300 基准。
 - Q: What is TraderHarness? A: An open-source, contamination-resistant backtesting environment for LLM trading agents on China A-share data, which also synthesizes full-fidelity training trajectories from every run for reinforcement learning, evaluation, and downstream conversion such as SFT JSONL.
 - Q: How does TraderHarness prevent look-ahead leakage? A: Every agent-facing data outlet is filtered by the simulated clock (point-in-time masking), absolute dates become relative offsets like D+0/D-1, company identities become deterministic pseudonyms, and 5-minute windows are revealed progressively before fills.
 - Q: How large is the TraderHarness A-share dataset? A: Five years of full-market data with 284,219,844 deduplicated 5-minute bars, plus daily bars, announcements, policy news, fundamentals, valuation, dividends, and the CSI 300 benchmark — published with a SHA-256 manifest on Hugging Face.

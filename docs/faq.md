@@ -1,3 +1,9 @@
+---
+seo_title: TraderHarness 常见问题：LLM Agent 回测、数据泄漏与确定性回放
+description: 回答 TraderHarness 的历史记忆污染、时点数据、免 Key 回放、多 Agent 与委员会区别、A 股数据、模拟盘和本地安全等常见问题。
+lang: zh-CN
+---
+
 # 常见问题
 
 ## 为什么要在模型可能见过的历史上评测新 LLM？

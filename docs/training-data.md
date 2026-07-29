@@ -1,5 +1,7 @@
 ---
+seo_title: LLM 交易 Agent 轨迹数据：回放、审计与强化学习导出
 description: TraderHarness 全保真轨迹采集与轨迹导出：完整消息、工具 schema、推理内容逐次落盘，导出 OpenAI 风格 SFT JSONL。
+lang: zh-CN
 ---
 
 # 全保真轨迹与轨迹导出

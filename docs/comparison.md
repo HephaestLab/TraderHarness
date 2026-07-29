@@ -1,3 +1,9 @@
+---
+seo_title: TraderHarness 与 TradingAgents、StockBench、Qlib 有什么区别？
+description: 对比 TraderHarness、TradingAgents、StockBench、Qlib 和传统回测引擎，说明 Agent 编排、历史市场环境、抗污染、撮合、回放与训练轨迹的边界。
+lang: zh-CN
+---
+
 # 与相邻项目的对比
 
 TraderHarness 是一套环境与证据基础设施。它可以承载不同的 Agent 架构，但不规定它们的投资方法论。

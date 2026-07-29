@@ -10,6 +10,10 @@ on:
       - "README_en.md"
       - "llms.txt"
       - "llms-full.txt"
+      - "scripts/build_llms_full.py"
+      - "scripts/check_docs_discovery.py"
+      - "scripts/update_page_languages.py"
+      - "scripts/update_sitemap_lastmod.py"
       - "AGENTS.md"
       - "CHANGELOG.md"
       - ".github/workflows/docs.yml"
@@ -32,18 +36,30 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
       - name: Install documentation dependencies
         run: python -m pip install ".[docs]"
+      - name: Verify AI-readable documentation bundle
+        run: |
+          python scripts/build_llms_full.py
+          git diff --exit-code -- llms-full.txt
       - name: Build documentation
         run: mkdocs build --strict
       - name: Publish AI-readable documentation
         run: |
           cp llms.txt site/llms.txt
           cp llms-full.txt site/llms-full.txt
+      - name: Apply per-page document languages
+        run: python scripts/update_page_languages.py
+      - name: Preserve source revision dates in sitemap
+        run: python scripts/update_sitemap_lastmod.py
+      - name: Check search and AI discovery contracts
+        run: python scripts/check_docs_discovery.py
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
@@ -52,7 +68,7 @@ jobs:
         uses: actions/deploy-pages@v4
       - name: Verify deployed discovery endpoints
         run: |
-          for path in "robots.txt" "sitemap.xml" "llms.txt" "llms-full.txt" "guides/llm-trading-agent-backtesting/"; do
+          for path in "robots.txt" "sitemap.xml" "llms.txt" "llms-full.txt" "guides/agent-stock-backtesting/" "guides/llm-trading-agent-backtesting/"; do
             success=false
             for attempt in {1..12}; do
               if curl --fail --silent --show-error \
@@ -70,7 +86,7 @@ jobs:
         env:
           INDEXNOW_KEY: bc1dff31c472cb4a322c024d3b0562d6
         run: |
-          for path in "" "guides/llm-trading-agent-backtesting/" "llms.txt" "llms-full.txt"; do
+          for path in "" "guides/agent-stock-backtesting/" "guides/llm-trading-agent-backtesting/" "llms.txt" "llms-full.txt"; do
             curl --fail --silent --show-error --get \
               --data-urlencode "url=https://hephaestlab.github.io/TraderHarness/${path}" \
               --data-urlencode "key=${INDEXNOW_KEY}" \

@@ -1,5 +1,7 @@
 ---
+seo_title: TraderHarness 开源发布与分发手册
 description: TraderHarness 发布分发手册：GitHub 元数据、Show HN、Reddit、X、知乎、掘金、V2EX、Product Hunt 发布稿与 awesome-list 投稿模板。
+lang: zh-CN
 ---
 
 # 发布分发手册
@@ -36,6 +38,26 @@ Repository: TraderHarness
 Workflow name: release.yml
 Environment name: pypi
 ```
+
+## 搜索与生成式发现发布清单
+
+站内技术项由文档部署流水线自动检查：唯一标题和描述、canonical、双语
+`hreflang`、JSON-LD、站点地图、`robots.txt`、`llms.txt` / `llms-full.txt`，以及
+中文和英文核心指南的公开可访问性。部署完成后，IndexNow 会通知支持该协议的搜索引擎。
+
+首次发布或域名迁移后仍需由站点所有者完成以下一次性操作：
+
+1. 在 Google Search Console 和 Bing Webmaster Tools 验证站点所有权并提交
+   `https://hephaestlab.github.io/TraderHarness/sitemap.xml`。
+2. 对中文指南
+   `https://hephaestlab.github.io/TraderHarness/guides/agent-stock-backtesting/`
+   使用 URL 检查工具请求抓取；英文指南同样操作。
+3. 如果后续建立可稳定访问的中国大陆镜像，再向百度搜索资源平台提交镜像站点；不要让两个站点
+   在没有 canonical / hreflang 约束的情况下复制同一批页面。
+4. 每周记录品牌词、`Agent 炒股如何回测`、`LLM trading agent backtesting` 的展现、点击、
+   收录状态和 AI 引用样例。至少观察 6–8 周，不用单日排名判断改版成败。
+5. 外部内容使用“问题—方法—可复现实验—局限—项目链接”的独立文章结构，不复制 README；
+   优先争取真实讨论、复现和引用，而不是批量制造低质量外链。
 
 ## GitHub 仓库元数据（建议配置）
 
@@ -107,7 +129,7 @@ market-simulation, fastapi, react, python
 
 3/ Every order goes through one path: TradingBus.place_order(). Same clock, isolated portfolios — so multi-agent comparisons are fair, and replay cassettes reproduce runs bit-for-bit with zero API keys.
 
-4/ Bonus: every run doubles as a data synthesizer. Full-fidelity trajectories → `traderharness export sft` → OpenAI-style JSONL, gated by leakage audits. Dataset: <https://huggingface.co/datasets/ANTICH/traderharness-ashare-5y>
+4/ Bonus: every run doubles as a data synthesizer. Full-fidelity trajectories support reinforcement learning, behavior analysis, and evaluation; an optional converter emits OpenAI-style SFT JSONL. Every shared artifact is gated by leakage audits. Dataset: <https://huggingface.co/datasets/ANTICH/traderharness-ashare-5y>
 
 5/ Open source (Apache-2.0), local-first, with a pixel-office research console. Repo: <https://github.com/HephaestLab/TraderHarness> — feedback on the masking threat model very welcome.
 
@@ -119,8 +141,9 @@ market-simulation, fastapi, react, python
 >
 > 我们开源了 TraderHarness，把抗污染做成环境不变量：五年全市场真实数据预加载后，每个数据出口都过模拟时钟过滤（时点掩码）；日期变成 D+0/D-1 相对偏移；公司变成确定性伪身份（600519 → 公司-600731）；分钟线随窗口渐进揭示，决策时不可见的价格不可成交；所有订单只走一条 TradingBus 路径。
 >
-> 同时它也是一个数据合成器：每次模型调用的完整消息、工具 schema、推理过程全部落盘成轨迹，可指纹回放、可审计泄漏、可导出 SFT JSONL。数据集已发 Hugging Face。
+> 同时它也是一个数据合成器：每次模型调用的完整消息、工具 schema、推理过程全部落盘成轨迹，可用于强化学习、行为分析和评测，也可按需转换为 SFT JSONL。数据集已发 Hugging Face。
 >
+> 方法指南：<https://hephaestlab.github.io/TraderHarness/guides/agent-stock-backtesting/>
 > 仓库：<https://github.com/HephaestLab/TraderHarness>（Apache-2.0，本地运行，带免密回放和像素办公室研究台）。欢迎挑刺，尤其是掩码威胁模型。
 
 ## 掘金 / V2EX（分享体）
@@ -137,7 +160,7 @@ market-simulation, fastapi, react, python
 > 同时支持独立账户的多 Agent 赛马，以及多个只读顾问 + 单一 Trader 的委员会。仓库带免 Key 回放和本地研究工作台。
 >
 > GitHub: <https://github.com/HephaestLab/TraderHarness>
-> 文档: <https://hephaestlab.github.io/TraderHarness/>
+> Agent 炒股回测指南: <https://hephaestlab.github.io/TraderHarness/guides/agent-stock-backtesting/>
 > 数据集: <https://huggingface.co/datasets/ANTICH/traderharness-ashare-5y>
 
 ## Product Hunt
@@ -148,7 +171,7 @@ market-simulation, fastapi, react, python
 
 **Description（260 字符内）**
 
-> TraderHarness is an open-source A-share market environment for evaluating LLM trading agents without data leakage: point-in-time masking, entity/date anonymization, progressive 5-minute execution, fingerprinted replay — plus full-fidelity trajectory export for SFT training data.
+> TraderHarness is an open-source A-share market environment for evaluating LLM trading agents without data leakage: point-in-time masking, entity/date anonymization, progressive 5-minute execution, fingerprinted replay, and full-fidelity trajectories for RL and evaluation.
 
 **First comment**
 
@@ -165,7 +188,7 @@ market-simulation, fastapi, react, python
   `| [TraderHarness](https://github.com/HephaestLab/TraderHarness) | LLM-native A-share backtesting environment with strict point-in-time masking and deterministic replay. |`
 - `awesome-systematic-trading` → 同上（链接到 [核心架构](architecture.md)）
 - `awesome-financial-ai` →
-  `| [TraderHarness](https://github.com/HephaestLab/TraderHarness) | Evaluate LLM trading agents on masked five-year A-share data; exports full-fidelity SFT trajectories. |`
+  `| [TraderHarness](https://github.com/HephaestLab/TraderHarness) | Evaluate LLM trading agents on masked five-year A-share data; records auditable trajectories for reinforcement learning and evaluation. |`
 
 ## HelloGitHub 投稿草稿（暂缓投递，先攒背书）
 
@@ -186,7 +209,7 @@ market-simulation, fastapi, react, python
 
 **项目描述**
 
-> LLM 正在走进真实交易，但"回测 LLM 交易 Agent"一直没有规范化的考场：模型可能认得考题（日期、公司、行情），记忆污染会让评测结论悄悄失效。TraderHarness 是一套抗污染的 A 股回测环境——五年全市场真实数据、每个数据出口严格时点掩码、日期与公司确定性匿名化、分钟级渐进撮合、全保真轨迹可指纹回放可审计；同时它也是一个 LLM 交易专项数据合成器，每次运行自动产出可导出的 SFT 轨迹数据。
+> LLM 正在走进真实交易，但"回测 LLM 交易 Agent"一直没有规范化的考场：模型可能认得考题（日期、公司、行情），记忆污染会让评测结论悄悄失效。TraderHarness 是一套抗污染的 A 股回测环境——五年全市场真实数据、每个数据出口严格时点掩码、日期与公司确定性匿名化、分钟级渐进撮合、全保真轨迹可指纹回放可审计；同时它也是一个 LLM 交易专项数据合成器，每次运行自动产出可用于强化学习、行为分析和评测的轨迹数据。
 
 **亮点**
 
@@ -194,7 +217,7 @@ market-simulation, fastapi, react, python
 - 五年 A 股全市场真实数据：2.8 亿条 5 分钟 K 线、公告、新闻、基本面、估值、分红、沪深 300
 - 公平撮合：分钟线随窗口渐进揭示，决策时不可见的价格不可成交，所有订单只走一条 TradingBus 路径
 - 多 Agent 赛马 + 单执行者委员会，本地像素办公室研究台可实时观战、逐笔复盘
-- 免密回放演示开箱即跑；轨迹一键导出 OpenAI 风格 SFT JSONL，配套 Hugging Face 数据集
+- 免密回放演示开箱即跑；完整轨迹支持强化学习、行为分析和评测，并可按需转换为 OpenAI 风格 SFT JSONL
 
 **截图**
 

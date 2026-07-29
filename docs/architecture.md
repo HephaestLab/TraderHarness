@@ -1,3 +1,9 @@
+---
+seo_title: TraderHarness 架构：LLM Agent 回测引擎、撮合与指纹回放
+description: TraderHarness 核心架构说明：时点安全数据出口、三阶段 Agent 循环、唯一撮合路径、只读账户、完整轨迹和确定性指纹回放。
+lang: zh-CN
+---
+
 # 核心架构
 
 ![TraderHarness 数据、引擎、Agent、轨迹与评估架构](assets/architecture.svg)

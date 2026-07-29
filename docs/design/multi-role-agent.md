@@ -1,3 +1,9 @@
+---
+seo_title: 多角色 LLM 交易 Agent 如何回测？只读顾问与唯一执行者
+description: TraderHarness 多角色交易 Agent 设计：研究员和风险顾问保持只读，唯一 Trader 获得下单工具，并保证账户隔离、顺序确定和轨迹可回放。
+lang: zh-CN
+---
+
 # 多角色 Agent 适配器
 
 ## 目标

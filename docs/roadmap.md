@@ -1,3 +1,9 @@
+---
+seo_title: TraderHarness 路线图：A 股 Agent 回测、模拟盘与安全边界
+description: TraderHarness 已交付能力、模拟实盘 paper trading 设计、未来券商适配器、沙箱加固和公开多租户服务等明确非目标。
+lang: zh-CN
+---
+
 # 路线图
 
 本页记录 TraderHarness 已经交付了什么、计划做什么，方便集成方做"自建还是等待"的决策，而不必从 issue 列表里猜。以下内容均不构成日期承诺。

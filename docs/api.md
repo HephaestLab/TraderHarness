@@ -1,3 +1,9 @@
+---
+seo_title: TraderHarness CLI 与本地 API：运行、回放、审计和 Agent 管理
+description: TraderHarness 命令行与 localhost API 参考，包含数据下载、Agent 回测、compare、replay、audit、轨迹导出、REST 和 WebSocket 接口。
+lang: zh-CN
+---
+
 # CLI 与本地 API 参考
 
 ## 核心 CLI

@@ -1,5 +1,7 @@
 ---
+seo_title: 如何防止 LLM 交易 Agent 回测的数据泄漏与历史记忆污染？
 description: TraderHarness 如何在每个数据出口执行时点掩码、日期相对化与公司实体匿名化，防止 LLM 回测中的记忆污染与执行层泄漏。
+lang: zh-CN
 ---
 
 # 无数据泄漏的 LLM 交易回测

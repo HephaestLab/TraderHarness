@@ -1,6 +1,8 @@
 ---
 title: Masked vs Unmasked LLM Trading Agent
+seo_title: Masked vs Unmasked LLM Trading Agent Experiment | TraderHarness
 description: Explore a recorded, auditable TraderHarness experiment comparing the same LLM trading agent with and without visible dates and company identities.
+lang: en
 ---
 
 # Masked vs Unmasked
@@ -19,5 +21,5 @@ calendar dates and company identities.
   <div class="ab-loading" role="status">Loading the audited experiment…</div>
 </div>
 
-[Inspect the protocol](plans/one-click-and-masking-ab.md){ .md-button }
+[Inspect the protocol](https://github.com/HephaestLab/TraderHarness/blob/main/docs/plans/one-click-and-masking-ab.md){ .md-button }
 [View the code](https://github.com/HephaestLab/TraderHarness){ .md-button .md-button--primary }

@@ -20,7 +20,7 @@ LLM Agent 正在走进真实交易：研究、决策、下单，越来越多地�
 
 TraderHarness 就是这套规范：一个抗污染的 LLM 交易 Agent 回测执行环境——同时，由于每次模型调用都被全保真记录，它也是一个把这些运行一键变成轨迹训练数据的数据合成器。
 
-**先看证据：** [零凭据体验 Masked vs Unmasked 实验](https://hephaestlab.github.io/TraderHarness/masking-ab-showcase/) · [三步运行免 Key 回放](#快速开始) · [看它和 TradingAgents / StockBench / Qlib 的边界](docs/comparison.md) · [阅读英文 LLM Agent 回测方法指南](docs/guides/llm-trading-agent-backtesting.md)
+**先看证据：** [Agent 炒股如何回测？完整中文指南](https://hephaestlab.github.io/TraderHarness/guides/agent-stock-backtesting/) · [零凭据体验 Masked vs Unmasked 实验](https://hephaestlab.github.io/TraderHarness/masking-ab-showcase/) · [三步运行免 Key 回放](#快速开始) · [看它和 TradingAgents / StockBench / Qlib 的边界](docs/comparison.md) · [English backtesting guide](docs/guides/llm-trading-agent-backtesting.md)
 
 <p align="center">
   <img src="docs/assets/traderharness-demo.gif" alt="TraderHarness 流式历史回放控制台" width="920">
@@ -29,6 +29,12 @@ TraderHarness 就是这套规范：一个抗污染的 LLM 交易 Agent 回测执
 <p align="center"><sub>该 GIF 由本地研究控制台截图生成（<code>webui/scripts/capture-demo.mjs</code>）。UI 有变化时执行 <code>npm run capture:demo</code> 重新生成；将随 v1.0 验收跑一并更新。</sub></p>
 
 > 如果你也在解决 LLM 交易评测里的数据泄漏、成交公平或结果复现问题，欢迎在仓库右上角点 **Star**。后续公开 benchmark、回放盒带和数据集更新都会在这里发布。
+
+## Agent 炒股如何回测
+
+可信的 AI / LLM 股票 Agent 回测，需要用历史时钟限制日线、分钟线、公告、新闻和基本面的每一个出口；Agent 只能通过受控工具研究和下单，决策后才逐步揭示可成交价格，环境负责账户、撮合和风控，并完整记录模型请求、工具调用、订单与成交。仅把一段 K 线交给大模型、再询问“该买还是该卖”，无法排除未来数据、模型历史记忆和成交偏差。
+
+完整方法、A 股实例和可运行命令见[《Agent 炒股如何回测？AI / LLM 股票交易 Agent 回测指南》](docs/guides/agent-stock-backtesting.md)。
 
 ## 魔鬼行情实测：21 个交易日小基准
 

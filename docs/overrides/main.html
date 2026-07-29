@@ -1,26 +1,61 @@
 {% extends "base.html" %}
 
+{% block htmltitle %}
+  {% if page and page.meta and page.meta.seo_title %}
+    <title>{{ page.meta.seo_title }}</title>
+  {% else %}
+    {{ super() }}
+  {% endif %}
+{% endblock %}
+
 {% block extrahead %}
   {{ super() }}
   {% if page %}
-    {% set social_title = page.meta.title | default(page.title, true) | default(config.site_name, true) %}
+    {% set page_language = page.meta.lang | default("zh-CN", true) %}
+    {% set social_title = page.meta.social_title | default(page.meta.seo_title, true) | default(page.meta.title, true) | default(page.title, true) | default(config.site_name, true) %}
     {% set social_description = page.meta.description | default(config.site_description, true) %}
     {% set social_url = page.canonical_url | default(config.site_url, true) %}
   {% else %}
+    {% set page_language = "zh-CN" %}
     {% set social_title = config.site_name %}
     {% set social_description = config.site_description %}
     {% set social_url = config.site_url %}
   {% endif %}
-  <meta property="og:type" content="website">
+  <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1">
+  <meta http-equiv="content-language" content="{{ page_language }}">
+  <script>document.documentElement.lang = {{ page_language | tojson }};</script>
+  <meta property="og:type" content="{% if page and page.meta.schema_type == 'TechArticle' %}article{% else %}website{% endif %}">
   <meta property="og:site_name" content="TraderHarness">
+  <meta property="og:locale" content="{% if page_language == 'en' %}en_US{% else %}zh_CN{% endif %}">
   <meta property="og:title" content="{{ social_title | e }}">
   <meta property="og:description" content="{{ social_description | e }}">
   <meta property="og:image" content="https://hephaestlab.github.io/TraderHarness/assets/social-preview.png">
-  <meta property="og:url" content="{{ social_url | e }}">
+  <meta property="og:image:alt" content="TraderHarness — auditable backtesting for AI and LLM trading agents">
+  <meta property="og:url" content="{{ social_url }}">
+  {% if page and page.meta.datePublished %}
+    <meta property="article:published_time" content="{{ page.meta.datePublished }}">
+  {% endif %}
+  {% if page and page.meta.dateModified %}
+    <meta property="article:modified_time" content="{{ page.meta.dateModified }}">
+  {% endif %}
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="{{ social_title | e }}">
   <meta name="twitter:description" content="{{ social_description | e }}">
   <meta name="twitter:image" content="https://hephaestlab.github.io/TraderHarness/assets/social-preview.png">
+  <meta name="twitter:image:alt" content="TraderHarness — auditable backtesting for AI and LLM trading agents">
+  {% if page and page.meta.alternate_zh %}
+    <link rel="alternate" hreflang="zh-CN" href="{{ page.meta.alternate_zh }}">
+  {% endif %}
+  {% if page and page.meta.alternate_en %}
+    <link rel="alternate" hreflang="en" href="{{ page.meta.alternate_en }}">
+  {% endif %}
+  {% if page and page.meta.alternate_zh and page.meta.alternate_en %}
+    <link rel="alternate" hreflang="x-default" href="{{ page.meta.alternate_en }}">
+  {% elif page and page.meta.alternate_zh %}
+    <link rel="alternate" hreflang="x-default" href="{{ page.meta.alternate_zh }}">
+  {% elif page and page.meta.alternate_en %}
+    <link rel="alternate" hreflang="x-default" href="{{ page.meta.alternate_en }}">
+  {% endif %}
   <link rel="alternate" type="text/plain" href="https://hephaestlab.github.io/TraderHarness/llms.txt" title="TraderHarness llms.txt">
   <link rel="alternate" type="text/plain" href="https://hephaestlab.github.io/TraderHarness/llms-full.txt" title="TraderHarness full AI-readable documentation">
   <script type="application/ld+json">
@@ -31,24 +66,43 @@
         "@type": "Organization",
         "@id": "https://hephaestlab.github.io/TraderHarness/#organization",
         "name": "HephaestLab",
-        "url": "https://github.com/HephaestLab"
+        "url": "https://github.com/HephaestLab",
+        "sameAs": [
+          "https://github.com/HephaestLab",
+          "https://pypi.org/project/traderharness/",
+          "https://huggingface.co/datasets/ANTICH/traderharness-ashare-5y"
+        ]
+      },
+      {
+        "@type": "WebSite",
+        "@id": "https://hephaestlab.github.io/TraderHarness/#website",
+        "name": "TraderHarness",
+        "alternateName": "TraderHarness LLM Trading Agent Backtesting",
+        "url": "https://hephaestlab.github.io/TraderHarness/",
+        "description": "AI and LLM trading-agent backtesting, deterministic replay, and trajectory auditing for China A-shares.",
+        "inLanguage": ["zh-CN", "en"],
+        "publisher": { "@id": "https://hephaestlab.github.io/TraderHarness/#organization" }
       },
       {
         "@type": ["SoftwareApplication", "SoftwareSourceCode"],
         "@id": "https://hephaestlab.github.io/TraderHarness/#software",
         "name": "TraderHarness",
+        "alternateName": "A-share LLM Trading Agent Backtesting Environment",
         "applicationCategory": "DeveloperApplication",
+        "applicationSubCategory": "AI agent evaluation and financial backtesting",
         "operatingSystem": "Windows, macOS, Linux",
         "programmingLanguage": "Python",
         "runtimePlatform": "Python 3.10-3.12",
-        "description": "Contamination-resistant A-share backtesting, evaluation, deterministic replay, and training trajectory generation for autonomous LLM trading agents.",
+        "description": "Open-source, contamination-resistant A-share backtesting, evaluation, deterministic replay, and training-trajectory generation for autonomous AI and LLM trading agents.",
         "url": "https://hephaestlab.github.io/TraderHarness/",
         "codeRepository": "https://github.com/HephaestLab/TraderHarness",
         "downloadUrl": "https://pypi.org/project/traderharness/",
         "license": "https://www.apache.org/licenses/LICENSE-2.0",
+        "isAccessibleForFree": true,
         "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
         "author": { "@id": "https://hephaestlab.github.io/TraderHarness/#organization" },
-        "keywords": "LLM trading agents, agent evaluation, backtesting, A-share, point-in-time masking, deterministic replay, training trajectories, reinforcement learning"
+        "isPartOf": { "@id": "https://hephaestlab.github.io/TraderHarness/#website" },
+        "keywords": "Agent 炒股回测, AI 炒股回测, LLM trading agents, agent evaluation, backtesting, A-share, point-in-time data, entity masking, deterministic replay, reinforcement learning trajectories"
       },
       {
         "@type": "Dataset",
@@ -56,10 +110,74 @@
         "name": "TraderHarness A-share 5-year dataset",
         "description": "Five years of full-market China A-share daily and 5-minute bars with announcements, policy news, fundamentals, valuation, dividends, and a CSI 300 benchmark.",
         "url": "https://huggingface.co/datasets/ANTICH/traderharness-ashare-5y",
+        "license": "https://github.com/HephaestLab/TraderHarness/blob/main/docs/data.md",
         "creator": { "@id": "https://hephaestlab.github.io/TraderHarness/#organization" },
         "isPartOf": { "@id": "https://hephaestlab.github.io/TraderHarness/#software" }
       }
     ]
   }
   </script>
+  {% if page and page.meta.schema_type == "TechArticle" %}
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "TechArticle",
+    "headline": {{ page.title | striptags | tojson }},
+    "name": {{ social_title | tojson }},
+    "description": {{ social_description | tojson }},
+    "url": {{ social_url | tojson }},
+    "mainEntityOfPage": { "@type": "WebPage", "@id": {{ social_url | tojson }} },
+    "inLanguage": {{ page_language | tojson }},
+    "datePublished": {{ page.meta.datePublished | string | tojson }},
+    "dateModified": {{ page.meta.dateModified | string | tojson }},
+    "author": { "@id": "https://hephaestlab.github.io/TraderHarness/#organization" },
+    "publisher": { "@id": "https://hephaestlab.github.io/TraderHarness/#organization" },
+    "image": "https://hephaestlab.github.io/TraderHarness/assets/social-preview.png",
+    "about": { "@id": "https://hephaestlab.github.io/TraderHarness/#software" },
+    "isAccessibleForFree": true
+  }
+  </script>
+  {% endif %}
+  {% if page and not page.is_homepage %}
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    "itemListElement": [
+      {
+        "@type": "ListItem",
+        "position": 1,
+        "name": "TraderHarness",
+        "item": "https://hephaestlab.github.io/TraderHarness/"
+      },
+      {
+        "@type": "ListItem",
+        "position": 2,
+        "name": {{ page.title | striptags | tojson }},
+        "item": {{ social_url | tojson }}
+      }
+    ]
+  }
+  </script>
+  {% endif %}
+  {% if page and page.meta.faq %}
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {% for item in page.meta.faq %}
+      {
+        "@type": "Question",
+        "name": {{ item.question | tojson }},
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": {{ item.answer | tojson }}
+        }
+      }{% if not loop.last %},{% endif %}
+      {% endfor %}
+    ]
+  }
+  </script>
+  {% endif %}
 {% endblock %}

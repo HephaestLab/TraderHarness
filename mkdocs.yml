@@ -1,10 +1,17 @@
 site_name: TraderHarness
-site_description: 抗数据污染的 LLM 交易 Agent 回测环境与轨迹数据合成器
+site_description: 面向 A 股的 AI / LLM 交易 Agent 回测框架：时点数据、实体掩码、渐进撮合、指纹回放与完整轨迹审计
 site_url: https://hephaestlab.github.io/TraderHarness/
+site_author: HephaestLab
 repo_url: https://github.com/HephaestLab/TraderHarness
 repo_name: HephaestLab/TraderHarness
 edit_uri: edit/main/docs/
 copyright: Apache-2.0 © HephaestLab
+
+exclude_docs: |
+  plans/
+  design/pixel-trader-scene.md
+  design/animation_preview.html
+  v0.1.0-plan.md
 
 theme:
   name: material
@@ -56,9 +63,10 @@ markdown_extensions:
 
 nav:
   - 概览: index.md
+  - AI 炒股回测指南: guides/agent-stock-backtesting.md
   - Masked vs Unmasked: masking-ab-showcase.md
   - 快速上手: quickstart.md
-  - LLM Agent Backtesting Guide: guides/llm-trading-agent-backtesting.md
+  - English Backtesting Guide: guides/llm-trading-agent-backtesting.md
   - 防数据泄漏: contamination.md
   - 核心架构: architecture.md
   - 项目对比: comparison.md

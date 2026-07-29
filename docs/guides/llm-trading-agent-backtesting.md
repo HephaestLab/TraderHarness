@@ -1,9 +1,32 @@
 ---
 title: How to Backtest LLM Trading Agents Without Look-Ahead Bias
+seo_title: How to Backtest LLM Trading Agents Without Look-Ahead Bias | TraderHarness
 description: A practical framework for point-in-time data, fair execution, deterministic replay, contamination controls, and auditable trajectories in LLM trading-agent backtests.
+author: HephaestLab
+lang: en
+schema_type: TechArticle
+datePublished: 2026-07-29
+dateModified: 2026-07-29
+alternate_zh: https://hephaestlab.github.io/TraderHarness/guides/agent-stock-backtesting/
+alternate_en: https://hephaestlab.github.io/TraderHarness/guides/llm-trading-agent-backtesting/
+faq:
+  - question: Can an LLM trading backtest be deterministic?
+    answer: >-
+      Fresh hosted-model generation is not guaranteed to be deterministic, but the full exchange can be recorded and replayed against canonical request fingerprints while matching, accounting, and metrics remain deterministic.
+  - question: Does point-in-time data eliminate all backtest bias?
+    answer: >-
+      No. It addresses information timing, but universe construction, survivorship, costs, market impact, missing data, multiple testing, and model-selection bias still require explicit treatment.
+  - question: Why mask company names as well as dates?
+    answer: >-
+      A recognizable ticker, company, product, or announcement can reveal a historical event even when the date is hidden. Entity masking reduces that memory channel while retaining the market rules needed for simulation.
+  - question: Is TraderHarness a live trading bot?
+    answer: >-
+      No. TraderHarness is local research infrastructure for historical evaluation and trajectory generation; it does not route live orders or claim that historical performance predicts live returns.
 ---
 
 # How to Backtest LLM Trading Agents Without Look-Ahead Bias
+
+中文：[Agent 炒股如何回测？AI / LLM 股票交易 Agent 回测指南](agent-stock-backtesting.md)
 
 An LLM trading-agent backtest is credible only when the agent sees exactly what would have been public at the simulated time, can trade only at prices revealed after its decision, and leaves enough evidence for the run to be reproduced and audited. A prompt that says “do not use future information” is not sufficient: the restriction must be enforced by the environment.
 

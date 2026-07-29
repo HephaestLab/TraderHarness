@@ -1,5 +1,7 @@
 ---
+seo_title: TraderHarness 快速开始：三步回放 A 股 LLM 交易 Agent
 description: TraderHarness 快速上手：pip/Docker 安装、五年 A 股数据下载、免密回放演示、本地研究控制台与多 Agent 对比。
+lang: zh-CN
 ---
 
 # 快速上手

@@ -1,5 +1,7 @@
 ---
-description: 抗数据污染的 LLM 交易 Agent 回测环境：严格时点掩码、日期与实体双重匿名、分钟级渐进撮合、指纹回放与全保真轨迹导出。
+seo_title: Agent 炒股如何回测？A 股 AI / LLM 交易 Agent 回测框架 | TraderHarness
+description: TraderHarness 是面向 A 股的 AI / LLM 交易 Agent 回测框架，提供严格时点数据、日期与实体掩码、5 分钟渐进撮合、指纹回放和完整轨迹审计。
+lang: zh-CN
 ---
 
 # TraderHarness
@@ -8,7 +10,10 @@ description: 抗数据污染的 LLM 交易 Agent 回测环境：严格时点掩�
 
 它为 LLM 提供一个历史有效的 A 股市场、一套受控的研究工具，以及由环境托管的账户。Agent 可以调查研究、执行 Python 分析、修正论点，并通过唯一可审计的下单路径完成交易。
 
-[一键体验 Masked vs Unmasked →](masking-ab-showcase.md){ .md-button .md-button--primary }
+如果你正在搜索 **“Agent 炒股如何回测”**：可信的做法不是把整段 K 线交给模型，而是用历史时钟限制每一个数据出口，在决策后才揭示可成交价格，并记录模型、工具、订单和成交的完整证据。阅读[《Agent 炒股如何回测？AI / LLM 股票交易 Agent 回测指南》](guides/agent-stock-backtesting.md)。
+
+[Agent 炒股回测指南](guides/agent-stock-backtesting.md){ .md-button .md-button--primary }
+[一键体验 Masked vs Unmasked →](masking-ab-showcase.md){ .md-button }
 [安装并运行](quickstart.md){ .md-button }
 [在 GitHub 查看](https://github.com/HephaestLab/TraderHarness){ .md-button }
 

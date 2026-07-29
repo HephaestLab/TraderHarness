@@ -30,7 +30,7 @@ LLM Agent 正在走进真实交易：研究、决策、下单，越来越多地�
 
 TraderHarness 就是这套规范：一个抗污染的 LLM 交易 Agent 回测执行环境——同时，由于每次模型调用都被全保真记录，它也是一个把这些运行一键变成轨迹训练数据的数据合成器。
 
-**先看证据：** [零凭据体验 Masked vs Unmasked 实验](https://hephaestlab.github.io/TraderHarness/masking-ab-showcase/) · [三步运行免 Key 回放](#快速开始) · [看它和 TradingAgents / StockBench / Qlib 的边界](docs/comparison.md) · [阅读英文 LLM Agent 回测方法指南](docs/guides/llm-trading-agent-backtesting.md)
+**先看证据：** [Agent 炒股如何回测？完整中文指南](https://hephaestlab.github.io/TraderHarness/guides/agent-stock-backtesting/) · [零凭据体验 Masked vs Unmasked 实验](https://hephaestlab.github.io/TraderHarness/masking-ab-showcase/) · [三步运行免 Key 回放](#快速开始) · [看它和 TradingAgents / StockBench / Qlib 的边界](docs/comparison.md) · [English backtesting guide](docs/guides/llm-trading-agent-backtesting.md)
 
 <p align="center">
   <img src="docs/assets/traderharness-demo.gif" alt="TraderHarness 流式历史回放控制台" width="920">
@@ -39,6 +39,12 @@ TraderHarness 就是这套规范：一个抗污染的 LLM 交易 Agent 回测执
 <p align="center"><sub>该 GIF 由本地研究控制台截图生成（<code>webui/scripts/capture-demo.mjs</code>）。UI 有变化时执行 <code>npm run capture:demo</code> 重新生成；将随 v1.0 验收跑一并更新。</sub></p>
 
 > 如果你也在解决 LLM 交易评测里的数据泄漏、成交公平或结果复现问题，欢迎在仓库右上角点 **Star**。后续公开 benchmark、回放盒带和数据集更新都会在这里发布。
+
+## Agent 炒股如何回测
+
+可信的 AI / LLM 股票 Agent 回测，需要用历史时钟限制日线、分钟线、公告、新闻和基本面的每一个出口；Agent 只能通过受控工具研究和下单，决策后才逐步揭示可成交价格，环境负责账户、撮合和风控，并完整记录模型请求、工具调用、订单与成交。仅把一段 K 线交给大模型、再询问“该买还是该卖”，无法排除未来数据、模型历史记忆和成交偏差。
+
+完整方法、A 股实例和可运行命令见[《Agent 炒股如何回测？AI / LLM 股票交易 Agent 回测指南》](docs/guides/agent-stock-backtesting.md)。
 
 ## 魔鬼行情实测：21 个交易日小基准
 
@@ -388,7 +394,9 @@ Apache-2.0 © HephaestLab。详见 [`LICENSE`](LICENSE)。
 <!-- source: docs/quickstart.md -->
 
 ---
+seo_title: TraderHarness 快速开始：三步回放 A 股 LLM 交易 Agent
 description: TraderHarness 快速上手：pip/Docker 安装、五年 A 股数据下载、免密回放演示、本地研究控制台与多 Agent 对比。
+lang: zh-CN
 ---
 
 # 快速上手
@@ -477,14 +485,241 @@ traderharness compare `
 
 ---
 
+<!-- source: docs/guides/agent-stock-backtesting.md -->
+
+---
+title: Agent 炒股如何回测？
+seo_title: Agent 炒股如何回测？AI / LLM 股票交易 Agent 回测指南 | TraderHarness
+description: Agent 炒股如何回测？本指南用 A 股实例讲清时点数据、未来函数、模型记忆污染、分钟级撮合、轨迹回放和结果审计，并给出可运行的 TraderHarness 流程。
+author: HephaestLab
+lang: zh-CN
+schema_type: TechArticle
+datePublished: 2026-07-29
+dateModified: 2026-07-29
+alternate_zh: https://hephaestlab.github.io/TraderHarness/guides/agent-stock-backtesting/
+alternate_en: https://hephaestlab.github.io/TraderHarness/guides/llm-trading-agent-backtesting/
+faq:
+  - question: Agent 炒股如何回测？
+    answer: >-
+      把 Agent 放进一个严格按历史时钟推进的市场环境，让它只能读取当时已经公开的数据，通过受控工具研究和下单；环境负责撮合、账户与风控，并完整记录模型请求、工具调用、订单、成交和审计证据。
+  - question: AI 炒股回测和普通量化回测有什么不同？
+    answer: >-
+      普通量化策略通常是确定性代码；LLM Agent 还会调用工具、生成自然语言判断，并可能记得历史事件。因此除了未来数据和成交偏差，还必须处理模型记忆污染、调用漂移、工具权限与轨迹复现。
+  - question: 为什么要隐藏日期和股票名称？
+    answer: >-
+      通用模型可能从训练语料中认出著名公司、日期或历史行情。日期与实体掩码减少这些记忆线索，用于检验 Agent 是否依赖当前可见数据，而不是背诵历史。
+  - question: LLM 调用不确定，回测还能复现吗？
+    answer: >-
+      新鲜模型调用通常不能保证逐字确定，但可以完整记录请求、响应和工具序列，并用请求指纹进行失败即报错的回放；撮合、账户和指标计算则保持确定性。
+  - question: TraderHarness 支持 A 股吗？
+    answer: >-
+      支持。公开数据集覆盖五年全市场 A 股日线、5 分钟线、公告、政策新闻、基本面、估值、分红和沪深 300 基准。
+  - question: 回测收益好是否说明 Agent 可以实盘盈利？
+    answer: >-
+      不能。历史回测仍受样本选择、市场冲击、交易成本、模型漂移和数据质量影响；它只能说明 Agent 在明确的历史评测合同下产生了某种行为和结果。
+---
+
+# Agent 炒股如何回测？
+
+**简短答案：**回测炒股 Agent，不是把一段 K 线塞给大模型后询问“该买还是该卖”。可信的方法是把 Agent 放进一个严格按历史时钟推进的市场环境：它只能看到当时已经公开的数据，只能通过受控工具研究和下单；环境负责撮合、账户与风控，并保留从模型请求到最终成交的完整审计证据。
+
+[TraderHarness](https://github.com/HephaestLab/TraderHarness) 是面向这套评测合同的开源 Python 环境，目前聚焦中国 A 股。它同时处理时点数据、日期与公司实体掩码、5 分钟级渐进撮合、模型调用记录、指纹回放和轨迹导出。
+
+[三步运行免 Key 回放](../quickstart.md){ .md-button .md-button--primary }
+[查看 Masked vs Unmasked 实验](../masking-ab-showcase.md){ .md-button }
+[English guide](llm-trading-agent-backtesting.md){ .md-button }
+
+!!! warning "回测不是投资建议"
+    历史模拟不能证明未来盈利，也不能替代持牌投资咨询。TraderHarness 不连接真实券商账户，不提供跟单或收益承诺。
+
+## 为什么普通股票回测方法不够
+
+传统量化策略通常是一段确定性代码：输入行情，输出仓位。LLM 交易 Agent 则会研究、调用工具、生成判断、修改计划并下单，因此多出三类特殊问题。
+
+### 1. Agent 可能看到未来信息
+
+最常见的问题是未来函数或前视偏差。例如，Agent 在开盘阶段看到了当天收盘价，看到了一份收盘后才发布的公告，或者下单后以决策前不可见的低价成交。仅按“日期”过滤数据不够，日线、分钟线、公告、新闻和财务数据都有不同的实际发布时间。
+
+### 2. 大模型可能记得历史
+
+即使数据接口完全遵守时点，大模型仍可能认出股票代码、公司产品、著名公告或某段历史行情。它输出的答案看似正确，实际上可能来自训练语料记忆，而不是回测时允许看到的证据。
+
+这也是为什么 LLM Agent 回测需要把普通的 look-ahead bias 与模型记忆污染分开处理。TraderHarness 可以把绝对日期改写为 `D+0`、`D-1`，并把公司名称和代码替换为确定性伪名，同时保留交易规则需要的市场和板块语义。
+
+### 3. 同一个模型也可能返回不同答案
+
+云端模型会升级，推理服务会变化，即使温度为零也不保证逐字一致。只保存最终买卖记录，无法解释结果为什么变化。可信的回测必须记录完整消息、模型与供应商配置、工具 schema、模型响应、工具调用和工具结果。
+
+## 一套可信的 Agent 炒股回测合同
+
+| 边界 | 最低要求 | 应保留的证据 |
+|---|---|---|
+| 市场数据 | 每个出口都按模拟时钟过滤 | 来源时间、模拟时间、可见行 |
+| 公司与日期 | 必要时做日期和实体掩码 | 掩码策略、种子、泄漏审计 |
+| 成交 | 决策后才逐步揭示可成交价格 | 下单时间、可见窗口、成交时间与价格 |
+| 账户 | Agent 只能读取账户视图 | 订单、成交、现金、持仓、公司行动 |
+| 模型 | 记录完整请求、响应和工具循环 | 模型 ID、请求指纹、调用模式 |
+| 对比 | 相同市场时钟，账户相互隔离 | 配置、随机种子、基准序列 |
+| 发布 | 公开前审计全部工件 | 代码版本、数据清单、审计报告 |
+
+最核心的原则是：**相同的可见数据和动作序列，必须产生相同的环境结果。**模型生成可以先完整记录、再指纹回放；撮合、账户和指标计算必须由环境确定性地执行。
+
+## 六步完成一次 LLM 股票 Agent 回测
+
+### 第一步：定义 Agent，而不是只写一句提示词
+
+明确 Agent 的研究风格、可使用工具、模型、风险限制和交易阶段。TraderHarness 的 Agent 卡片会参与三个阶段：
+
+1. 盘前研究，不能下单；
+2. 开盘窗口，5 分钟数据逐步揭示；
+3. 尾盘窗口，继续渐进揭示并允许交易。
+
+多角色系统还要区分只读顾问和唯一执行者。不能让每个角色都持有交易工具，否则账户责任和决策归因都会失真。
+
+### 第二步：准备严格时点有效的数据
+
+至少需要未复权日线、盘中分钟线、交易日历、股票状态和基准。若 Agent 使用公告、新闻、基本面或估值，还必须按真实发布时间过滤，而不是只按报告期或自然日过滤。
+
+历史成交和公司行动应使用未复权价格；前复权序列适合画图，却不能直接替代真实成交价格。
+
+### 第三步：同时控制未来数据和历史记忆
+
+时点过滤解决“Agent 看到了未来”，日期与实体掩码解决“Agent 可能记得过去”。二者不是同一问题，也不能互相替代。
+
+建议对同一张 Agent 卡进行 masked/unmasked 配对实验：市场、模型、工具、资金和执行规则保持一致，只改变日期与公司身份是否可见，再比较行为与结果。TraderHarness 的[一键实验页面](../masking-ab-showcase.md)展示了这种可审计结构。
+
+### 第四步：让所有订单经过同一撮合路径
+
+Agent 不应直接修改持仓，也不应自行声明成交。所有订单必须通过环境的唯一入口完成校验和撮合。TraderHarness 使用 `TradingBus.place_order()` 处理下单路径，由环境拥有现金和持仓状态。
+
+盘中数据必须先揭示一个子窗口，再允许 Agent 决策，然后才能使用之后可见的价格撮合。这样可以阻止 Agent 看完整天走势后回头选择早盘最优价格。
+
+### 第五步：记录并回放完整模型轨迹
+
+每次调用都保存完整请求和响应，并为规范化请求计算 SHA-256 指纹。回放时，提示词、工具定义、可见输入或调用顺序只要发生变化，就应立即失败，而不是悄悄返回不匹配的缓存答案。
+
+这使测试能够区分两件事：模型本次生成了什么，以及市场环境如何执行这些动作。
+
+### 第六步：报告行为和风险，而不只报告收益
+
+至少应报告：
+
+- 区间收益、沪深 300 相对收益、最大回撤和风险调整指标；
+- 订单数、成交数、拒单数、空仓天数和换手率；
+- 暴露度、集中度、持有周期与工具使用行为；
+- 日期范围、股票池、初始资金、费用、撮合规则和掩码配置；
+- 模型与供应商、Agent 卡片、数据版本、代码提交和工件审计结果；
+- 未建模因素，例如市场冲击、实盘延迟和供应商模型漂移。
+
+## 用 TraderHarness 运行 A 股 Agent 回测
+
+安装包和完整数据集，然后运行内置的 masked replay：
+
+```bash
+pip install "traderharness[llm,data,ui]"
+traderharness data download --full
+traderharness demo
+```
+
+这个演示不需要模型 API Key。它会回放已经记录的 LLM 轨迹，但仍使用本地规范行情重新执行市场环境和指标计算。
+
+记录一次新的模型运行：
+
+```bash
+traderharness run \
+  --agent trend-breakout \
+  --start 2024-03-04 \
+  --end 2024-03-29 \
+  --mask-entities \
+  --record-replay run.jsonl
+```
+
+公开或导出训练数据之前执行审计：
+
+```bash
+traderharness audit result.json run.jsonl
+traderharness export sft result.json --output training.jsonl
+```
+
+如果要比较多个独立 Agent，使用 `traderharness compare` 为每个 Agent 分配隔离账户；如果要复现 TradingAgents 风格的多角色委员会，应让顾问保持只读，只允许一个执行者下单。两者是不同的实验合同，不能混在同一排行榜中解释。
+
+## 常见的无效回测方式
+
+- 把整段历史行情一次性发给模型，再要求它逐日“模拟”；
+- 在开盘决策时提供当天最高、最低或收盘价；
+- 用前复权价格直接模拟真实成交和公司行动；
+- 只告诉模型“不要使用未来信息”，却不在工具层强制过滤；
+- 只保存最终交易，不保存模型请求和工具调用；
+- 在同一账户里并发运行多个执行 Agent；
+- 只挑选盈利轨迹公开，不报告失败、拒单和空仓行为；
+- 把一次历史收益直接宣传为模型能力或未来收益。
+
+## Agent 炒股回测常见问题
+
+### Agent 炒股如何回测？
+
+使用按历史时钟推进的市场环境，让 Agent 只能读取当时已公开的数据，通过受控工具研究和下单；环境负责撮合、账户、风控和完整轨迹记录。不要让模型直接读取整段历史，也不要让它自行修改持仓。
+
+### AI 炒股回测和普通量化回测有什么不同？
+
+LLM Agent 除了未来数据和成交偏差，还会遇到历史记忆污染、模型调用漂移、工具越权和自然语言决策不可复现等问题，因此需要额外的掩码、轨迹和指纹回放机制。
+
+### 为什么要隐藏日期和股票名称？
+
+通用模型可能从训练语料中认出著名公司、日期或行情。掩码用于减少记忆线索，检验 Agent 是否依赖当前允许看到的数据。它是污染控制手段，不是模型绝对无法反向识别的证明。
+
+### LLM 调用不确定，回测还能复现吗？
+
+新鲜调用通常不能保证完全确定，但可以保存完整交互并用请求指纹严格回放。这样，模型响应可以原样重放，市场环境的撮合和账户结果仍保持确定性。
+
+### TraderHarness 支持 A 股吗？
+
+支持。公开数据集覆盖五年全市场 A 股日线、284,219,844 条去重 5 分钟线，以及公告、政策新闻、基本面、估值、分红和沪深 300 基准，使用 SHA-256 发布清单校验。
+
+### 回测收益好是否说明 Agent 可以实盘盈利？
+
+不能。回测只能描述明确数据、模型和执行规则下的历史结果。市场冲击、真实延迟、交易成本、样本选择和模型升级都可能改变实盘表现。
+
+## 下一步
+
+- 按[快速上手](../quickstart.md)运行免密回放和本地研究控制台；
+- 阅读[无数据泄漏的 LLM 交易回测](../contamination.md)了解时点与实体掩码；
+- 查看[TraderHarness 与 TradingAgents、StockBench、Qlib 的区别](../comparison.md)；
+- 在 [GitHub](https://github.com/HephaestLab/TraderHarness) 检查源码、测试和公开工件。
+
+---
+
 <!-- source: docs/guides/llm-trading-agent-backtesting.md -->
 
 ---
 title: How to Backtest LLM Trading Agents Without Look-Ahead Bias
+seo_title: How to Backtest LLM Trading Agents Without Look-Ahead Bias | TraderHarness
 description: A practical framework for point-in-time data, fair execution, deterministic replay, contamination controls, and auditable trajectories in LLM trading-agent backtests.
+author: HephaestLab
+lang: en
+schema_type: TechArticle
+datePublished: 2026-07-29
+dateModified: 2026-07-29
+alternate_zh: https://hephaestlab.github.io/TraderHarness/guides/agent-stock-backtesting/
+alternate_en: https://hephaestlab.github.io/TraderHarness/guides/llm-trading-agent-backtesting/
+faq:
+  - question: Can an LLM trading backtest be deterministic?
+    answer: >-
+      Fresh hosted-model generation is not guaranteed to be deterministic, but the full exchange can be recorded and replayed against canonical request fingerprints while matching, accounting, and metrics remain deterministic.
+  - question: Does point-in-time data eliminate all backtest bias?
+    answer: >-
+      No. It addresses information timing, but universe construction, survivorship, costs, market impact, missing data, multiple testing, and model-selection bias still require explicit treatment.
+  - question: Why mask company names as well as dates?
+    answer: >-
+      A recognizable ticker, company, product, or announcement can reveal a historical event even when the date is hidden. Entity masking reduces that memory channel while retaining the market rules needed for simulation.
+  - question: Is TraderHarness a live trading bot?
+    answer: >-
+      No. TraderHarness is local research infrastructure for historical evaluation and trajectory generation; it does not route live orders or claim that historical performance predicts live returns.
 ---
 
 # How to Backtest LLM Trading Agents Without Look-Ahead Bias
+
+中文：[Agent 炒股如何回测？AI / LLM 股票交易 Agent 回测指南](agent-stock-backtesting.md)
 
 An LLM trading-agent backtest is credible only when the agent sees exactly what would have been public at the simulated time, can trade only at prices revealed after its decision, and leaves enough evidence for the run to be reproduced and audited. A prompt that says “do not use future information” is not sufficient: the restriction must be enforced by the environment.
 
@@ -607,7 +842,9 @@ No. It is local research infrastructure for historical evaluation and trajectory
 <!-- source: docs/contamination.md -->
 
 ---
+seo_title: 如何防止 LLM 交易 Agent 回测的数据泄漏与历史记忆污染？
 description: TraderHarness 如何在每个数据出口执行时点掩码、日期相对化与公司实体匿名化，防止 LLM 回测中的记忆污染与执行层泄漏。
+lang: zh-CN
 ---
 
 # 无数据泄漏的 LLM 交易回测
@@ -659,6 +896,12 @@ traderharness audit result.json replay.jsonl export.parquet
 
 <!-- source: docs/architecture.md -->
 
+---
+seo_title: TraderHarness 架构：LLM Agent 回测引擎、撮合与指纹回放
+description: TraderHarness 核心架构说明：时点安全数据出口、三阶段 Agent 循环、唯一撮合路径、只读账户、完整轨迹和确定性指纹回放。
+lang: zh-CN
+---
+
 # 核心架构
 
 ![TraderHarness 数据、引擎、Agent、轨迹与评估架构](assets/architecture.svg)
@@ -704,6 +947,12 @@ flowchart TD
 
 <!-- source: docs/comparison.md -->
 
+---
+seo_title: TraderHarness 与 TradingAgents、StockBench、Qlib 有什么区别？
+description: 对比 TraderHarness、TradingAgents、StockBench、Qlib 和传统回测引擎，说明 Agent 编排、历史市场环境、抗污染、撮合、回放与训练轨迹的边界。
+lang: zh-CN
+---
+
 # 与相邻项目的对比
 
 TraderHarness 是一套环境与证据基础设施。它可以承载不同的 Agent 架构，但不规定它们的投资方法论。
@@ -733,6 +982,12 @@ TraderHarness 是一套环境与证据基础设施。它可以承载不同的 Ag
 ---
 
 <!-- source: docs/design/multi-role-agent.md -->
+
+---
+seo_title: 多角色 LLM 交易 Agent 如何回测？只读顾问与唯一执行者
+description: TraderHarness 多角色交易 Agent 设计：研究员和风险顾问保持只读，唯一 Trader 获得下单工具，并保证账户隔离、顺序确定和轨迹可回放。
+lang: zh-CN
+---
 
 # 多角色 Agent 适配器
 
@@ -851,7 +1106,9 @@ advisors:
 <!-- source: docs/training-data.md -->
 
 ---
+seo_title: LLM 交易 Agent 轨迹数据：回放、审计与强化学习导出
 description: TraderHarness 全保真轨迹采集与轨迹导出：完整消息、工具 schema、推理内容逐次落盘，导出 OpenAI 风格 SFT JSONL。
+lang: zh-CN
 ---
 
 # 全保真轨迹与轨迹导出
@@ -933,6 +1190,12 @@ traderharness export sft \
 
 <!-- source: docs/data.md -->
 
+---
+seo_title: TraderHarness A 股回测数据集：日线、5 分钟线与时点数据
+description: TraderHarness 五年全市场 A 股数据说明，覆盖日线、5 分钟线、公告、政策新闻、基本面、估值、分红、沪深 300、完整性校验与许可边界。
+lang: zh-CN
+---
+
 # 数据与许可
 
 规范 A 股发布版包含五年全市场日线与 5 分钟线，以及公告、政策新闻、基本面、估值、分红和沪深 300 基准。
@@ -977,6 +1240,12 @@ v1.0 规范构建包含 284,219,844 条去重后的 5 分钟记录。发布审�
 
 <!-- source: docs/api.md -->
 
+---
+seo_title: TraderHarness CLI 与本地 API：运行、回放、审计和 Agent 管理
+description: TraderHarness 命令行与 localhost API 参考，包含数据下载、Agent 回测、compare、replay、audit、轨迹导出、REST 和 WebSocket 接口。
+lang: zh-CN
+---
+
 # CLI 与本地 API 参考
 
 ## 核心 CLI
@@ -1018,6 +1287,12 @@ HTTP API 是本地工具，不是带鉴权的公共服务。请保持默认的 l
 ---
 
 <!-- source: docs/extensions.md -->
+
+---
+seo_title: 如何扩展 TraderHarness：数据 Provider、Agent 工具与评估指标
+description: 为 TraderHarness 添加数据 Provider、Agent 工具、沙箱后端、评估指标和前端视图时必须遵守的时点安全、唯一下单路径与确定性边界。
+lang: zh-CN
+---
 
 # 扩展 TraderHarness
 
@@ -1095,6 +1370,12 @@ v1.0 没有实盘券商适配器，见[路线图](roadmap.md#live-broker-adapter
 
 <!-- source: docs/roadmap.md -->
 
+---
+seo_title: TraderHarness 路线图：A 股 Agent 回测、模拟盘与安全边界
+description: TraderHarness 已交付能力、模拟实盘 paper trading 设计、未来券商适配器、沙箱加固和公开多租户服务等明确非目标。
+lang: zh-CN
+---
+
 # 路线图
 
 本页记录 TraderHarness 已经交付了什么、计划做什么，方便集成方做"自建还是等待"的决策，而不必从 issue 列表里猜。以下内容均不构成日期承诺。
@@ -1152,6 +1433,12 @@ v1.0 没有实盘券商适配器，见[路线图](roadmap.md#live-broker-adapter
 ---
 
 <!-- source: docs/faq.md -->
+
+---
+seo_title: TraderHarness 常见问题：LLM Agent 回测、数据泄漏与确定性回放
+description: 回答 TraderHarness 的历史记忆污染、时点数据、免 Key 回放、多 Agent 与委员会区别、A 股数据、模拟盘和本地安全等常见问题。
+lang: zh-CN
+---
 
 # 常见问题
 

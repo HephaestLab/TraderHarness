@@ -25,7 +25,7 @@ TraderHarness is that rig: a contamination-resistant execution environment for L
 every model call is recorded at full fidelity, a data synthesizer that turns those runs into trajectory training data.
 
 **Start with evidence:** [explore the zero-credential Masked vs Unmasked experiment](https://hephaestlab.github.io/TraderHarness/masking-ab-showcase/) · [run the no-key replay](#quick-start) · [compare its scope with TradingAgents,
-StockBench, and Qlib](docs/comparison.md) · [read the LLM-agent backtesting guide](docs/guides/llm-trading-agent-backtesting.md)
+StockBench, and Qlib](docs/comparison.md) · [read the LLM-agent backtesting guide](https://hephaestlab.github.io/TraderHarness/guides/llm-trading-agent-backtesting/) · [中文：Agent 炒股如何回测](https://hephaestlab.github.io/TraderHarness/guides/agent-stock-backtesting/)
 
 <p align="center">
   <img src="docs/assets/traderharness-demo.gif" alt="TraderHarness streaming historical replay console" width="920">
