@@ -1,5 +1,31 @@
 {% extends "base.html" %}
 
+{% block site_meta %}
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  {% if page and page.meta and page.meta.description %}
+    <meta name="description" content="{{ page.meta.description }}">
+  {% elif config.site_description %}
+    <meta name="description" content="{{ config.site_description }}">
+  {% endif %}
+  {% if page and page.meta and page.meta.author %}
+    <meta name="author" content="{{ page.meta.author }}">
+  {% elif config.site_author %}
+    <meta name="author" content="{{ config.site_author }}">
+  {% endif %}
+  {% if page and page.canonical_url %}
+    <link rel="canonical" href="{{ page.canonical_url }}">
+  {% endif %}
+  {% if page and page.previous_page %}
+    <link rel="prev" href="{{ page.previous_page.url | url }}">
+  {% endif %}
+  {% if page and page.next_page %}
+    <link rel="next" href="{{ page.next_page.url | url }}">
+  {% endif %}
+  <link rel="icon" href="{{ config.theme.favicon | url }}">
+  <meta name="generator" content="mkdocs-{{ mkdocs_version }}">
+{% endblock %}
+
 {% block htmltitle %}
   {% if page and page.meta and page.meta.seo_title %}
     <title>{{ page.meta.seo_title }}</title>
@@ -10,13 +36,18 @@
 
 {% block extrahead %}
   {{ super() }}
+  {% if config.theme.language == "zh" %}
+    {% set config_language = "zh-CN" %}
+  {% else %}
+    {% set config_language = config.theme.language %}
+  {% endif %}
   {% if page %}
-    {% set page_language = page.meta.lang | default("zh-CN", true) %}
+    {% set page_language = page.meta.lang | default(config_language, true) %}
     {% set social_title = page.meta.social_title | default(page.meta.seo_title, true) | default(page.meta.title, true) | default(page.title, true) | default(config.site_name, true) %}
     {% set social_description = page.meta.description | default(config.site_description, true) %}
     {% set social_url = page.canonical_url | default(config.site_url, true) %}
   {% else %}
-    {% set page_language = "zh-CN" %}
+    {% set page_language = config_language %}
     {% set social_title = config.site_name %}
     {% set social_description = config.site_description %}
     {% set social_url = config.site_url %}
@@ -43,19 +74,16 @@
   <meta name="twitter:description" content="{{ social_description | e }}">
   <meta name="twitter:image" content="https://hephaestlab.github.io/TraderHarness/assets/social-preview.png">
   <meta name="twitter:image:alt" content="TraderHarness — auditable backtesting for AI and LLM trading agents">
-  {% if page and page.meta.alternate_zh %}
-    <link rel="alternate" hreflang="zh-CN" href="{{ page.meta.alternate_zh }}">
+  {% if page_language == "zh-CN" %}
+    {% set english_url = social_url | replace("/TraderHarness/zh/", "/TraderHarness/") %}
+    {% set chinese_url = social_url %}
+  {% else %}
+    {% set english_url = social_url %}
+    {% set chinese_url = social_url | replace("/TraderHarness/", "/TraderHarness/zh/") %}
   {% endif %}
-  {% if page and page.meta.alternate_en %}
-    <link rel="alternate" hreflang="en" href="{{ page.meta.alternate_en }}">
-  {% endif %}
-  {% if page and page.meta.alternate_zh and page.meta.alternate_en %}
-    <link rel="alternate" hreflang="x-default" href="{{ page.meta.alternate_en }}">
-  {% elif page and page.meta.alternate_zh %}
-    <link rel="alternate" hreflang="x-default" href="{{ page.meta.alternate_zh }}">
-  {% elif page and page.meta.alternate_en %}
-    <link rel="alternate" hreflang="x-default" href="{{ page.meta.alternate_en }}">
-  {% endif %}
+  <link rel="alternate" hreflang="en" href="{{ english_url }}">
+  <link rel="alternate" hreflang="zh-CN" href="{{ chinese_url }}">
+  <link rel="alternate" hreflang="x-default" href="{{ english_url }}">
   <link rel="alternate" type="text/plain" href="https://hephaestlab.github.io/TraderHarness/llms.txt" title="TraderHarness llms.txt">
   <link rel="alternate" type="text/plain" href="https://hephaestlab.github.io/TraderHarness/llms-full.txt" title="TraderHarness full AI-readable documentation">
   <script type="application/ld+json">
@@ -148,7 +176,7 @@
         "@type": "ListItem",
         "position": 1,
         "name": "TraderHarness",
-        "item": "https://hephaestlab.github.io/TraderHarness/"
+        "item": {{ config.site_url | tojson }}
       },
       {
         "@type": "ListItem",

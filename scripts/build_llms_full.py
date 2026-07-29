@@ -4,10 +4,22 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DOCUMENTS = [
+    ROOT / "README_en.md",
     ROOT / "README.md",
+    ROOT / "docs" / "en" / "quickstart.md",
+    ROOT / "docs" / "en" / "guides" / "agent-stock-backtesting.md",
+    ROOT / "docs" / "en" / "contamination.md",
+    ROOT / "docs" / "en" / "architecture.md",
+    ROOT / "docs" / "en" / "comparison.md",
+    ROOT / "docs" / "en" / "design" / "multi-role-agent.md",
+    ROOT / "docs" / "en" / "training-data.md",
+    ROOT / "docs" / "en" / "data.md",
+    ROOT / "docs" / "en" / "api.md",
+    ROOT / "docs" / "en" / "extensions.md",
+    ROOT / "docs" / "en" / "roadmap.md",
+    ROOT / "docs" / "en" / "faq.md",
     ROOT / "docs" / "quickstart.md",
     ROOT / "docs" / "guides" / "agent-stock-backtesting.md",
-    ROOT / "docs" / "guides" / "llm-trading-agent-backtesting.md",
     ROOT / "docs" / "contamination.md",
     ROOT / "docs" / "architecture.md",
     ROOT / "docs" / "comparison.md",

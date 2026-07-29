@@ -17,7 +17,7 @@ lang: zh-CN
 [安装并运行](quickstart.md){ .md-button }
 [在 GitHub 查看](https://github.com/HephaestLab/TraderHarness){ .md-button }
 
-English: [How to backtest LLM trading agents without look-ahead bias](guides/llm-trading-agent-backtesting.md)
+English: [How to backtest LLM trading agents without look-ahead bias](https://hephaestlab.github.io/TraderHarness/guides/agent-stock-backtesting/)
 
 ![TraderHarness 流式历史回放控制台](assets/traderharness-demo.gif)
 

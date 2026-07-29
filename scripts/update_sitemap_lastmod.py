@@ -20,7 +20,11 @@ def _source_for_url(url: str) -> Path | None:
     if not path.startswith(SITE_PREFIX):
         return None
     relative = path[len(SITE_PREFIX) :].strip("/")
-    source = DOCS / ("index.md" if not relative else f"{relative}.md")
+    if relative == "zh" or relative.startswith("zh/"):
+        localized = relative.removeprefix("zh").strip("/")
+        source = DOCS / ("index.md" if not localized else f"{localized}.md")
+    else:
+        source = DOCS / "en" / ("index.md" if not relative else f"{relative}.md")
     return source if source.is_file() else None
 
 

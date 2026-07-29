@@ -1,16 +1,24 @@
 site_name: TraderHarness
-site_description: Leakage-resistant backtesting, deterministic replay, and auditable trajectories for autonomous LLM trading agents on China A-shares
-site_url: https://hephaestlab.github.io/TraderHarness/
+site_description: 面向 A 股的 AI / LLM 交易 Agent 回测框架：时点数据、实体掩码、渐进撮合、指纹回放与完整轨迹审计
+site_url: https://hephaestlab.github.io/TraderHarness/zh/
 site_author: HephaestLab
-docs_dir: docs/en
+docs_dir: docs
 repo_url: https://github.com/HephaestLab/TraderHarness
 repo_name: HephaestLab/TraderHarness
-edit_uri: edit/main/docs/en/
+edit_uri: edit/main/docs/
 copyright: Apache-2.0 © HephaestLab
+
+exclude_docs: |
+  en/
+  overrides/
+  plans/
+  design/pixel-trader-scene.md
+  design/animation_preview.html
+  v0.1.0-plan.md
 
 theme:
   name: material
-  language: en
+  language: zh
   custom_dir: docs/overrides
   logo: https://hephaestlab.github.io/TraderHarness/assets/logo.svg
   favicon: https://hephaestlab.github.io/TraderHarness/assets/logo.svg
@@ -44,7 +52,9 @@ extra_css:
 
 plugins:
   - search:
-      lang: en
+      lang:
+        - zh
+        - en
   - minify:
       minify_html: true
 
@@ -67,18 +77,18 @@ markdown_extensions:
       permalink: true
 
 nav:
-  - Overview: index.md
-  - Agent Backtesting Guide: guides/agent-stock-backtesting.md
+  - 概览: index.md
+  - AI 炒股回测指南: guides/agent-stock-backtesting.md
   - Masked vs Unmasked: masking-ab-showcase.md
-  - Quickstart: quickstart.md
-  - Preventing Data Leakage: contamination.md
-  - Architecture: architecture.md
-  - Comparison: comparison.md
-  - Multi-role Committees: design/multi-role-agent.md
-  - Trajectories for RL and Evaluation: training-data.md
-  - Data and Licensing: data.md
-  - CLI and Local API: api.md
-  - Extensions: extensions.md
-  - Roadmap: roadmap.md
-  - FAQ: faq.md
-  - Launch Playbook: release-playbook.md
+  - 快速上手: quickstart.md
+  - 防数据泄漏: contamination.md
+  - 核心架构: architecture.md
+  - 项目对比: comparison.md
+  - 多角色委员会: design/multi-role-agent.md
+  - 强化学习与评测轨迹: training-data.md
+  - 数据与许可: data.md
+  - CLI 与本地 API: api.md
+  - 扩展开发: extensions.md
+  - 路线图: roadmap.md
+  - 常见问题: faq.md
+  - 发布分发手册: release-playbook.md

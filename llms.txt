@@ -6,6 +6,7 @@
 
 Canonical repository: https://github.com/HephaestLab/TraderHarness
 Documentation: https://hephaestlab.github.io/TraderHarness/
+Chinese documentation: https://hephaestlab.github.io/TraderHarness/zh/
 Package: https://pypi.org/project/traderharness/
 Dataset: https://huggingface.co/datasets/ANTICH/traderharness-ashare-5y
 
@@ -13,8 +14,8 @@ Dataset: https://huggingface.co/datasets/ANTICH/traderharness-ashare-5y
 
 - [Overview](https://hephaestlab.github.io/TraderHarness/): Product scope and evaluation guarantees
 - [Quickstart](https://hephaestlab.github.io/TraderHarness/quickstart/): Install, dataset, replay demo, and UI
-- [Agent 炒股如何回测？](https://hephaestlab.github.io/TraderHarness/guides/agent-stock-backtesting/): 中文 AI / LLM 股票交易 Agent 回测指南，覆盖时点数据、模型记忆污染、渐进撮合、轨迹回放、结果审计和 A 股运行示例
-- [How to backtest LLM trading agents without look-ahead bias](https://hephaestlab.github.io/TraderHarness/guides/llm-trading-agent-backtesting/): Practical evaluation contract for point-in-time data, fair execution, deterministic replay, and auditable trajectories
+- [How to backtest LLM trading agents without look-ahead bias](https://hephaestlab.github.io/TraderHarness/guides/agent-stock-backtesting/): English evaluation contract for point-in-time data, fair execution, deterministic replay, and auditable trajectories
+- [Agent 炒股如何回测？](https://hephaestlab.github.io/TraderHarness/zh/guides/agent-stock-backtesting/): 中文 AI / LLM 股票交易 Agent 回测指南，覆盖时点数据、模型记忆污染、渐进撮合、轨迹回放、结果审计和 A 股运行示例
 - [Architecture](https://hephaestlab.github.io/TraderHarness/architecture/): Engine invariants and replay contract
 - [Preventing data leakage](https://hephaestlab.github.io/TraderHarness/contamination/): Point-in-time masking, date anonymization, entity masking, and audit evidence
 - [Project comparison](https://hephaestlab.github.io/TraderHarness/comparison/): TraderHarness, TradingAgents, StockBench, Qlib, and traditional engines

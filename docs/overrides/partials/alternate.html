@@ -1,0 +1,25 @@
+<div class="md-header__option">
+  <div class="md-select">
+    {% set icon = config.theme.icon.alternate or "material/translate" %}
+    {% if config.theme.language == "zh" %}
+      {% set english_url = page.canonical_url | replace("/TraderHarness/zh/", "/TraderHarness/") %}
+      {% set chinese_url = page.canonical_url %}
+    {% else %}
+      {% set english_url = page.canonical_url %}
+      {% set chinese_url = page.canonical_url | replace("/TraderHarness/", "/TraderHarness/zh/") %}
+    {% endif %}
+    <button class="md-header__button md-icon" aria-label="{{ lang.t('select.language') }}">
+      {% include ".icons/" ~ icon ~ ".svg" %}
+    </button>
+    <div class="md-select__inner">
+      <ul class="md-select__list">
+        <li class="md-select__item">
+          <a href="{{ english_url }}" hreflang="en" class="md-select__link">English</a>
+        </li>
+        <li class="md-select__item">
+          <a href="{{ chinese_url }}" hreflang="zh-CN" class="md-select__link">简体中文</a>
+        </li>
+      </ul>
+    </div>
+  </div>
+</div>

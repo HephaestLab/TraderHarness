@@ -7,8 +7,6 @@ lang: zh-CN
 schema_type: TechArticle
 datePublished: 2026-07-29
 dateModified: 2026-07-29
-alternate_zh: https://hephaestlab.github.io/TraderHarness/guides/agent-stock-backtesting/
-alternate_en: https://hephaestlab.github.io/TraderHarness/guides/llm-trading-agent-backtesting/
 faq:
   - question: Agent 炒股如何回测？
     answer: >-
@@ -38,7 +36,7 @@ faq:
 
 [三步运行免 Key 回放](../quickstart.md){ .md-button .md-button--primary }
 [查看 Masked vs Unmasked 实验](../masking-ab-showcase.md){ .md-button }
-[English guide](llm-trading-agent-backtesting.md){ .md-button }
+[English guide](https://hephaestlab.github.io/TraderHarness/guides/agent-stock-backtesting/){ .md-button }
 
 !!! warning "回测不是投资建议"
     历史模拟不能证明未来盈利，也不能替代持牌投资咨询。TraderHarness 不连接真实券商账户，不提供跟单或收益承诺。

@@ -6,13 +6,14 @@ on:
     paths:
       - "docs/**"
       - "mkdocs.yml"
+      - "mkdocs.zh.yml"
       - "README.md"
       - "README_en.md"
       - "llms.txt"
       - "llms-full.txt"
       - "scripts/build_llms_full.py"
+      - "scripts/build_bilingual_docs.py"
       - "scripts/check_docs_discovery.py"
-      - "scripts/update_page_languages.py"
       - "scripts/update_sitemap_lastmod.py"
       - "AGENTS.md"
       - "CHANGELOG.md"
@@ -49,13 +50,11 @@ jobs:
           python scripts/build_llms_full.py
           git diff --exit-code -- llms-full.txt
       - name: Build documentation
-        run: mkdocs build --strict
+        run: python scripts/build_bilingual_docs.py
       - name: Publish AI-readable documentation
         run: |
           cp llms.txt site/llms.txt
           cp llms-full.txt site/llms-full.txt
-      - name: Apply per-page document languages
-        run: python scripts/update_page_languages.py
       - name: Preserve source revision dates in sitemap
         run: python scripts/update_sitemap_lastmod.py
       - name: Check search and AI discovery contracts
@@ -68,7 +67,7 @@ jobs:
         uses: actions/deploy-pages@v4
       - name: Verify deployed discovery endpoints
         run: |
-          for path in "robots.txt" "sitemap.xml" "llms.txt" "llms-full.txt" "guides/agent-stock-backtesting/" "guides/llm-trading-agent-backtesting/"; do
+          for path in "robots.txt" "sitemap.xml" "llms.txt" "llms-full.txt" "guides/agent-stock-backtesting/" "zh/guides/agent-stock-backtesting/"; do
             success=false
             for attempt in {1..12}; do
               if curl --fail --silent --show-error \
@@ -86,7 +85,7 @@ jobs:
         env:
           INDEXNOW_KEY: bc1dff31c472cb4a322c024d3b0562d6
         run: |
-          for path in "" "guides/agent-stock-backtesting/" "guides/llm-trading-agent-backtesting/" "llms.txt" "llms-full.txt"; do
+          for path in "" "zh/" "guides/agent-stock-backtesting/" "zh/guides/agent-stock-backtesting/" "llms.txt" "llms-full.txt"; do
             curl --fail --silent --show-error --get \
               --data-urlencode "url=https://hephaestlab.github.io/TraderHarness/${path}" \
               --data-urlencode "key=${INDEXNOW_KEY}" \

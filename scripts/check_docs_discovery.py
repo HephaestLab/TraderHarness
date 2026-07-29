@@ -106,8 +106,8 @@ def _check_all_pages() -> None:
 
 
 def _check_primary_guides() -> None:
-    chinese_path = SITE / "guides" / "agent-stock-backtesting" / "index.html"
-    english_path = SITE / "guides" / "llm-trading-agent-backtesting" / "index.html"
+    chinese_path = SITE / "zh" / "guides" / "agent-stock-backtesting" / "index.html"
+    english_path = SITE / "guides" / "agent-stock-backtesting" / "index.html"
     chinese, chinese_schemas = _parse_page(chinese_path)
     english, english_schemas = _parse_page(english_path)
 
@@ -118,9 +118,9 @@ def _check_primary_guides() -> None:
             f"Guide language mismatch: zh={chinese.html_language!r}, en={english.html_language!r}"
         )
     expected_alternates = {
-        "zh-CN": urljoin(BASE_URL, "guides/agent-stock-backtesting/"),
-        "en": urljoin(BASE_URL, "guides/llm-trading-agent-backtesting/"),
-        "x-default": urljoin(BASE_URL, "guides/llm-trading-agent-backtesting/"),
+        "zh-CN": urljoin(BASE_URL, "zh/guides/agent-stock-backtesting/"),
+        "en": urljoin(BASE_URL, "guides/agent-stock-backtesting/"),
+        "x-default": urljoin(BASE_URL, "guides/agent-stock-backtesting/"),
     }
     if chinese.alternates != expected_alternates:
         raise AssertionError(f"Chinese hreflang mismatch: {chinese.alternates}")
@@ -142,7 +142,7 @@ def _check_discovery_files() -> None:
     urls = {item.text for item in root.findall("sm:url/sm:loc", namespace) if item.text}
     required = {
         urljoin(BASE_URL, "guides/agent-stock-backtesting/"),
-        urljoin(BASE_URL, "guides/llm-trading-agent-backtesting/"),
+        urljoin(BASE_URL, "zh/guides/agent-stock-backtesting/"),
     }
     if not required.issubset(urls):
         raise AssertionError(f"Sitemap is missing priority URLs: {sorted(required - urls)}")
@@ -159,9 +159,54 @@ def _check_discovery_files() -> None:
             raise AssertionError(f"Missing AI-readable discovery file: {name}")
 
 
+def _check_bilingual_page_map() -> None:
+    english_pages = {
+        path.relative_to(SITE).as_posix()
+        for path in SITE.rglob("index.html")
+        if "zh" not in path.relative_to(SITE).parts
+        and "llm-trading-agent-backtesting" not in path.parts
+    }
+    chinese_pages = {
+        path.relative_to(SITE / "zh").as_posix()
+        for path in (SITE / "zh").rglob("index.html")
+    }
+    if english_pages != chinese_pages:
+        raise AssertionError(
+            "English/Chinese page maps differ: "
+            f"English only={sorted(english_pages - chinese_pages)}, "
+            f"Chinese only={sorted(chinese_pages - english_pages)}"
+        )
+    for relative in sorted(english_pages):
+        english, _ = _parse_page(SITE / relative)
+        chinese, _ = _parse_page(SITE / "zh" / relative)
+        page_path = relative.removesuffix("index.html")
+        english_url = urljoin(BASE_URL, page_path)
+        chinese_url = urljoin(BASE_URL, f"zh/{page_path}")
+        expected = {
+            "en": english_url,
+            "zh-CN": chinese_url,
+            "x-default": english_url,
+        }
+        if english.html_language != "en" or chinese.html_language != "zh-CN":
+            raise AssertionError(
+                f"Language mismatch for {relative}: "
+                f"English={english.html_language!r}, Chinese={chinese.html_language!r}"
+            )
+        if english.alternates != expected or chinese.alternates != expected:
+            raise AssertionError(
+                f"Reciprocal hreflang mismatch for {relative}: "
+                f"English={english.alternates}, Chinese={chinese.alternates}"
+            )
+    if not (SITE / "search" / "search_index.json").is_file():
+        raise AssertionError("Missing English search index")
+    if not (SITE / "zh" / "search" / "search_index.json").is_file():
+        raise AssertionError("Missing Chinese search index")
+
+
 def main() -> None:
     _check_all_pages()
     _check_primary_guides()
+    _check_bilingual_page_map()
     _check_discovery_files()
     print("Documentation discovery checks passed")
 

@@ -22,6 +22,7 @@ ROOT_FILES = [
     "llms-full.txt",
     "llms.txt",
     "mkdocs.yml",
+    "mkdocs.zh.yml",
     "pyproject.toml",
 ]
 DIRECTORIES = [".github", "docs", "examples", "pixel-office", "tests", "traderharness", "webui"]
@@ -29,13 +30,16 @@ PUBLIC_SCRIPTS = [
     "audit_entity_leakage.py",
     "build_entity_templates.py",
     "build_hf_release.py",
+    "build_bilingual_docs.py",
     "build_llms_full.py",
     "build_readme_gif.py",
     "build_social_preview.py",
     "clean_announcements_a_share.py",
+    "check_docs_discovery.py",
     "data_doctor.py",
     "generate_pixel_office_assets.py",
     "update_hf_card.py",
+    "update_sitemap_lastmod.py",
     "upload_hf_release.py",
 ]
 EXCLUDED_PARTS = {

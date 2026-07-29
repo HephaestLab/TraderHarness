@@ -50,7 +50,7 @@ Environment name: pypi
 1. 在 Google Search Console 和 Bing Webmaster Tools 验证站点所有权并提交
    `https://hephaestlab.github.io/TraderHarness/sitemap.xml`。
 2. 对中文指南
-   `https://hephaestlab.github.io/TraderHarness/guides/agent-stock-backtesting/`
+   `https://hephaestlab.github.io/TraderHarness/zh/guides/agent-stock-backtesting/`
    使用 URL 检查工具请求抓取；英文指南同样操作。
 3. 如果后续建立可稳定访问的中国大陆镜像，再向百度搜索资源平台提交镜像站点；不要让两个站点
    在没有 canonical / hreflang 约束的情况下复制同一批页面。
@@ -143,7 +143,7 @@ market-simulation, fastapi, react, python
 >
 > 同时它也是一个数据合成器：每次模型调用的完整消息、工具 schema、推理过程全部落盘成轨迹，可用于强化学习、行为分析和评测，也可按需转换为 SFT JSONL。数据集已发 Hugging Face。
 >
-> 方法指南：<https://hephaestlab.github.io/TraderHarness/guides/agent-stock-backtesting/>
+> 方法指南：<https://hephaestlab.github.io/TraderHarness/zh/guides/agent-stock-backtesting/>
 > 仓库：<https://github.com/HephaestLab/TraderHarness>（Apache-2.0，本地运行，带免密回放和像素办公室研究台）。欢迎挑刺，尤其是掩码威胁模型。
 
 ## 掘金 / V2EX（分享体）
@@ -160,7 +160,7 @@ market-simulation, fastapi, react, python
 > 同时支持独立账户的多 Agent 赛马，以及多个只读顾问 + 单一 Trader 的委员会。仓库带免 Key 回放和本地研究工作台。
 >
 > GitHub: <https://github.com/HephaestLab/TraderHarness>
-> Agent 炒股回测指南: <https://hephaestlab.github.io/TraderHarness/guides/agent-stock-backtesting/>
+> Agent 炒股回测指南: <https://hephaestlab.github.io/TraderHarness/zh/guides/agent-stock-backtesting/>
 > 数据集: <https://huggingface.co/datasets/ANTICH/traderharness-ashare-5y>
 
 ## Product Hunt
