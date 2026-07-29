@@ -81,9 +81,10 @@ and must label that fixture as a demo rather than a production acceptance datase
 All other inputs are paired: agent card, model, dates, starting cash, tool contract, market data,
 execution rules and entity seed. Run order alternates by repetition to reduce provider-time bias.
 
-The first pilot uses the README acceptance model, `deepseek-v4-pro` in thinking-high mode, one
-pre-declared market window and three paired repetitions. A later
-publication run can expand to multiple models/windows after the pilot records cost and variance.
+The publication pilot uses the README acceptance model, `deepseek-v4-pro` in thinking-high mode,
+the pre-declared half-month window `2024-03-04` through `2024-03-15`, and three paired repetitions.
+A later robustness run can expand to multiple models/windows after this pilot records cost and
+variance.
 
 ### 4.2 Engineering work
 

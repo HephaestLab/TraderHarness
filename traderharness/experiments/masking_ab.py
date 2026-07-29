@@ -301,7 +301,7 @@ def run_experiment(
     replays_dir.mkdir(parents=True, exist_ok=True)
     protocol = {
         "schema_version": 1,
-        "experiment_id": f"masking-ab-{start_date}-pilot",
+        "experiment_id": f"masking-ab-{start_date}-{end_date}-pilot",
         "hypothesis": (
             "Visible dates and company identities may systematically change the behavior of the "
             "same LLM trading agent."
