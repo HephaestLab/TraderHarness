@@ -1,17 +1,17 @@
 {
   "schema_version": 1,
-  "experiment_id": "masking-ab-2024-03-14-pilot",
+  "experiment_id": "masking-ab-2024-03-04-2024-03-15-pilot",
   "status": "complete",
-  "generated_at": "2026-07-29T01:06:08.383788+00:00",
+  "generated_at": "2026-07-29T05:02:25.714172+00:00",
   "title": "Masked vs Unmasked LLM Trading Agent",
   "summary": "The same agent was evaluated with and without visible calendar dates and company identities. Inspect the recorded, auditable pilot below.",
   "model": "deepseek-v4-pro",
   "window": {
-    "start": "2024-03-14",
-    "end": "2024-03-14"
+    "start": "2024-03-04",
+    "end": "2024-03-15"
   },
   "repetitions": 3,
-  "commit": "6a3dd6d177ff74c7ec5cefd8a7feeceef3dc4dbd",
+  "commit": "63e922b4333b609fb205c6eb9dc42fa0ccf43956",
   "dataset_fingerprint": {
     "metadata_sha256": "d209829e3b4c671f4d1c5abbe093ea9b72ef97ee52c66289fd4c2defe7610c5b",
     "daily_size_bytes": 77644198,
@@ -52,60 +52,96 @@
         "finding_count": 0
       },
       "metrics": {
-        "total_return_pct": -0.47333333333333333,
-        "alpha_pct": -0.47333333333333333,
-        "sharpe_ratio": 0.0,
-        "max_drawdown_pct": 0.0,
-        "total_trades": 1.0,
-        "final_value": 995245.2366666667,
-        "llm_total_tokens": 181028.0,
-        "tool_calls": 50.666666666666664
+        "total_return_pct": -1.02,
+        "alpha_pct": -1.8466666666666667,
+        "sharpe_ratio": -8.246666666666666,
+        "max_drawdown_pct": 1.05,
+        "total_trades": 9.666666666666666,
+        "final_value": 989783.8366666666,
+        "llm_total_tokens": 1882731.6666666667,
+        "tool_calls": 460.0
       },
       "runs": [
         {
           "id": "masked-r01",
           "repetition": 1,
           "metrics": {
-            "total_return_pct": -0.58,
-            "sharpe_ratio": 0.0,
-            "max_drawdown_pct": 0.0,
-            "total_trades": 1,
-            "final_value": 994190.24,
-            "alpha_pct": -0.58
+            "total_return_pct": -0.77,
+            "sharpe_ratio": -8.87,
+            "max_drawdown_pct": 0.77,
+            "total_trades": 9,
+            "final_value": 992256.63,
+            "alpha_pct": -1.6
           },
-          "llm_total_tokens": 173204
+          "llm_total_tokens": 1859216
         },
         {
           "id": "masked-r02",
           "repetition": 2,
           "metrics": {
-            "total_return_pct": -0.79,
-            "sharpe_ratio": 0.0,
-            "max_drawdown_pct": 0.0,
-            "total_trades": 1,
-            "final_value": 992077.3,
-            "alpha_pct": -0.79
+            "total_return_pct": -1.76,
+            "sharpe_ratio": -12.58,
+            "max_drawdown_pct": 1.65,
+            "total_trades": 9,
+            "final_value": 982373.33,
+            "alpha_pct": -2.59
           },
-          "llm_total_tokens": 188701
+          "llm_total_tokens": 2068711
         },
         {
           "id": "masked-r03",
           "repetition": 3,
           "metrics": {
-            "total_return_pct": -0.05,
-            "sharpe_ratio": 0.0,
-            "max_drawdown_pct": 0.0,
-            "total_trades": 1,
-            "final_value": 999468.17,
-            "alpha_pct": -0.05
+            "total_return_pct": -0.53,
+            "sharpe_ratio": -3.29,
+            "max_drawdown_pct": 0.73,
+            "total_trades": 11,
+            "final_value": 994721.55,
+            "alpha_pct": -1.35
           },
-          "llm_total_tokens": 181179
+          "llm_total_tokens": 1720268
         }
       ],
       "equity_curve": [
         [
+          "2024-03-04",
+          997552.1
+        ],
+        [
+          "2024-03-05",
+          1000352.1
+        ],
+        [
+          "2024-03-06",
+          999552.1
+        ],
+        [
+          "2024-03-07",
+          993805.6
+        ],
+        [
+          "2024-03-08",
+          995554.82
+        ],
+        [
+          "2024-03-11",
+          1002085.81
+        ],
+        [
+          "2024-03-12",
+          1000414.06
+        ],
+        [
+          "2024-03-13",
+          997714.06
+        ],
+        [
           "2024-03-14",
-          999468.17
+          995799.17
+        ],
+        [
+          "2024-03-15",
+          994721.55
         ]
       ]
     },
@@ -118,71 +154,107 @@
         "finding_count": 100
       },
       "metrics": {
-        "total_return_pct": -0.25666666666666665,
-        "alpha_pct": -0.25666666666666665,
-        "sharpe_ratio": 0.0,
-        "max_drawdown_pct": 0.0,
-        "total_trades": 1.3333333333333333,
-        "final_value": 997430.8166666668,
-        "llm_total_tokens": 209266.66666666666,
-        "tool_calls": 52.0
+        "total_return_pct": -0.08666666666666666,
+        "alpha_pct": -0.91,
+        "sharpe_ratio": -1.61,
+        "max_drawdown_pct": 1.05,
+        "total_trades": 10.666666666666666,
+        "final_value": 999135.5499999999,
+        "llm_total_tokens": 1733339.3333333333,
+        "tool_calls": 430.0
       },
       "runs": [
         {
           "id": "unmasked-r01",
           "repetition": 1,
           "metrics": {
-            "total_return_pct": -0.81,
-            "sharpe_ratio": 0.0,
-            "max_drawdown_pct": 0.0,
-            "total_trades": 1,
-            "final_value": 991890.14,
-            "alpha_pct": -0.81
+            "total_return_pct": -1.78,
+            "sharpe_ratio": -10.82,
+            "max_drawdown_pct": 1.93,
+            "total_trades": 12,
+            "final_value": 982171.87,
+            "alpha_pct": -2.61
           },
-          "llm_total_tokens": 170745
+          "llm_total_tokens": 1764642
         },
         {
           "id": "unmasked-r02",
           "repetition": 2,
           "metrics": {
-            "total_return_pct": 0.38,
-            "sharpe_ratio": 0.0,
-            "max_drawdown_pct": 0.0,
-            "total_trades": 2,
-            "final_value": 1003781.98,
-            "alpha_pct": 0.38
+            "total_return_pct": 0.43,
+            "sharpe_ratio": 0.96,
+            "max_drawdown_pct": 0.79,
+            "total_trades": 10,
+            "final_value": 1004322.58,
+            "alpha_pct": -0.39
           },
-          "llm_total_tokens": 243279
+          "llm_total_tokens": 1671617
         },
         {
           "id": "unmasked-r03",
           "repetition": 3,
           "metrics": {
-            "total_return_pct": -0.34,
-            "sharpe_ratio": 0.0,
-            "max_drawdown_pct": 0.0,
-            "total_trades": 1,
-            "final_value": 996620.33,
-            "alpha_pct": -0.34
+            "total_return_pct": 1.09,
+            "sharpe_ratio": 5.03,
+            "max_drawdown_pct": 0.43,
+            "total_trades": 10,
+            "final_value": 1010912.2,
+            "alpha_pct": 0.27
           },
-          "llm_total_tokens": 213776
+          "llm_total_tokens": 1763759
         }
       ],
       "equity_curve": [
         [
+          "2024-03-04",
+          1000864.3
+        ],
+        [
+          "2024-03-05",
+          996587.04
+        ],
+        [
+          "2024-03-06",
+          1007509.04
+        ],
+        [
+          "2024-03-07",
+          1006747.04
+        ],
+        [
+          "2024-03-08",
+          1007442.6
+        ],
+        [
+          "2024-03-11",
+          1007910.51
+        ],
+        [
+          "2024-03-12",
+          1003721.97
+        ],
+        [
+          "2024-03-13",
+          1011664.44
+        ],
+        [
           "2024-03-14",
-          996620.33
+          1011882.93
+        ],
+        [
+          "2024-03-15",
+          1010912.2
         ]
       ]
     }
   },
   "paired_deltas": {
-    "total_return_pct": 0.2166666666666666,
-    "alpha_pct": 0.2166666666666666,
-    "sharpe_ratio": 0.0,
-    "max_drawdown_pct": 0.0,
-    "total_trades": 0.3333333333333333,
-    "final_value": 2185.579999999958
+    "total_return_pct": 0.9333333333333332,
+    "alpha_pct": 0.9366666666666666,
+    "sharpe_ratio": 6.636666666666666,
+    "max_drawdown_pct": 1.850371707708594e-17,
+    "total_trades": 1.0,
+    "final_value": 9351.713333333299
   },
   "limitations": [
     "This is a recorded research experiment, not a live backtest or investment recommendation.",
