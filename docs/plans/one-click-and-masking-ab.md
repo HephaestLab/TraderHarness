@@ -1,8 +1,8 @@
 # One-click experience and masked/unmasked A/B implementation plan
 
-Status: approved for implementation  
-Owner: HephaestLab / TraderHarness  
-Scope: one-click audited showcase and a reproducible masking experiment  
+Status: approved for implementation
+Owner: HephaestLab / TraderHarness
+Scope: one-click audited showcase and a reproducible masking experiment
 
 ## 1. Outcomes
 

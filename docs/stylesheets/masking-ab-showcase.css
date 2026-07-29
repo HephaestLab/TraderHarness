@@ -27,4 +27,3 @@
   .ab-meta, .ab-metrics { grid-template-columns: 1fr 1fr; }
   .ab-meta span:nth-child(2) { border-right: 0; }
 }
-

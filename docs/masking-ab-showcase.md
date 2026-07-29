@@ -21,4 +21,3 @@ calendar dates and company identities.
 
 [Inspect the protocol](plans/one-click-and-masking-ab.md){ .md-button }
 [View the code](https://github.com/HephaestLab/TraderHarness){ .md-button .md-button--primary }
-
