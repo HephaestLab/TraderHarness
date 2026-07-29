@@ -12,6 +12,7 @@ interface RunFormProps {
     start_date: string;
     end_date: string;
     initial_cash: number;
+    mask_dates: boolean;
     mask_entities: boolean;
     entity_mask_seed: number;
   }) => void;
@@ -50,6 +51,7 @@ export function RunForm({ agents, multiple = false, busy, onSubmit }: RunFormPro
           start_date: startDate,
           end_date: endDate,
           initial_cash: cash,
+          mask_dates: true,
           mask_entities: true,
           entity_mask_seed: seed,
         });

@@ -59,6 +59,8 @@ def test_run_exposes_entity_masking_controls():
     result = CliRunner().invoke(main, ["run", "--help"])
 
     assert result.exit_code == 0
+    assert "--mask-dates" in result.output
+    assert "--no-mask-dates" in result.output
     assert "--mask-entities" in result.output
     assert "--no-mask-entities" in result.output
     assert "--entity-mask-seed" in result.output
@@ -149,10 +151,20 @@ def test_compare_exposes_repeatable_agents_and_entity_masking():
 
     assert result.exit_code == 0
     assert "--agent" in result.output
+    assert "--mask-dates" in result.output
     assert "--mask-entities" in result.output
     assert "--output" in result.output
     assert "--replay" in result.output
     assert "--record-replay" in result.output
+
+
+def test_cli_exposes_masking_ab_command():
+    result = CliRunner().invoke(main, ["masking-ab", "--help"])
+
+    assert result.exit_code == 0
+    assert "--repetitions" in result.output
+    assert "--output" in result.output
+    assert "--model" in result.output
 
 
 def test_compare_rejects_simultaneous_record_and_replay(tmp_path):

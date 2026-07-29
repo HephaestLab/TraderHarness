@@ -177,6 +177,7 @@ class RunManager:
             end_date=date.fromisoformat(request.end_date),
             initial_cash=request.initial_cash,
             agents=agents,
+            mask_dates=request.mask_dates,
             mask_entities=request.mask_entities,
             entity_mask_seed=request.entity_mask_seed,
             replay_path=replay_path,

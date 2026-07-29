@@ -38,8 +38,13 @@ def _is_committee(agent) -> bool:
 )
 @click.option("--cash", default=1000000, help="Initial cash (default: 1000000)")
 @click.option(
+    "--mask-dates/--no-mask-dates",
+    default=True,
+    help="Replace calendar dates with relative dates in every agent-visible surface",
+)
+@click.option(
     "--mask-entities/--no-mask-entities",
-    default=False,
+    default=True,
     help="Anonymize company codes and names for contamination-resistant evaluation",
 )
 @click.option("--entity-mask-seed", default=0, type=int, help="Deterministic entity mapping seed")
@@ -69,6 +74,7 @@ def run(
     end: str,
     model: str | None,
     cash: int,
+    mask_dates: bool,
     mask_entities: bool,
     entity_mask_seed: int,
     replay: Path | None,
@@ -106,6 +112,10 @@ def run(
 
     replay_player = ReplayPlayer(replay) if replay is not None and not replay_is_bundle else None
     bundle_player = ScopedReplayPlayer(replay) if replay_is_bundle else None
+    if bundle_player is not None:
+        mask_dates = bundle_player.manifest.mask_dates
+        mask_entities = bundle_player.manifest.mask_entities
+        entity_mask_seed = bundle_player.manifest.entity_mask_seed
     # New single-file recordings embed the live contract version so replay can
     # reinject the same system prompt (legacy files without meta stay on v1).
     replay_recorder = (
@@ -135,6 +145,7 @@ def run(
                 replay_recorder=bundle_recorder,
                 replay_player=bundle_player,
                 prompt_contract_version=prompt_contract_version,
+                mask_dates=mask_dates,
             )
         elif replay_player is not None or replay_recorder is not None:
             import yaml
@@ -153,9 +164,9 @@ def run(
                 replay_recorder=replay_recorder,
                 replay_player=replay_player,
             )
-            agent_obj = PromptAgent(agent_path, llm_client=llm_override)
+            agent_obj = PromptAgent(agent_path, llm_client=llm_override, mask_dates=mask_dates)
         else:
-            agent_obj = PromptAgent(agent_path)
+            agent_obj = PromptAgent(agent_path, mask_dates=mask_dates)
         agent_id = agent_obj.agent_id
         click.echo(f"Agent (YAML): {agent_obj.name}")
     else:
@@ -224,6 +235,7 @@ def run(
             max_positions=card.max_positions,
             max_position_pct=card.max_position_pct,
             allowed_tools=card.allowed_tools,
+            mask_dates=mask_dates,
             prompt_contract_version=prompt_contract_version,
         )
         agent_id = card.id
@@ -245,6 +257,7 @@ def run(
         "initial_cash": cash,
         "model": agent_obj.llm_client.model,
         "agent_id": agent_id,
+        "mask_dates": mask_dates,
         "mask_entities": mask_entities,
         "entity_mask_seed": entity_mask_seed,
     }
@@ -257,6 +270,11 @@ def run(
 
     click.echo(f"Result: ~/.traderharness/results/{result_filename}")
     click.echo(f"Live: {live_file.name}")
+    if not mask_dates or not mask_entities:
+        click.echo(
+            "WARNING: unmasked research control enabled; outputs may contain real dates or entities.",
+            err=True,
+        )
     click.echo("Running...")
 
     try:
@@ -277,7 +295,22 @@ def run(
             ),
             event_bus=EventBus(),
         )
-        result = asyncio.run(engine.run([agent_obj], start_date, end_date))
+        async def run_and_close_clients():
+            try:
+                return await engine.run([agent_obj], start_date, end_date)
+            finally:
+                clients = [getattr(agent_obj, "llm_client", None)]
+                committee = getattr(agent_obj, "committee", None)
+                clients.extend(
+                    getattr(advisor, "llm_client", None)
+                    for advisor in getattr(committee, "advisors", [])
+                )
+                for client in clients:
+                    close = getattr(client, "aclose", None)
+                    if close is not None:
+                        await close()
+
+        result = asyncio.run(run_and_close_clients())
 
         data = result.agent_data[agent_id]
         metrics = calculate_metrics(data["equity_curve"], initial_cash, data["trades"])
@@ -339,6 +372,11 @@ def run(
                 if benchmark_curve
                 else None
             ),
+            "usage": {
+                "llm_total_tokens": int(
+                    getattr(getattr(agent_obj, "llm_client", None), "total_tokens_used", 0)
+                )
+            },
         }
 
         if replay_player is not None:
@@ -351,12 +389,18 @@ def run(
             replay_recorder.save(record_replay)
             audit_report = audit_artifacts([record_replay])
             if not audit_report["passed"]:
-                raise RuntimeError(
-                    f"Recorded replay failed leakage audit "
-                    f"({audit_report['finding_count']} findings)"
+                if mask_dates and mask_entities:
+                    raise RuntimeError(
+                        f"Recorded replay failed leakage audit "
+                        f"({audit_report['finding_count']} findings)"
+                    )
+                click.echo(
+                    "Replay leakage audit: EXPECTED FINDINGS "
+                    f"({audit_report['finding_count']}; unmasked research control)"
                 )
+            else:
+                click.echo("Replay leakage audit: PASS")
             click.echo(f"Replay: {record_replay}")
-            click.echo("Replay leakage audit: PASS")
         if bundle_recorder is not None and record_replay is not None:
             from datetime import datetime, timezone
 
@@ -368,6 +412,7 @@ def run(
                 start_date=start_date,
                 end_date=end_date,
                 initial_cash=float(cash),
+                mask_dates=mask_dates,
                 mask_entities=mask_entities,
                 entity_mask_seed=entity_mask_seed,
                 agents=[
@@ -391,13 +436,19 @@ def run(
             ]
             audit_report = audit_artifacts(artifacts)
             if not audit_report["passed"]:
-                raise RuntimeError(
-                    f"Recorded replay bundle failed leakage audit "
-                    f"({audit_report['finding_count']} findings)"
+                if mask_dates and mask_entities:
+                    raise RuntimeError(
+                        f"Recorded replay bundle failed leakage audit "
+                        f"({audit_report['finding_count']} findings)"
+                    )
+                click.echo(
+                    "Replay leakage audit: EXPECTED FINDINGS "
+                    f"({audit_report['finding_count']}; unmasked research control)"
                 )
+            else:
+                click.echo("Replay leakage audit: PASS")
             click.echo(f"Replay bundle: {record_replay}")
-            click.echo("Replay leakage audit: PASS")
-        save_complete(result_filename, result_data)
+        complete_path = save_complete(result_filename, result_data)
 
         # Clean up live file
         if live_file.exists():
@@ -413,6 +464,11 @@ def run(
                 f"  CSI 300: {vs_benchmark.benchmark_return_pct:+.2f}% | "
                 f"Alpha: {vs_benchmark.alpha:+.2f}%"
             )
+        return {
+            "result_path": complete_path,
+            "result": result_data,
+            "replay_path": record_replay,
+        }
 
     except Exception as e:
         save_failed(result_filename, str(e), config)
@@ -448,11 +504,71 @@ def demo():
             end="2024-03-14",
             model=None,
             cash=1_000_000,
+            mask_dates=True,
             mask_entities=True,
             entity_mask_seed=42,
             replay=cassette_path,
             record_replay=None,
         )
+
+
+@main.command("masking-ab")
+@click.option("--agent", "-a", default="momentum-dragon", show_default=True)
+@click.option("--model", "-m", default="deepseek-v4-pro", show_default=True)
+@click.option("--start", default="2024-03-14", show_default=True)
+@click.option("--end", default="2024-03-14", show_default=True)
+@click.option("--cash", default=1_000_000, type=click.IntRange(min=1), show_default=True)
+@click.option("--repetitions", default=3, type=click.IntRange(min=1, max=20), show_default=True)
+@click.option("--entity-mask-seed", default=42, type=int, show_default=True)
+@click.option(
+    "--output",
+    type=click.Path(path_type=Path),
+    default=Path("artifacts/masking-ab-pilot"),
+    show_default=True,
+)
+@click.option(
+    "--showcase-output",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help="Also write the sanitized browser showcase JSON to this path",
+)
+def masking_ab(
+    agent: str,
+    model: str,
+    start: str,
+    end: str,
+    cash: int,
+    repetitions: int,
+    entity_mask_seed: int,
+    output: Path,
+    showcase_output: Path | None,
+):
+    """Run a paired, recorded and audited masked/unmasked pilot."""
+    from traderharness.experiments.masking_ab import run_experiment
+
+    ctx = click.get_current_context()
+    click.echo(
+        f"Frozen masking A/B protocol: {repetitions} pair(s), {start} -> {end}, model={model}"
+    )
+    outcome = run_experiment(
+        invoke_run=lambda **kwargs: ctx.invoke(run, **kwargs),
+        agent=agent,
+        model=model,
+        start_date=start,
+        end_date=end,
+        cash=cash,
+        repetitions=repetitions,
+        entity_mask_seed=entity_mask_seed,
+        output=output,
+        showcase_output=showcase_output,
+    )
+    click.echo(f"Experiment: {outcome['output']}")
+    click.echo("Masked audit: PASS")
+    unmasked = outcome["audit"]["unmasked"]
+    click.echo(
+        "Unmasked control audit: "
+        f"{unmasked['status']} ({unmasked['finding_count']} findings retained)"
+    )
 
 
 @main.command()
@@ -467,6 +583,11 @@ def demo():
 @click.option("--start", "-s", required=True, help="Start date (YYYY-MM-DD)")
 @click.option("--end", "-e", required=True, help="End date (YYYY-MM-DD)")
 @click.option("--cash", default=1000000, help="Initial cash per agent")
+@click.option(
+    "--mask-dates/--no-mask-dates",
+    default=True,
+    help="Replace calendar dates with relative dates in every agent-visible surface",
+)
 @click.option(
     "--mask-entities/--no-mask-entities",
     default=True,
@@ -494,6 +615,7 @@ def compare(
     start: str,
     end: str,
     cash: int,
+    mask_dates: bool,
     mask_entities: bool,
     entity_mask_seed: int,
     output,
@@ -544,6 +666,10 @@ def compare(
 
     replay_player = ScopedReplayPlayer(replay) if replay is not None else None
     replay_recorder = ScopedReplayRecorder() if record_replay is not None else None
+    if replay_player is not None:
+        mask_dates = replay_player.manifest.mask_dates
+        mask_entities = replay_player.manifest.mask_entities
+        entity_mask_seed = replay_player.manifest.entity_mask_seed
     prompt_contract_version = (
         replay_player.manifest.prompt_contract_version if replay_player is not None else None
     )
@@ -558,6 +684,7 @@ def compare(
                 replay_recorder=replay_recorder,
                 replay_player=replay_player,
                 prompt_contract_version=prompt_contract_version,
+                mask_dates=mask_dates,
             )
         else:
             card = load_card(spec)
@@ -593,6 +720,7 @@ def compare(
                 max_positions=card.max_positions,
                 max_position_pct=card.max_position_pct,
                 allowed_tools=card.allowed_tools,
+                mask_dates=mask_dates,
                 prompt_contract_version=prompt_contract_version,
             )
         agents.append(agent)
@@ -612,6 +740,11 @@ def compare(
     click.echo(
         f"Running {len(agents)} agents: {', '.join(ids)} ({start_date} -> {end_date})"
     )
+    if not mask_dates or not mask_entities:
+        click.echo(
+            "WARNING: unmasked research control enabled; outputs may contain real dates or entities.",
+            err=True,
+        )
 
     async def _run_compare():
         # Create the limiter inside the running loop (3.10+ requirement).
@@ -646,6 +779,7 @@ def compare(
             start_date=start_date,
             end_date=end_date,
             initial_cash=float(cash),
+            mask_dates=mask_dates,
             mask_entities=mask_entities,
             entity_mask_seed=entity_mask_seed,
             agents=[
@@ -726,6 +860,7 @@ def compare(
             {
                 "start_date": start,
                 "end_date": end,
+                "mask_dates": mask_dates,
                 "mask_entities": mask_entities,
                 "entity_mask_seed": entity_mask_seed,
                 "comparison": rows,
@@ -747,12 +882,18 @@ def compare(
 
         audit_report = audit_artifacts(_pending_audit_artifacts)
         if not audit_report["passed"]:
-            raise click.ClickException(
-                f"Recorded replay bundle failed leakage audit "
-                f"({audit_report['finding_count']} findings); "
-                f"comparison was still written to {html_path}"
+            if mask_dates and mask_entities:
+                raise click.ClickException(
+                    f"Recorded replay bundle failed leakage audit "
+                    f"({audit_report['finding_count']} findings); "
+                    f"comparison was still written to {html_path}"
+                )
+            click.echo(
+                "Replay leakage audit: EXPECTED FINDINGS "
+                f"({audit_report['finding_count']}; unmasked research control)"
             )
-        click.echo("Replay leakage audit: PASS")
+        else:
+            click.echo("Replay leakage audit: PASS")
 
 
 @main.command()

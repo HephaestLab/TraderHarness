@@ -58,6 +58,7 @@ class TestReplayBundleManifest:
             start_date=date(2024, 3, 4),
             end_date=date(2024, 3, 5),
             initial_cash=1_000_000.0,
+            mask_dates=True,
             mask_entities=True,
             entity_mask_seed=7,
             agents=[
@@ -81,6 +82,7 @@ class TestReplayBundleManifest:
         assert loaded.schema_version == MANIFEST_SCHEMA_VERSION
         assert loaded.start_date == date(2024, 3, 4)
         assert loaded.end_date == date(2024, 3, 5)
+        assert loaded.mask_dates is True
         assert loaded.entity_mask_seed == 7
         assert loaded.prompt_contract_version == "v2"
         assert loaded.thinking == {"enabled": True, "effort": "high"}
@@ -90,6 +92,17 @@ class TestReplayBundleManifest:
             model="deepseek-chat",
             cassette="trend-breakout.jsonl",
         )
+
+    def test_legacy_manifest_defaults_to_date_masking_enabled(self, tmp_path):
+        path = tmp_path / "manifest.json"
+        path.write_text(
+            '{"start_date":"2024-03-04","end_date":"2024-03-04","agents":[]}',
+            encoding="utf-8",
+        )
+
+        loaded = ReplayBundleManifest.load(path)
+
+        assert loaded.mask_dates is True
 
     def test_agent_by_id_looks_up_manifest_entry(self):
         manifest = ReplayBundleManifest(

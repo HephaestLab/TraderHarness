@@ -36,6 +36,7 @@ def _request():
         start_date="2024-03-14",
         end_date="2024-03-14",
         initial_cash=1_000_000,
+        mask_dates=True,
         mask_entities=True,
         entity_mask_seed=42,
     )

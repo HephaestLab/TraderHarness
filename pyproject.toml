@@ -71,6 +71,7 @@ Issues = "https://github.com/HephaestLab/TraderHarness/issues"
 
 [tool.hatch.build.targets.wheel.force-include]
 "examples/replays/momentum_dragon_2024-03-14.jsonl" = "traderharness/demo/momentum_dragon_2024-03-14.jsonl"
+"traderharness/demo/masking_ab_showcase.json" = "traderharness/demo/masking_ab_showcase.json"
 
 [tool.hatch.build]
 artifacts = ["traderharness/ui/static/**"]

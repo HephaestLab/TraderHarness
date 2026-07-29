@@ -41,6 +41,7 @@ describe("RunForm", () => {
     expect(submit).toHaveBeenCalledWith(
       expect.objectContaining({
         agents: ["momentum"],
+        mask_dates: true,
         mask_entities: true,
         entity_mask_seed: 42,
       }),

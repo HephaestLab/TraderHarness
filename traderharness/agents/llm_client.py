@@ -152,6 +152,14 @@ class LLMClient:
                         resp = await self._client.chat.completions.create(**kwargs)
                 else:
                     resp = await self._client.chat.completions.create(**kwargs)
+                if isinstance(resp, str):
+                    preview = resp[:240].replace("\n", " ")
+                    request_chars = len(json.dumps(messages, ensure_ascii=False))
+                    tool_chars = len(json.dumps(tools, ensure_ascii=False)) if tools else 0
+                    raise RuntimeError(
+                        "Provider returned a JSON string instead of an OpenAI chat completion: "
+                        f"{preview!r} (messages={request_chars} chars, tools={tool_chars} chars)"
+                    )
                 msg = resp.choices[0].message
 
                 if resp.usage:
@@ -230,6 +238,13 @@ class LLMClient:
             self._client = AsyncOpenAI(api_key=self._api_key, base_url=self._base_url)
         except ImportError:
             raise ImportError("openai not installed. Run: pip install traderharness[llm]")
+
+    async def aclose(self) -> None:
+        """Close the provider client on the event loop that used it."""
+        if self._client is None:
+            return
+        client, self._client = self._client, None
+        await client.close()
 
     def _cache_key(self, messages: list[dict], tools: list[dict] | None) -> str:
         content = json.dumps(

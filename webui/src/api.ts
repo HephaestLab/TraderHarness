@@ -2,6 +2,7 @@ import type {
   AgentCard,
   LLMConfig,
   LLMTestResult,
+  MaskingShowcase,
   ResultAnalysis,
   ResultDocument,
   ResultSummary,
@@ -28,6 +29,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   status: () => request<RuntimeStatus>("/api/status"),
+  maskingShowcase: () => request<MaskingShowcase>("/api/showcase/masking-ab"),
   tools: () => request<ToolCatalogEntry[]>("/api/tools"),
   agents: () => request<AgentCard[]>("/api/agents"),
   createAgent: (card: AgentCard) =>
@@ -54,6 +56,7 @@ export const api = {
     start_date: string;
     end_date: string;
     initial_cash: number;
+    mask_dates: boolean;
     mask_entities: boolean;
     entity_mask_seed: number;
   }) =>

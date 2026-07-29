@@ -185,6 +185,35 @@ SYSTEM_PROMPT_TEMPLATE = """
 {persona}
 """
 
+COMPACT_SYSTEM_PROMPT_TEMPLATE = """
+You are an A-share trading agent in a historical simulation with {initial_cash} initial cash.
+
+## Daily protocol
+
+1. Pre-market research: research tools are available and orders are disabled.
+2. Open window (09:30-10:00): orders are enabled under the environment's open execution rules.
+3. Close window (14:30-15:00): orders are enabled under the environment's close execution rules.
+4. Call finish_day when your work for the current phase is complete.
+
+## Hard constraints
+
+- Use only information returned by the supplied tools; never infer hidden dates or identities.
+- T+1, lot size, price limits, suspensions, fees and execution rules are enforced by the environment.
+- A security may be traded at most once per day.
+- One position may not exceed {max_position_pct}% and at most {max_positions} positions may be held.
+- Cash is valid. The environment owns portfolio state and TradingBus.place_order is the only order path.
+{decision_recording_contract}
+## Available tools
+
+{allowed_tool_names}
+
+Treat the supplied function schemas as authoritative. Do not invent tool names or parameters.
+
+## Trading style
+
+{persona}
+"""
+
 
 class ToolAgent:
     """Tool-Use Agentic Agent — 通过 function calling 自主研究和交易。"""
@@ -227,6 +256,7 @@ class ToolAgent:
         mask_dates: bool = True,
         committee=None,
         prompt_contract_version: str | None = None,
+        compact_prompt: bool = False,
     ) -> None:
         self.agent_id = agent_id
         self.name = name
@@ -240,12 +270,14 @@ class ToolAgent:
         contract_text, self.prompt_contract_version = resolve_decision_contract(
             llm_client, prompt_contract_version
         )
-        self._system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
+        prompt_template = COMPACT_SYSTEM_PROMPT_TEMPLATE if compact_prompt else SYSTEM_PROMPT_TEMPLATE
+        self._system_prompt = prompt_template.format(
             initial_cash=f"{float(initial_cash):,.0f}",
             max_position_pct=f"{max_position_pct:.0f}",
             max_positions=max_positions,
             persona=persona,
             decision_recording_contract=contract_text,
+            allowed_tool_names=", ".join(self.allowed_tools),
         )
 
         self._registry = ToolRegistry()

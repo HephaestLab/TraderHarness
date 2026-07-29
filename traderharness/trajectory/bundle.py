@@ -110,6 +110,7 @@ class ReplayBundleManifest:
     start_date: date
     end_date: date
     initial_cash: float = 1_000_000.0
+    mask_dates: bool = True
     mask_entities: bool = True
     entity_mask_seed: int = 0
     agents: list[AgentManifestEntry] = field(default_factory=list)
@@ -128,6 +129,7 @@ class ReplayBundleManifest:
             "start_date": self.start_date.isoformat(),
             "end_date": self.end_date.isoformat(),
             "initial_cash": self.initial_cash,
+            "mask_dates": self.mask_dates,
             "mask_entities": self.mask_entities,
             "entity_mask_seed": self.entity_mask_seed,
             "agents": [agent.to_dict() for agent in self.agents],
@@ -143,6 +145,7 @@ class ReplayBundleManifest:
             start_date=date.fromisoformat(data["start_date"]),
             end_date=date.fromisoformat(data["end_date"]),
             initial_cash=data.get("initial_cash", 1_000_000.0),
+            mask_dates=data.get("mask_dates", True),
             mask_entities=data.get("mask_entities", True),
             entity_mask_seed=data.get("entity_mask_seed", 0),
             agents=[AgentManifestEntry.from_dict(a) for a in data.get("agents", [])],

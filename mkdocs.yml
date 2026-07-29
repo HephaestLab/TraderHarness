@@ -25,6 +25,12 @@ theme:
       primary: black
       accent: green
 
+extra_javascript:
+  - javascripts/masking-ab-showcase.js
+
+extra_css:
+  - stylesheets/masking-ab-showcase.css
+
 plugins:
   - search
   - minify:
@@ -50,6 +56,7 @@ markdown_extensions:
 
 nav:
   - 概览: index.md
+  - Masked vs Unmasked: masking-ab-showcase.md
   - 快速上手: quickstart.md
   - LLM Agent Backtesting Guide: guides/llm-trading-agent-backtesting.md
   - 防数据泄漏: contamination.md

@@ -8,7 +8,8 @@ description: 抗数据污染的 LLM 交易 Agent 回测环境：严格时点掩�
 
 它为 LLM 提供一个历史有效的 A 股市场、一套受控的研究工具，以及由环境托管的账户。Agent 可以调查研究、执行 Python 分析、修正论点，并通过唯一可审计的下单路径完成交易。
 
-[安装并运行 →](quickstart.md){ .md-button .md-button--primary }
+[一键体验 Masked vs Unmasked →](masking-ab-showcase.md){ .md-button .md-button--primary }
+[安装并运行](quickstart.md){ .md-button }
 [在 GitHub 查看](https://github.com/HephaestLab/TraderHarness){ .md-button }
 
 English: [How to backtest LLM trading agents without look-ahead bias](guides/llm-trading-agent-backtesting.md)

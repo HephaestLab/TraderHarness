@@ -1,0 +1,30 @@
+.ab-kicker { color: #48d597; font: 700 .72rem monospace; letter-spacing: .14em; margin-bottom: .5rem; }
+.ab-notice { background: #10201c; border: 1px solid #285545; display: grid; gap: .25rem; margin: 1.25rem 0; padding: 1rem 1.1rem; }
+.ab-notice span, .ab-boundary { color: #9aa8a2; }
+.ab-meta { border: 1px solid #2b3542; display: grid; grid-template-columns: repeat(4, 1fr); }
+.ab-meta span { border-right: 1px solid #2b3542; font: .75rem monospace; overflow: hidden; padding: .8rem; text-overflow: ellipsis; }
+.ab-meta span:last-child { border-right: 0; }
+.ab-meta small, .ab-metric small { color: #8793a3; display: block; font-size: .62rem; margin-bottom: .3rem; text-transform: uppercase; }
+.ab-tabs { display: flex; gap: .5rem; margin: 1rem 0 .6rem; }
+.ab-tabs button { background: #111821; border: 1px solid #2b3542; color: #dce4eb; cursor: pointer; font-weight: 700; padding: .65rem 1rem; }
+.ab-tabs button[aria-selected="true"] { background: #183f34; border-color: #48d597; color: #48d597; }
+.ab-condition { background: #0f151d; border: 1px solid #2b3542; padding: 1rem; }
+.ab-config { display: flex; flex-wrap: wrap; gap: .5rem; }
+.ab-config span { background: #0a0f15; border: 1px solid #2b3542; font: .65rem monospace; padding: .5rem .65rem; text-transform: uppercase; }
+.ab-config b, .ab-config .pass { color: #48d597; }
+.ab-config .control { color: #f1b65c; }
+.ab-metrics { display: grid; gap: .65rem; grid-template-columns: repeat(4, 1fr); margin: 1rem 0; }
+.ab-metric { border: 1px solid #2b3542; min-height: 5rem; padding: .8rem; }
+.ab-metric strong { font: 1.25rem monospace; }
+.ab-table-wrap { overflow-x: auto; }
+.ab-table-wrap table { font: .72rem monospace; margin: 0; min-width: 34rem; width: 100%; }
+.ab-table-wrap th, .ab-table-wrap td { text-align: right; }
+.ab-table-wrap th:first-child, .ab-table-wrap td:first-child { text-align: left; }
+.ab-boundary { border-left: 2px solid #f1b65c; margin-top: 1rem; padding: .5rem 1rem; }
+.ab-loading, .ab-error { border: 1px solid #2b3542; margin: 1rem 0; padding: 2rem; text-align: center; }
+.ab-error { border-color: #793941; color: #ff8f96; }
+@media (max-width: 700px) {
+  .ab-meta, .ab-metrics { grid-template-columns: 1fr 1fr; }
+  .ab-meta span:nth-child(2) { border-right: 0; }
+}
+

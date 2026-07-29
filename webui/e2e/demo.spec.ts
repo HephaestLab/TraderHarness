@@ -35,3 +35,31 @@ test("免密演示可回放事件并保存结果", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "结果资料库" })).toBeVisible();
   await expect(page.getByRole("button", { name: /2024\/03\/14/ }).first()).toBeVisible();
 });
+
+test("one-click masking showcase works without credentials or a dataset action", async ({ page }) => {
+  await page.goto("/showcase");
+  await expect(page.getByRole("heading", { name: "Masked vs Unmasked" })).toBeVisible();
+  await expect(page.getByText("Recorded experiment — not a live backtest")).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Masked", exact: true })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(page.locator(".showcase-config")).toContainText("Date masking ON");
+  await expect(page.locator(".showcase-config")).toContainText("Entity masking ON");
+
+  await page.getByRole("tab", { name: "Unmasked control" }).click();
+  await expect(page.getByRole("tab", { name: "Unmasked control" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(page.locator(".showcase-config")).toContainText("Date masking OFF");
+  await expect(page.locator(".showcase-config")).toContainText("Entity masking OFF");
+});
+
+test("one-click masking showcase remains usable on a narrow viewport", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/showcase");
+  await expect(page.getByRole("heading", { name: "Masked vs Unmasked" })).toBeVisible();
+  await page.getByRole("tab", { name: "Unmasked control" }).click();
+  await expect(page.locator(".showcase-condition")).toBeVisible();
+});

@@ -71,3 +71,24 @@ def test_system_prompt_documents_sandbox_api_contract(tmp_path):
     assert "change_pct" in prompt
     assert "get_sector_stocks" in prompt
     assert "offset" in prompt
+
+
+def test_compact_prompt_matches_the_agent_allowlist(tmp_path):
+    class _StubLLM:
+        model = "stub"
+
+    agent = ToolAgent(
+        agent_id="compact",
+        name="compact",
+        llm_client=_StubLLM(),
+        allowed_tools=["get_market_overview"],
+        compact_prompt=True,
+        memory_dir=str(tmp_path),
+    )
+
+    prompt = agent._system_prompt
+    assert "get_market_overview" in prompt
+    assert "place_order" in prompt  # protected execution core is retained
+    assert "execute_code" not in prompt
+    assert "get_business_segments" not in prompt
+    assert "TradingBus.place_order" in prompt

@@ -24,7 +24,7 @@ conventions are ad hoc, runs cannot be reproduced, and the conclusions are hard 
 TraderHarness is that rig: a contamination-resistant execution environment for LLM trading agents — and, because
 every model call is recorded at full fidelity, a data synthesizer that turns those runs into trajectory training data.
 
-**Decide quickly whether it fits:** [run the no-key replay](#quick-start) · [compare its scope with TradingAgents,
+**Start with evidence:** [explore the zero-credential Masked vs Unmasked experiment](https://hephaestlab.github.io/TraderHarness/masking-ab-showcase/) · [run the no-key replay](#quick-start) · [compare its scope with TradingAgents,
 StockBench, and Qlib](docs/comparison.md) · [read the LLM-agent backtesting guide](docs/guides/llm-trading-agent-backtesting.md)
 
 <p align="center">

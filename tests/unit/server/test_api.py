@@ -488,5 +488,22 @@ def test_demo_endpoint_starts_fixed_masked_replay(tmp_path):
     assert request.replay is True
     assert request.start_date == "2024-03-14"
     assert request.end_date == "2024-03-14"
+    assert request.mask_dates is True
     assert request.mask_entities is True
     assert request.entity_mask_seed == 42
+
+
+def test_masking_showcase_is_available_without_credentials(tmp_path, monkeypatch):
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    with _client(tmp_path) as client:
+        response = client.get("/api/showcase/masking-ab")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["schema_version"] == 1
+    assert set(payload["conditions"]) == {"masked", "unmasked"}
+    assert payload["conditions"]["masked"]["mask_dates"] is True
+    assert payload["conditions"]["masked"]["mask_entities"] is True
+    assert payload["conditions"]["unmasked"]["mask_dates"] is False
+    assert payload["conditions"]["unmasked"]["mask_entities"] is False
+    assert "api_key" not in json.dumps(payload).lower()

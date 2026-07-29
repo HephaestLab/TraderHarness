@@ -31,6 +31,7 @@ class RunConfig:
     end_date: date
     initial_cash: float = 1_000_000
     agents: list[dict[str, Any]] | None = None
+    mask_dates: bool = True
     mask_entities: bool = True
     entity_mask_seed: int = 0
     replay_path: Path | None = None
@@ -214,6 +215,7 @@ class BacktestRunner:
                 max_position_pct=cfg.get("max_position_pct", 25.0),
                 allowed_tools=cfg.get("allowed_tools"),
                 event_bus=self._feed.event_bus,
+                mask_dates=self._config.mask_dates,
                 prompt_contract_version=prompt_contract_version,
             )
             agents.append(agent)
@@ -226,6 +228,7 @@ class BacktestRunner:
             "end_date": str(self._config.end_date),
             "initial_cash": self._config.initial_cash,
             "agents": [config.get("id") for config in (self._config.agents or [])],
+            "mask_dates": self._config.mask_dates,
             "mask_entities": self._config.mask_entities,
             "entity_mask_seed": self._config.entity_mask_seed,
             "replay": self._config.replay_path is not None,

@@ -111,6 +111,24 @@ class FakeAsyncOpenAI:
         return self.chat.completions.calls
 
 
+@pytest.mark.asyncio
+async def test_aclose_closes_provider_once_and_releases_reference():
+    provider = SimpleNamespace(close_calls=0)
+
+    async def close():
+        provider.close_calls += 1
+
+    provider.close = close
+    client = LLMClient(model="deepseek-v4-pro", api_key="test", cache_enabled=False)
+    client._client = provider
+
+    await client.aclose()
+    await client.aclose()
+
+    assert provider.close_calls == 1
+    assert client._client is None
+
+
 class TestThinkingModeExtraBody:
     @pytest.mark.asyncio
     async def test_thinking_model_sends_thinking_extra_body_and_high_reasoning_effort(self):
@@ -212,6 +230,19 @@ class TestFinishReasonAndReasoningContent:
 
         assert response["reasoning_content"] == "思考过程"
         assert response["tool_calls"][0]["function"]["name"] == "get_kline"
+
+    @pytest.mark.asyncio
+    async def test_provider_html_string_fails_with_bounded_diagnostic(self):
+        fake = FakeAsyncOpenAI(["<!doctype html>" + "x" * 1_000])
+        client = LLMClient(model="relay-model", api_key="test", cache_enabled=False)
+        client._client = fake
+
+        with pytest.raises(RuntimeError, match="Provider returned a JSON string") as exc_info:
+            await client.chat([{"role": "user", "content": "hi"}])
+
+        message = str(exc_info.value)
+        assert "messages=" in message
+        assert len(message) < 500
 
 
 class TestAsyncRetryBackoff:

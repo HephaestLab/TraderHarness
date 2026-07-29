@@ -7,6 +7,7 @@ import { Dashboard } from "./pages/Dashboard";
 import { LiveRun } from "./pages/LiveRun";
 import { Results } from "./pages/Results";
 import { Settings } from "./pages/Settings";
+import { Showcase } from "./pages/Showcase";
 
 export default function App() {
   return (
@@ -20,6 +21,7 @@ export default function App() {
             <Route path="compare" element={<Compare />} />
             <Route path="agents" element={<Agents />} />
             <Route path="settings" element={<Settings />} />
+            <Route path="showcase" element={<Showcase />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
         </Routes>

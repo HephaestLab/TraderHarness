@@ -75,6 +75,7 @@ class RunRequest(BaseModel):
     start_date: str
     end_date: str
     initial_cash: int = Field(default=1_000_000, gt=0)
+    mask_dates: bool = True
     mask_entities: bool = True
     entity_mask_seed: int = 0
     replay: bool = False
@@ -230,6 +231,30 @@ def create_app(
                 "public_exposure_supported": False,
             },
         }
+
+    @app.get("/api/showcase/masking-ab")
+    def masking_ab_showcase() -> dict[str, Any]:
+        """Return the credential-free, precomputed masking experiment summary."""
+        from importlib.resources import files
+
+        resource = files("traderharness.demo").joinpath("masking_ab_showcase.json")
+        candidate = Path(str(resource))
+        source_candidate = (
+            Path(__file__).resolve().parents[2]
+            / "traderharness"
+            / "demo"
+            / "masking_ab_showcase.json"
+        )
+        selected = candidate if candidate.is_file() else source_candidate
+        if not selected.is_file():
+            raise HTTPException(404, "Masking A/B showcase artifact is missing")
+        try:
+            payload = json.loads(selected.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise HTTPException(500, "Masking A/B showcase artifact is invalid") from exc
+        if not isinstance(payload, dict):
+            raise HTTPException(500, "Masking A/B showcase artifact is invalid")
+        return payload
 
     @app.get("/api/config/llm")
     def get_llm_config() -> dict[str, Any]:
@@ -403,6 +428,7 @@ def create_app(
                 start_date="2024-03-14",
                 end_date="2024-03-14",
                 initial_cash=1_000_000,
+                mask_dates=True,
                 mask_entities=True,
                 entity_mask_seed=42,
                 replay=True,

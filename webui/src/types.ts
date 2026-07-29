@@ -244,3 +244,48 @@ export interface LiveEvent {
   ts: number;
   data: Record<string, unknown>;
 }
+
+export interface MaskingShowcaseMetrics {
+  total_return_pct?: number;
+  alpha_pct?: number;
+  sharpe_ratio?: number;
+  max_drawdown_pct?: number;
+  total_trades?: number;
+  final_value?: number;
+  llm_total_tokens?: number;
+  tool_calls?: number;
+}
+
+export interface MaskingShowcaseCondition {
+  label: string;
+  mask_dates: boolean;
+  mask_entities: boolean;
+  audit: { status: string; finding_count: number };
+  metrics: MaskingShowcaseMetrics;
+  runs: Array<{
+    id: string;
+    repetition: number;
+    metrics: MaskingShowcaseMetrics;
+    llm_total_tokens: number;
+  }>;
+  equity_curve?: Array<[string, number]>;
+}
+
+export interface MaskingShowcase {
+  schema_version: number;
+  experiment_id: string;
+  status: "pending" | "complete";
+  generated_at?: string | null;
+  title: string;
+  summary: string;
+  model: string;
+  window: { start: string; end: string };
+  repetitions: number;
+  commit?: string;
+  conditions: {
+    masked: MaskingShowcaseCondition;
+    unmasked: MaskingShowcaseCondition;
+  };
+  paired_deltas: MaskingShowcaseMetrics;
+  limitations: string[];
+}

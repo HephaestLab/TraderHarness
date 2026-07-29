@@ -30,6 +30,7 @@ class PromptAgent(ToolAgent):
         replay_recorder: Any | None = None,
         replay_player: Any | None = None,
         prompt_contract_version: str | None = None,
+        mask_dates: bool | None = None,
     ):
         path = Path(config_path)
         if not path.exists():
@@ -45,7 +46,8 @@ class PromptAgent(ToolAgent):
         initial_cash = Decimal(str(cfg.get("initial_cash", 1_000_000)))
         max_positions = cfg.get("max_positions", 4)
         max_position_pct = cfg.get("max_position_pct", 25.0)
-        mask_dates = cfg.get("mask_dates", True)
+        configured_mask_dates = cfg.get("mask_dates", True) if mask_dates is None else mask_dates
+        compact_prompt = bool(cfg.get("compact_prompt", False))
         is_committee = bool(cfg.get("advisors"))
         committee = None
         if is_committee:
@@ -87,7 +89,8 @@ class PromptAgent(ToolAgent):
             initial_cash=initial_cash,
             max_positions=max_positions,
             max_position_pct=max_position_pct,
-            mask_dates=mask_dates,
+            mask_dates=configured_mask_dates,
+            compact_prompt=compact_prompt,
             committee=committee,
             prompt_contract_version=prompt_contract_version,
         )

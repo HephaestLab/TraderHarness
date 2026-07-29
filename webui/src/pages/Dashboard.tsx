@@ -54,10 +54,16 @@ export function Dashboard() {
         title="智能体研究台"
         description="启动严格遮罩的历史回测，实时观察执行过程，并逐笔复盘每一次决策。"
         actions={
-          <button className="button secondary" onClick={startDemo} disabled={busy}>
-            <Play size={16} />
-            运行免密演示
-          </button>
+          <>
+            <button className="button primary" onClick={() => navigate("/showcase")}>
+              <ShieldCheck size={16} />
+              Explore masking A/B
+            </button>
+            <button className="button secondary" onClick={startDemo} disabled={busy}>
+              <Play size={16} />
+              运行免密演示
+            </button>
+          </>
         }
       />
       {error ? <ErrorNotice message={error} /> : null}
