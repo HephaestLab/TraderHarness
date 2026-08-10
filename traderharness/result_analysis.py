@@ -154,6 +154,126 @@ def _trade_marker(trade: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _security_performance(trades: list[Any]) -> list[dict[str, Any]]:
+    """Aggregate net realized P&L across every fill for one security.
+
+    Sell fills produced by the engine already carry ``pnl``.  That value is
+    preferred over recomputing accounting from rounded prices, then the
+    proportional buy commission is deducted so the aggregate is net of both
+    entry and exit fees. A weighted average-cost fallback keeps older
+    artifacts useful when ``pnl`` is absent. Open inventory is reported
+    explicitly and never marked to an invented end-of-run price.
+    """
+    buckets: dict[str, dict[str, Any]] = {}
+    for trade in trades:
+        if not isinstance(trade, dict):
+            continue
+        code = str(trade.get("stock_code") or trade.get("code") or "")
+        if not code:
+            continue
+        bucket = buckets.setdefault(
+            code,
+            {
+                "code": code,
+                "name": "",
+                "trade_count": 0,
+                "buy_count": 0,
+                "sell_count": 0,
+                "bought_quantity": 0,
+                "sold_quantity": 0,
+                "buy_amount": 0.0,
+                "sell_amount": 0.0,
+                "fees": 0.0,
+                "realized_pnl": 0.0,
+                "realized_cost_basis": 0.0,
+                "first_trade_date": "",
+                "last_trade_date": "",
+                "_open_quantity": 0,
+                "_open_cost": 0.0,
+                "_open_buy_fees": 0.0,
+            },
+        )
+        name = str(trade.get("stock_name") or "")
+        if name and (not bucket["name"] or bucket["name"].startswith("公司-")):
+            bucket["name"] = name
+        trade_date = str(trade.get("trade_date") or trade.get("date") or "")
+        if trade_date:
+            if not bucket["first_trade_date"] or trade_date < bucket["first_trade_date"]:
+                bucket["first_trade_date"] = trade_date
+            if not bucket["last_trade_date"] or trade_date > bucket["last_trade_date"]:
+                bucket["last_trade_date"] = trade_date
+
+        side = str(trade.get("side") or trade.get("action") or "").lower()
+        quantity = max(0, int(_number(trade.get("quantity"))))
+        amount = _number(trade.get("amount"), _number(trade.get("price")) * quantity)
+        fee = (
+            _number(trade.get("total_fee"))
+            if trade.get("total_fee") is not None
+            else _number(trade.get("commission")) + _number(trade.get("stamp_tax"))
+        )
+        bucket["trade_count"] += 1
+        bucket["fees"] += fee
+
+        if side == "buy":
+            bucket["buy_count"] += 1
+            bucket["bought_quantity"] += quantity
+            bucket["buy_amount"] += amount
+            bucket["_open_quantity"] += quantity
+            bucket["_open_cost"] += amount
+            bucket["_open_buy_fees"] += fee
+        elif side == "sell":
+            bucket["sell_count"] += 1
+            bucket["sold_quantity"] += quantity
+            bucket["sell_amount"] += amount
+            open_quantity = bucket["_open_quantity"]
+            allocated_quantity = min(quantity, open_quantity)
+            average_cost = bucket["_open_cost"] / open_quantity if open_quantity else 0.0
+            allocated_cost = average_cost * allocated_quantity
+            allocated_buy_fees = (
+                bucket["_open_buy_fees"] / open_quantity * allocated_quantity
+                if open_quantity
+                else 0.0
+            )
+            net_income = _number(trade.get("net_income"), amount - fee)
+            if trade.get("pnl") is not None:
+                engine_pnl = _number(trade.get("pnl"))
+                pnl = engine_pnl - allocated_buy_fees
+                realized_cost = max(0.0, net_income - engine_pnl + allocated_buy_fees)
+            else:
+                pnl = net_income - allocated_cost - allocated_buy_fees
+                realized_cost = allocated_cost + allocated_buy_fees
+            bucket["realized_pnl"] += pnl
+            bucket["realized_cost_basis"] += realized_cost
+            bucket["_open_quantity"] = max(0, open_quantity - quantity)
+            bucket["_open_cost"] = max(0.0, bucket["_open_cost"] - allocated_cost)
+            bucket["_open_buy_fees"] = max(
+                0.0, bucket["_open_buy_fees"] - allocated_buy_fees
+            )
+
+    rows = []
+    for bucket in buckets.values():
+        cost_basis = bucket["realized_cost_basis"]
+        open_quantity = bucket.pop("_open_quantity")
+        bucket.pop("_open_cost")
+        bucket.pop("_open_buy_fees")
+        bucket.update(
+            {
+                "open_quantity": open_quantity,
+                "buy_amount": round(bucket["buy_amount"], 2),
+                "sell_amount": round(bucket["sell_amount"], 2),
+                "fees": round(bucket["fees"], 2),
+                "realized_pnl": round(bucket["realized_pnl"], 2),
+                "realized_cost_basis": round(cost_basis, 2),
+                "realized_return_pct": round(bucket["realized_pnl"] / cost_basis * 100, 2)
+                if cost_basis
+                else None,
+                "status": "open" if open_quantity else "closed",
+            }
+        )
+        rows.append(bucket)
+    return sorted(rows, key=lambda row: (-row["realized_pnl"], row["code"]))
+
+
 def _trade_bars(bars: list[dict[str, Any]], trade_date: str) -> list[dict[str, Any]]:
     """Keep a readable market window around one fill without inventing bars."""
     ordered = sorted(bars, key=lambda bar: bar["date"])
@@ -317,6 +437,9 @@ def _agent_analysis(
         "vs_benchmark": agent.get("vs_benchmark") or {},
         "daily": _daily_curve(agent.get("equity_curve") or []),
         "trades": trades,
+        "conditional_orders": agent.get("conditional_orders") or [],
+        "conditional_order_events": agent.get("conditional_order_events") or [],
+        "memory_events": agent.get("memory_events") or [],
         "days": [days[key] for key in sorted(days)],
         "decisions": decisions,
         "reasoning_coverage": {
@@ -330,6 +453,7 @@ def _agent_analysis(
         ],
         "securities": securities,
         "trade_reviews": trade_reviews,
+        "security_performance": _security_performance(trades),
     }
 
 

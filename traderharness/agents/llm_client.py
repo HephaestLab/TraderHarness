@@ -17,7 +17,7 @@ _CACHE_DIR = llm_cache_dir()
 
 # Models that support DeepSeek-style extended thinking ("reasoning") mode.
 # Matched as a prefix so date/size suffixes (e.g. "-0528") still match.
-_THINKING_MODEL_PREFIXES = ("deepseek-v4-pro", "deepseek-reasoner")
+_THINKING_MODEL_PREFIXES = ("deepseek-v4-pro", "deepseek-v4-flash", "deepseek-reasoner")
 
 
 class RateLimitError(Exception):

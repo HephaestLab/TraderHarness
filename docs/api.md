@@ -37,6 +37,8 @@ traderharness data      下载、更新与检查数据集
 - `GET /api/results` — 已落盘结果摘要；
 - `GET /api/results/{file}` — 完整工件；
 - `GET /api/results/{file}/analysis` — 归一化的 UI 研究档案；
+- `GET /api/results/{file}/analysis?detail=summary` — 轻量首屏档案；保留逐笔复盘所需的关联决策和下单证据，但延后完整决策、工具、日期和证券轨迹；`detail=full` 返回全部证据；
+- `GET /api/results/{file}/analysis?reveal_entities=true` — 仅限 localhost，把结果页中的遮罩证券代码、名称及关联文本还原为本地数据集实体；原始结果、回放和下载工件不会被修改；
 - `POST /api/demo` — 启动内置回放；
 - `GET /api/health` — 进程健康检查。
 

@@ -118,6 +118,35 @@ def test_unmasks_neutral_name_for_internal_trade_storage():
     assert result == {"stock_code": "600519", "stock_name": "贵州茅台"}
 
 
+def test_reveal_obj_restores_embedded_codes_and_company_names():
+    masker = EntityMasker(
+        ["600519", "601318"],
+        names={"600519": "贵州茅台", "601318": "中国平安"},
+        seed=42,
+    )
+    pseudo = masker.mask_code("600519")
+
+    revealed = masker.reveal_obj(
+        {
+            "stock_code": pseudo,
+            "stock_name": f"公司-{pseudo}",
+            "reasoning": f"观察公司-{pseudo}（{pseudo}）的量价结构",
+            "securities": {pseudo: {"code": pseudo}},
+            "performance": {"code": pseudo, "name": pseudo},
+            "sell": {"stock_code": pseudo, "action": "sell"},
+        }
+    )
+
+    assert revealed["stock_code"] == "600519"
+    assert revealed["stock_name"] == "贵州茅台"
+    assert revealed["reasoning"] == "观察贵州茅台（600519）的量价结构"
+    assert revealed["securities"] == {
+        "600519": {"code": "600519", "name": "贵州茅台"}
+    }
+    assert revealed["performance"] == {"code": "600519", "name": "贵州茅台"}
+    assert revealed["sell"]["stock_name"] == "贵州茅台"
+
+
 def test_sanitizes_agent_generated_alias_without_remapping_pseudo_code():
     masker = _masker()
     pseudo = masker.mask_code("600519")

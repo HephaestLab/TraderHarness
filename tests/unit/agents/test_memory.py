@@ -69,3 +69,76 @@ class TestDailyMemory:
         mem.add(date(2024, 3, 4), "Entry")
         mem.clear()
         assert len(mem) == 0
+
+    def test_durable_memory_is_always_visible_and_searchable(self):
+        mem = DailyMemory(agent_id="test")
+        record = mem.remember(
+            date(2024, 3, 4),
+            "Breakout entries without volume confirmation failed repeatedly",
+            memory_type="lesson",
+            tags=["breakout", "volume"],
+            importance=0.9,
+        )
+        for day in range(5, 13):
+            mem.add(date(2024, 3, day), f"Daily journal {day}")
+
+        prompt = mem.to_prompt_text(before_date=date(2024, 3, 13), max_tokens=400)
+        hits = mem.search("breakout volume", before_date=date(2024, 3, 13))
+
+        assert record["memory_id"].startswith("mem-")
+        assert "Breakout entries" in prompt
+        assert hits[0]["memory_id"] == record["memory_id"]
+
+    def test_superseded_memory_keeps_audit_history_but_not_active_prompt(self):
+        mem = DailyMemory(agent_id="test")
+        old = mem.remember(
+            date(2024, 3, 4),
+            "Original stop is 9.40",
+            memory_type="position_plan",
+            tags=["600519"],
+        )
+        new = mem.remember(
+            date(2024, 3, 6),
+            "Protected stop is raised to 10.20",
+            memory_type="position_plan",
+            tags=["600519"],
+            supersedes_id=old["memory_id"],
+        )
+
+        assert mem.get(old["memory_id"])["status"] == "superseded"
+        assert mem.get(new["memory_id"])["status"] == "active"
+        prompt = mem.to_prompt_text(before_date=date(2024, 3, 7))
+        assert "Protected stop" in prompt
+        assert "Original stop" not in prompt
+
+    def test_structured_memory_persists_append_only_events(self, tmp_path):
+        mem = DailyMemory(agent_id="test", storage_dir=tmp_path)
+        first = mem.remember(date(2024, 3, 4), "Risk off below breadth 35%", tags=["risk"])
+        mem.remember(
+            date(2024, 3, 5),
+            "Risk off below breadth 30%",
+            tags=["risk"],
+            supersedes_id=first["memory_id"],
+        )
+
+        restored = DailyMemory(agent_id="test", storage_dir=tmp_path)
+
+        assert len(restored.audit_events()) == 3
+        assert len(restored.search("risk breadth")) == 1
+
+    def test_future_supersession_does_not_change_an_earlier_point_in_time(self):
+        mem = DailyMemory(agent_id="test")
+        old = mem.remember(date(2024, 3, 4), "Original risk rule", memory_type="risk_rule")
+        mem.remember(
+            date(2024, 3, 8),
+            "Revised risk rule",
+            memory_type="risk_rule",
+            supersedes_id=old["memory_id"],
+        )
+
+        prompt = mem.to_prompt_text(before_date=date(2024, 3, 6))
+        record = mem.get(old["memory_id"], before_date=date(2024, 3, 6))
+
+        assert "Original risk rule" in prompt
+        assert "Revised risk rule" not in prompt
+        assert record["status"] == "active"

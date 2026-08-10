@@ -61,6 +61,14 @@ class EntityMasker:
         )
         self._template_re = re.compile(r"\{\{C(\d{6})\}\}")
         self._neutral_re = re.compile(r"公司-(\d{6})")
+        masked_code_patterns = sorted(
+            (re.escape(c) for c in self._masked_to_real), key=len, reverse=True
+        )
+        self._masked_code_re = (
+            re.compile(r"(?<!\d)(?:" + "|".join(masked_code_patterns) + r")(?!\d)")
+            if masked_code_patterns
+            else None
+        )
 
     @staticmethod
     def _build_alias_to_code(
@@ -225,16 +233,80 @@ class EntityMasker:
         if not self.enabled:
             return value
         if isinstance(value, str):
-            if value.startswith("公司-") and len(value) == 9:
-                real_code = self.unmask_code(value[3:])
-                return self._names.get(str(real_code), real_code)
-            return self.unmask_code(value)
+            # Tool arguments are Agent-authored and therefore live in the
+            # pseudocode namespace. Restore embedded pseudocodes too, not just
+            # a string that consists solely of one code. Otherwise order
+            # reasoning is stored with a pseudocode and gets permuted again
+            # when the final result artifact masks canonical engine state.
+            return self.reveal_text(value)
         if isinstance(value, dict):
             return {key: self.unmask_obj(item) for key, item in value.items()}
         if isinstance(value, list):
             return [self.unmask_obj(item) for item in value]
         if isinstance(value, tuple):
             return tuple(self.unmask_obj(item) for item in value)
+        return value
+
+    def reveal_text(self, value: Any) -> Any:
+        """Restore model-visible pseudocodes and neutral labels for local review."""
+        if not self.enabled or not isinstance(value, str):
+            return value
+        text = value
+        neutral_values: list[str] = []
+
+        def hold_neutral(match: re.Match) -> str:
+            masked_code = match.group(1)
+            real_code = self._masked_to_real.get(masked_code)
+            if real_code is None:
+                return match.group(0)
+            token = f"\ufff4{len(neutral_values)}\ufff5"
+            neutral_values.append(self._names.get(real_code, real_code))
+            return token
+
+        text = self._neutral_re.sub(hold_neutral, text)
+        if self._masked_code_re is not None:
+            text = self._masked_code_re.sub(
+                lambda match: self._masked_to_real.get(match.group(0), match.group(0)),
+                text,
+            )
+        for index, replacement in enumerate(neutral_values):
+            text = text.replace(f"\ufff4{index}\ufff5", replacement)
+        return text
+
+    def reveal_obj(self, value: Any) -> Any:
+        """Return a copy with embedded pseudocodes and neutral labels restored."""
+        if not self.enabled:
+            return value
+        if isinstance(value, pd.DataFrame):
+            out = value.copy()
+            for column in out.columns:
+                if pd.api.types.is_object_dtype(out[column]) or pd.api.types.is_string_dtype(
+                    out[column]
+                ):
+                    out[column] = out[column].map(self.reveal_text)
+            return out
+        if isinstance(value, str):
+            return self.reveal_text(value)
+        if isinstance(value, dict):
+            revealed = {
+                self.reveal_text(key) if isinstance(key, str) else key: self.reveal_obj(item)
+                for key, item in value.items()
+            }
+            code_key = "stock_code" if revealed.get("stock_code") is not None else "code"
+            name_key = "stock_name" if code_key == "stock_code" else "name"
+            stock_code = revealed.get(code_key)
+            if stock_code is not None:
+                normalized_code = str(stock_code).zfill(6)
+                current_name = str(revealed.get(name_key) or "").strip()
+                if normalized_code in self._names and (
+                    not current_name or current_name == normalized_code
+                ):
+                    revealed[name_key] = self._names[normalized_code]
+            return revealed
+        if isinstance(value, list):
+            return [self.reveal_obj(item) for item in value]
+        if isinstance(value, tuple):
+            return tuple(self.reveal_obj(item) for item in value)
         return value
 
     def mask_obj(self, value: Any) -> Any:

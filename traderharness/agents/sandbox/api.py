@@ -10,7 +10,15 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
+from traderharness.agents.window_context import previous_close_prices
 from traderharness.tools._coerce import safe_int
+from traderharness.tools.analysis import (
+    build_behavioral_cycle_features,
+    build_market_overview,
+    build_screen_stocks,
+    build_sector_constituents,
+    build_sector_summary,
+)
 
 if TYPE_CHECKING:
     from traderharness.tools.registry import ToolContext
@@ -57,6 +65,13 @@ def _mask_obj(ctx: ToolContext, value):
     return masker.mask_obj(value) if masker is not None else value
 
 
+def _require_tool(ctx: ToolContext, tool_name: str) -> None:
+    """Keep sandbox API methods from bypassing the Agent Card allowlist."""
+    allowed = getattr(ctx, "allowed_tools", None)
+    if allowed is not None and tool_name not in allowed:
+        raise PermissionError(f"sandbox access requires allowed tool: {tool_name}")
+
+
 class MarketAPI:
     """Market data gateway with strict date masking."""
 
@@ -65,6 +80,7 @@ class MarketAPI:
 
     def get_kline(self, code: str, days: int = 60) -> pd.DataFrame:
         """Get daily OHLCV for a single stock (masked to before current_date)."""
+        _require_tool(self._ctx, "get_kline")
         code = _unmask_code(self._ctx, code)
         df = self._ctx.preloaded_daily.get(code)
         if df is None or df.empty:
@@ -74,6 +90,7 @@ class MarketAPI:
 
     def get_kline_5min(self, code: str) -> pd.DataFrame:
         """Get today's 5-minute bars (only bars already elapsed at this decision point)."""
+        _require_tool(self._ctx, "get_kline")
         code = _unmask_code(self._ctx, code)
         bars = self._ctx.window_minutes.get(code)
         if bars is None or (hasattr(bars, "empty") and bars.empty):
@@ -140,22 +157,38 @@ class MarketAPI:
             out["change_pct"] = out["change_pct"].round(2)
         return _mask_df(self._ctx, out)
 
+    def get_behavioral_features(self) -> pd.DataFrame:
+        """Get deterministic unlabeled behavioral price/volume features.
+
+        The returned table intentionally has no composite score or stage. Agent
+        code must rank the cross-section and make the falsifiable stage call.
+        """
+        if self._ctx.full_market_research_allowed is False:
+            raise RuntimeError(
+                "get_behavioral_features() is disabled today; reuse the existing watchlist "
+                "and position evidence until the next environment-marked research day"
+            )
+        cache_key = "_behavioral_features_payload"
+        payload = self._ctx.tool_call_cache.get(cache_key)
+        if payload is None:
+            payload = build_behavioral_cycle_features(self._ctx)
+            self._ctx.tool_call_cache[cache_key] = payload
+        rows = _mask_obj(self._ctx, payload["features"])
+        return pd.DataFrame(rows)
+
     def get_market_overview(self) -> dict:
         """Full-market breadth and sector leaders (point-in-time)."""
-        from traderharness.tools.analysis import build_market_overview
-
+        _require_tool(self._ctx, "get_market_overview")
         return _mask_obj(self._ctx, build_market_overview(self._ctx))
 
     def get_sector_summary(self, sector: str) -> dict:
         """Sector average change and ranked constituents (point-in-time)."""
-        from traderharness.tools.analysis import build_sector_summary
-
+        _require_tool(self._ctx, "get_sector_summary")
         return _mask_obj(self._ctx, build_sector_summary(self._ctx, sector))
 
     def get_sector_stocks(self, sector: str) -> pd.DataFrame:
         """Sector constituents as a DataFrame: stock_code, close, change_pct."""
-        from traderharness.tools.analysis import build_sector_constituents
-
+        _require_tool(self._ctx, "get_sector_summary")
         stocks = build_sector_constituents(self._ctx, sector)
         if isinstance(stocks, dict):
             return pd.DataFrame()
@@ -171,12 +204,12 @@ class MarketAPI:
 
     def screen_stocks(self, **kwargs) -> dict:
         """Condition screen — same parameters as the screen_stocks tool."""
-        from traderharness.tools.analysis import build_screen_stocks
-
+        _require_tool(self._ctx, "screen_stocks")
         return _mask_obj(self._ctx, build_screen_stocks(self._ctx, kwargs))
 
     def get_stock_price(self, code: str) -> dict:
         """Latest visible daily quote and 1-day change (before current_date)."""
+        _require_tool(self._ctx, "get_stock_price")
         code = _unmask_code(self._ctx, code)
         df = self._ctx.preloaded_daily.get(code)
         if df is None or df.empty:
@@ -208,6 +241,7 @@ class MarketAPI:
 
     def get_fundamentals(self, code: str) -> dict | None:
         """Get latest fundamentals visible before current_date."""
+        _require_tool(self._ctx, "get_fundamentals")
         code = _unmask_code(self._ctx, code)
         fund_data = self._ctx.tool_call_cache.get("_fundamentals_data")
         if fund_data is None or fund_data.empty:
@@ -231,16 +265,32 @@ class PortfolioAPI:
     def __init__(self, ctx: ToolContext) -> None:
         self._ctx = ctx
 
+    def _visible_prices(self) -> dict:
+        if self._ctx.execution_price:
+            prices = dict(self._ctx.execution_price)
+        else:
+            prices = previous_close_prices(self._ctx)
+        for code, pos in self._ctx.portfolio.positions.items():
+            prices.setdefault(code, pos.avg_cost)
+        return prices
+
     def get_positions(self) -> list[dict]:
         """Get current positions as list of dicts."""
+        prices = self._visible_prices()
         results = []
         for code, pos in self._ctx.portfolio.positions.items():
+            current_price = float(prices.get(code, pos.avg_cost))
+            avg_cost = float(pos.avg_cost)
             results.append(
                 {
                     "stock_code": code,
                     "quantity": pos.quantity,
-                    "avg_cost": float(pos.avg_cost),
-                    "market_value": float(pos.avg_cost) * pos.quantity,
+                    "avg_cost": avg_cost,
+                    "current_price": current_price,
+                    "pnl_pct": round((current_price / avg_cost - 1.0) * 100, 2)
+                    if avg_cost
+                    else 0.0,
+                    "market_value": current_price * pos.quantity,
                 }
             )
         return _mask_obj(self._ctx, results)
@@ -251,8 +301,17 @@ class PortfolioAPI:
 
     def get_total_value(self) -> float:
         """Get total portfolio value at current prices."""
-        prices = self._ctx.execution_price
-        return float(self._ctx.portfolio.total_value(prices)) if prices else self.get_cash()
+        return float(self._ctx.portfolio.total_value(self._visible_prices()))
+
+    def get_gross_exposure_pct(self) -> float:
+        """Current long market value as a percentage of marked total equity."""
+        prices = self._visible_prices()
+        gross = sum(
+            float(prices.get(code, pos.avg_cost)) * pos.quantity
+            for code, pos in self._ctx.portfolio.positions.items()
+        )
+        total = float(self._ctx.portfolio.total_value(prices))
+        return round(gross / total * 100, 2) if total > 0 else 0.0
 
 
 class NewsAPI:
@@ -263,6 +322,7 @@ class NewsAPI:
 
     def get_announcements(self, code: str, days: int = 30) -> list[dict]:
         """Get recent announcements for a stock."""
+        _require_tool(self._ctx, "get_announcements")
         from datetime import timedelta
 
         code = _unmask_code(self._ctx, code)
@@ -289,6 +349,7 @@ class NewsAPI:
 
     def get_policy_news(self, days: int = 7) -> list[dict]:
         """Get recent policy/national news."""
+        _require_tool(self._ctx, "get_news")
         from datetime import timedelta
 
         news_data = self._ctx.tool_call_cache.get("_news_data")

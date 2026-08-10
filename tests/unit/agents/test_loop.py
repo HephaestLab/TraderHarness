@@ -126,6 +126,54 @@ class TestPhaseChangeEvents:
         ]
         assert all(e["agent_id"] == "event-hawk" for e in phase_events)
 
+    @pytest.mark.asyncio
+    async def test_card_can_limit_sandbox_to_premarket_and_mark_research_days(self):
+        from decimal import Decimal
+
+        from traderharness.core.portfolio import Portfolio
+        from traderharness.tools.registry import ToolContext, ToolDefinition
+
+        async def handler(params, ctx):
+            return {"ok": True}
+
+        registry = ToolRegistry()
+        for name in ("execute_code", "finish_day"):
+            registry.register(
+                ToolDefinition(
+                    name=name,
+                    description=name,
+                    parameters={"type": "object", "properties": {}},
+                    handler=handler,
+                )
+            )
+        client = StubClient([{"content": "ok"}] * 6)
+        loop = AgentLoop(
+            client,
+            registry,
+            "system",
+            max_pre_iterations=1,
+            max_window_iterations=1,
+        )
+        loop.total_trading_days = 1
+        loop.remaining_trading_days = 0
+        ctx = ToolContext(
+            current_date=date(2024, 3, 4),
+            current_phase="pre_market",
+            portfolio=Portfolio(Decimal("1000000")),
+            initial_cash=Decimal("1000000"),
+            research_interval_days=5,
+            sandbox_pre_market_only=True,
+        )
+
+        await loop.run_day(ctx.current_date, ctx)
+
+        premarket_names = {tool["function"]["name"] for tool in client.calls[0]["tools"]}
+        assert "execute_code" in premarket_names
+        for call in client.calls[1:5]:
+            window_names = {tool["function"]["name"] for tool in call["tools"]}
+            assert "execute_code" not in window_names
+        assert ctx.full_market_research_allowed is True
+
 
 class TestSerializeToolResult:
     def test_nan_and_inf_become_null(self):

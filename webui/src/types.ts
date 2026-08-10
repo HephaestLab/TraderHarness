@@ -102,12 +102,21 @@ export interface Trade {
   signal_reasoning?: string;
   window?: string;
   amount?: number | string;
+  commission?: number | string;
+  stamp_tax?: number | string;
+  total_fee?: number | string;
+  total_cost?: number | string;
+  net_income?: number | string;
+  pnl?: number | string;
 }
 
 export interface AgentResult {
   name?: string;
   equity_curve: Array<[string, number]>;
   trades: Trade[];
+  conditional_orders?: ConditionalOrder[];
+  conditional_order_events?: Array<Record<string, unknown>>;
+  memory_events?: Array<Record<string, unknown>>;
   trajectory?: {
     days?: Array<Record<string, unknown>>;
     steps?: Array<Record<string, unknown>>;
@@ -115,6 +124,23 @@ export interface AgentResult {
   behavior?: Record<string, unknown>;
   vs_benchmark?: Record<string, number>;
   metrics: Metrics;
+}
+
+export interface ConditionalOrder {
+  order_id: string;
+  stock_code: string;
+  side: "buy" | "sell";
+  quantity: number;
+  comparator: "price_lte" | "price_gte";
+  trigger_price: number;
+  status: "active" | "triggered" | "cancelled" | "expired";
+  reasoning?: string;
+  created_day_index?: number;
+  triggered_day_index?: number;
+  triggered_time?: string;
+  protective?: boolean;
+  revisions?: Array<Record<string, unknown>>;
+  attempts?: Array<{ success?: boolean; error?: string | null }>;
 }
 
 export interface ResultDocument {
@@ -191,7 +217,29 @@ export interface TradeReviewEvidence {
   bars_source?: "trajectory" | "evaluation" | "mixed" | "none";
   decision_indices: number[];
   order_tool_index?: number | null;
+  decisions?: DecisionEvidence[];
+  order_tool?: ToolEvidence | null;
   evidence_status: "complete" | "partial";
+}
+
+export interface SecurityPerformance {
+  code: string;
+  name: string;
+  trade_count: number;
+  buy_count: number;
+  sell_count: number;
+  bought_quantity: number;
+  sold_quantity: number;
+  open_quantity: number;
+  buy_amount: number;
+  sell_amount: number;
+  fees: number;
+  realized_pnl: number;
+  realized_cost_basis: number;
+  realized_return_pct: number | null;
+  first_trade_date: string;
+  last_trade_date: string;
+  status: "open" | "closed";
 }
 
 export interface AnalysisDay {
@@ -208,6 +256,9 @@ export interface AnalyzedAgent {
   vs_benchmark: Record<string, number>;
   daily: DailyPoint[];
   trades: Trade[];
+  conditional_orders?: ConditionalOrder[];
+  conditional_order_events?: Array<Record<string, unknown>>;
+  memory_events?: Array<Record<string, unknown>>;
   days: AnalysisDay[];
   decisions: DecisionEvidence[];
   reasoning_coverage: { responses: number; with_reasoning: number };
@@ -215,9 +266,11 @@ export interface AnalyzedAgent {
   tool_usage: Array<{ name: string; count: number }>;
   securities: Record<string, SecurityDossier>;
   trade_reviews: TradeReviewEvidence[];
+  security_performance?: SecurityPerformance[];
 }
 
 export interface ResultAnalysis {
+  detail?: "summary" | "full";
   status: string;
   start_date?: string;
   end_date?: string;
@@ -226,6 +279,10 @@ export interface ResultAnalysis {
   benchmark: { name: string; daily: DailyPoint[] };
   agents: Record<string, AnalyzedAgent>;
   comparison: Comparison | null;
+  entity_view?: {
+    available: boolean;
+    mode: "masked" | "original";
+  };
 }
 
 export interface RunState {

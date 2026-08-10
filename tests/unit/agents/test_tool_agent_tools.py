@@ -12,14 +12,17 @@ EXPECTED_TOOLS = {
     # market data
     "get_kline", "get_stock_price", "get_stock_info",
     # analysis
-    "get_market_overview", "screen_stocks", "get_sector_summary",
+    "get_market_overview", "screen_stocks", "screen_behavioral_cycle", "get_sector_summary",
     # fundamentals & news
     "get_fundamentals", "get_business_segments", "get_valuation",
     "get_announcements", "get_news",
     # portfolio & trading
     "get_portfolio", "get_position", "place_order",
+    "manage_conditional_order", "list_conditional_orders",
     # watchlist
     "add_watchlist", "remove_watchlist", "get_watchlist",
+    # layered memory
+    "remember", "search_memory", "get_memory",
     # sandbox & control
     "execute_code", "finish_day",
 }
@@ -59,6 +62,7 @@ def test_system_prompt_mentions_current_tools_only(tmp_path):
     prompt = agent._system_prompt
     assert "execute_code" in prompt
     assert "get_market_overview" in prompt
+    assert "screen_behavioral_cycle" in prompt
     for name in LEGACY_TOOLS:
         assert name not in prompt, f"system prompt still mentions {name}"
 
@@ -92,3 +96,27 @@ def test_compact_prompt_matches_the_agent_allowlist(tmp_path):
     assert "execute_code" not in prompt
     assert "get_business_segments" not in prompt
     assert "TradingBus.place_order" in prompt
+
+
+def test_full_prompt_matches_the_agent_allowlist(tmp_path):
+    class _StubLLM:
+        model = "stub"
+
+    agent = ToolAgent(
+        agent_id="restricted",
+        name="restricted",
+        llm_client=_StubLLM(),
+        allowed_tools=["get_market_overview", "screen_behavioral_cycle", "finish_day"],
+        memory_dir=str(tmp_path),
+    )
+
+    assert "screen_behavioral_cycle" in agent._system_prompt
+    assert "execute_code" not in agent._system_prompt
+    assert "traderharness_api" not in agent._system_prompt
+    assert "get_business_segments" not in agent._system_prompt
+
+    available = [
+        schema["function"]["name"]
+        for schema in agent._registry.get_openai_tools_schema()
+    ]
+    assert "execute_code" not in available

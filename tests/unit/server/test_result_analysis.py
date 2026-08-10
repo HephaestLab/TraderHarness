@@ -152,6 +152,61 @@ def test_build_result_analysis_normalizes_research_evidence():
     assert review["evidence_status"] == "complete"
 
 
+def test_build_result_analysis_aggregates_realized_pnl_by_security():
+    document = _document()
+    trades = document["agent_data"]["momentum"]["trades"]
+    trades[0]["stock_name"] = "公司-000777"
+    trades.extend(
+        [
+            {
+                "trade_date": "2024-03-15",
+                "stock_code": "000777",
+                "stock_name": "公司-000777",
+                "action": "buy",
+                "price": "11.0",
+                "quantity": 500,
+                "amount": "5500",
+                "commission": "5",
+            },
+            {
+                "trade_date": "2024-03-15",
+                "stock_code": "000777",
+                "action": "sell",
+                "price": "12.0",
+                "quantity": 1200,
+                "amount": "14400",
+                "total_fee": "50",
+                "net_income": "14350",
+                "pnl": "1550",
+            },
+        ]
+    )
+
+    performance = build_result_analysis(document)["agents"]["momentum"]["security_performance"]
+
+    assert performance == [
+        {
+            "code": "000777",
+            "name": "公司-000777",
+            "trade_count": 3,
+            "buy_count": 2,
+            "sell_count": 1,
+            "bought_quantity": 1500,
+            "sold_quantity": 1200,
+            "open_quantity": 300,
+            "buy_amount": 16000.0,
+            "sell_amount": 14400.0,
+            "fees": 55.0,
+            "realized_pnl": 1546.0,
+            "realized_cost_basis": 12804.0,
+            "realized_return_pct": 12.07,
+            "first_trade_date": "2024-03-14",
+            "last_trade_date": "2024-03-15",
+            "status": "open",
+        }
+    ]
+
+
 def test_trade_reviews_backfill_bars_from_evaluation_source_when_agent_never_queried_kline():
     document = _document()
     momentum = document["agent_data"]["momentum"]

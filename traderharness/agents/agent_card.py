@@ -27,6 +27,13 @@ class AgentCard:
     initial_cash: int = 1_000_000
     max_positions: int = 4
     max_position_pct: float = 25.0
+    max_pre_iterations: int = 10
+    max_window_iterations: int = 3
+    require_structured_plan: bool = False
+    minimum_holding_days: int = 0
+    research_interval_days: int = 0
+    sandbox_pre_market_only: bool = False
+    sandbox_max_calls_per_day: int = 0
 
     def to_dict(self) -> dict:
         return {
@@ -42,6 +49,13 @@ class AgentCard:
             "initial_cash": self.initial_cash,
             "max_positions": self.max_positions,
             "max_position_pct": self.max_position_pct,
+            "max_pre_iterations": self.max_pre_iterations,
+            "max_window_iterations": self.max_window_iterations,
+            "require_structured_plan": self.require_structured_plan,
+            "minimum_holding_days": self.minimum_holding_days,
+            "research_interval_days": self.research_interval_days,
+            "sandbox_pre_market_only": self.sandbox_pre_market_only,
+            "sandbox_max_calls_per_day": self.sandbox_max_calls_per_day,
         }
 
     @classmethod
@@ -59,6 +73,13 @@ class AgentCard:
             initial_cash=data.get("initial_cash", 1_000_000),
             max_positions=data.get("max_positions", 4),
             max_position_pct=data.get("max_position_pct", 25.0),
+            max_pre_iterations=int(data.get("max_pre_iterations", 10)),
+            max_window_iterations=int(data.get("max_window_iterations", 3)),
+            require_structured_plan=bool(data.get("require_structured_plan", False)),
+            minimum_holding_days=max(0, int(data.get("minimum_holding_days", 0))),
+            research_interval_days=max(0, int(data.get("research_interval_days", 0))),
+            sandbox_pre_market_only=bool(data.get("sandbox_pre_market_only", False)),
+            sandbox_max_calls_per_day=max(0, int(data.get("sandbox_max_calls_per_day", 0))),
         )
 
 

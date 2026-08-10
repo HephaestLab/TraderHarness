@@ -11,6 +11,7 @@ from traderharness.agents.sandbox.api import MarketAPI, NewsAPI, PortfolioAPI
 from traderharness.core.entity_masking import EntityMasker
 from traderharness.core.portfolio import Portfolio
 from traderharness.tools.registry import ToolContext, ToolDefinition, ToolRegistry
+from traderharness.tools.sandbox import EXECUTE_CODE
 
 CURRENT = date(2024, 3, 5)
 REAL = "600519"
@@ -98,17 +99,57 @@ async def test_registry_unmasks_arguments_and_masks_nested_result():
         seen.update(params)
         return {
             "stock_code": params["stock_code"],
+            "reasoning": params["reasoning"],
             "name": "贵州茅台",
             "nested": [{"message": "贵州茅台600519完成"}],
         }
 
     registry = ToolRegistry()
     registry.register(ToolDefinition("probe", "", {}, handler))
-    result = await registry.execute("probe", {"stock_code": pseudo}, ctx)
+    result = await registry.execute(
+        "probe",
+        {"stock_code": pseudo, "reasoning": f"候选{pseudo}完成确认"},
+        ctx,
+    )
 
     assert seen["stock_code"] == REAL
+    assert seen["reasoning"] == f"候选{REAL}完成确认"
     assert result["stock_code"] == pseudo
+    assert result["reasoning"] == f"候选{pseudo}完成确认"
     assert "贵州茅台" not in str(result)
+
+
+@pytest.mark.asyncio
+async def test_execute_code_does_not_double_mask_sandbox_entity_egress(tmp_path):
+    """A sandbox pseudocode must round-trip into ordinary market tools."""
+    ctx = _context()
+    ctx.workspace_root = str(tmp_path)
+    pseudo = ctx.entity_masker.mask_code(REAL)
+    assert pseudo != REAL
+
+    registry = ToolRegistry()
+    registry.register(EXECUTE_CODE)
+    result = await registry.execute(
+        "execute_code",
+        {
+            "code": (
+                "from traderharness_api import market\n"
+                "codes = market.get_stock_list()\n"
+                "print(codes[0])\n"
+                f"bars = market.get_kline('{pseudo}')\n"
+                "result = {'codes': codes, 'last_close': float(bars.iloc[-1]['close'])}\n"
+            )
+        },
+        ctx,
+    )
+
+    expected = {
+        ctx.entity_masker.mask_code(REAL),
+        ctx.entity_masker.mask_code(OTHER),
+    }
+    assert set(result["result"]["codes"]) == expected
+    assert result["result"]["last_close"] == 100.0
+    assert pseudo in result["stdout"]
 
 
 def test_sandbox_market_api_accepts_pseudo_code_and_masks_all_market_codes():

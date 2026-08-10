@@ -7,7 +7,7 @@ from unittest.mock import patch
 import pandas as pd
 import pytest
 
-from traderharness.agents.sandbox.api import MarketAPI
+from traderharness.agents.sandbox.api import MarketAPI, NewsAPI
 from traderharness.core.entity_masking import EntityMasker
 from traderharness.core.portfolio import Portfolio
 from traderharness.tools.registry import ToolContext
@@ -59,6 +59,75 @@ def test_get_all_daily_includes_change_pct():
     assert a_latest["change_pct"] == pytest.approx((110 - 108) / 108 * 100, abs=0.01)
 
 
+def test_get_behavioral_features_returns_unlabeled_point_in_time_table():
+    current = date(2024, 5, 1)
+    dates = list(pd.bdate_range("2024-01-02", periods=87).date)
+    closes = [10.0 + index * 0.01 for index in range(86)]
+    frame = pd.DataFrame(
+        {
+            "date": dates[:86],
+            "open": closes,
+            "high": [value + 0.2 for value in closes],
+            "low": [value - 0.2 for value in closes],
+            "close": closes,
+            "volume": [10_000 + index for index in range(86)],
+        }
+    )
+    # This row is on the decision date and must never affect the features.
+    future = pd.DataFrame(
+        {
+            "date": [current],
+            "open": [999.0],
+            "high": [999.0],
+            "low": [999.0],
+            "close": [999.0],
+            "volume": [999_999_999],
+        }
+    )
+    ctx = _ctx()
+    ctx.current_date = current
+    ctx.preloaded_daily = {A: pd.concat([frame, future], ignore_index=True)}
+
+    features = MarketAPI(ctx).get_behavioral_features()
+
+    assert len(features) == 1
+    assert features.iloc[0]["stock_code"] == A
+    assert features.iloc[0]["last_close"] == pytest.approx(closes[-1])
+    assert {
+        "range_position_60",
+        "drawdown_120_pct",
+        "atr_5_to_20",
+        "volume_5_to_20",
+        "up_down_volume_ratio",
+        "clv_5",
+        "obv_flow_20",
+        "breakout_20d_pct",
+        "support_20",
+        "resistance_20",
+    }.issubset(features.columns)
+    assert "stage" not in features.columns
+    assert "score" not in features.columns
+
+
+def test_get_behavioral_features_is_blocked_outside_research_day():
+    ctx = _ctx()
+    ctx.full_market_research_allowed = False
+
+    with pytest.raises(RuntimeError, match="disabled today"):
+        MarketAPI(ctx).get_behavioral_features()
+
+
+def test_sandbox_cannot_bypass_agent_tool_allowlist():
+    ctx = _ctx()
+    ctx.allowed_tools = frozenset({"execute_code", "get_kline"})
+
+    assert not MarketAPI(ctx).get_kline(A).empty
+    with pytest.raises(PermissionError, match="screen_stocks"):
+        MarketAPI(ctx).screen_stocks()
+    with pytest.raises(PermissionError, match="get_news"):
+        NewsAPI(ctx).get_policy_news()
+
+
 def test_get_all_daily_rejects_offset_kwargs():
     api = MarketAPI(_ctx())
     with pytest.raises(TypeError, match="days"):
@@ -106,6 +175,20 @@ def test_get_stock_price():
     assert quote["stock_code"] == A
     assert quote["close"] == 110.0
     assert "change_pct" in quote
+
+
+def test_portfolio_api_marks_positions_to_latest_visible_price():
+    from traderharness.agents.sandbox.api import PortfolioAPI
+
+    ctx = _ctx()
+    ctx.portfolio.buy(A, A, Decimal("100"), 100, date(2024, 3, 1))
+    ctx.execution_price = {}
+
+    positions = PortfolioAPI(ctx).get_positions()
+
+    assert positions[0]["current_price"] == 110.0
+    assert positions[0]["market_value"] == 11_000.0
+    assert PortfolioAPI(ctx).get_total_value() == pytest.approx(float(ctx.portfolio.cash) + 11_000)
 
 
 def _bars_with_volumes(closes, volumes):

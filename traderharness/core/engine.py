@@ -216,6 +216,9 @@ class TradingBus:
         self._total_days: int = 0
         self._news_manager: NewsDataManager | None = None
         self._corporate_actions_today: list[dict] = []
+        self._conditional_orders: dict[str, dict[str, Any]] = {}
+        self._conditional_order_events: list[dict[str, Any]] = []
+        self._next_conditional_order_id = 1
 
     @property
     def current_date(self) -> date | None:
@@ -308,6 +311,317 @@ class TradingBus:
             return None
         return Decimal(str(window_bars.iloc[-1]["close"])).quantize(TWO_PLACES)
 
+    @staticmethod
+    def _phase_cutoff_minute(phase: str) -> int:
+        return {
+            "pre_market": -1,
+            "open_1": 9 * 60 + 50,
+            "open_2": 10 * 60,
+            "close_1": 14 * 60 + 50,
+            "close_2": 15 * 60,
+        }.get(phase, -1)
+
+    @staticmethod
+    def _conditional_window_range(window: str) -> tuple[int, int]:
+        ranges = {
+            "open_1": (9 * 60 + 35, 9 * 60 + 50),
+            "open_2": (9 * 60 + 55, 10 * 60),
+            # No model decision occurs at midday, but environment-owned
+            # conditions must continue observing the chronological bar stream.
+            "midday_close_1": (10 * 60 + 5, 14 * 60 + 50),
+            "close_1": (14 * 60 + 35, 14 * 60 + 50),
+            "close_2": (14 * 60 + 55, 15 * 60),
+        }
+        if window not in ranges:
+            raise ValueError(f"无效条件单扫描窗口: {window}")
+        return ranges[window]
+
+    def create_conditional_order(
+        self,
+        *,
+        agent_id: str,
+        stock_code: str,
+        side: str,
+        quantity: int,
+        comparator: str,
+        trigger_price: Decimal,
+        reasoning: str,
+        created_phase: str = "pre_market",
+        protective: bool = False,
+        expires_day_index: int | None = None,
+        not_before_day_index: int | None = None,
+        max_positions: int | None = None,
+        max_position_pct: float | None = None,
+    ) -> dict:
+        """Create an environment-owned condition without executing it.
+
+        Trigger evaluation is based on successive 5-minute *close* prices. A
+        condition created after a sub-window is never evaluated against bars
+        that were already visible when it was created.
+        """
+        if self._current_date is None:
+            raise ValueError("交易日未设置")
+        if side not in {"buy", "sell"}:
+            raise ValueError("条件单 action 必须是 buy 或 sell")
+        if comparator not in {"price_lte", "price_gte"}:
+            raise ValueError("条件单 comparator 必须是 price_lte 或 price_gte")
+        trigger = Decimal(str(trigger_price)).quantize(TWO_PLACES)
+        if trigger <= 0:
+            raise ValueError("条件单触发价必须大于0")
+        quantity = int(quantity)
+        if side == "buy" and quantity <= 0:
+            raise ValueError("买入条件单数量必须大于0")
+        if protective and (side != "sell" or quantity != 0):
+            raise ValueError("保护条件单必须卖出全部可卖数量(quantity=0)")
+        if side == "sell" and stock_code not in self._portfolio.positions:
+            raise ValueError(f"未持有 {stock_code}，不能创建卖出条件单")
+        active_count = sum(order["status"] == "active" for order in self._conditional_orders.values())
+        if active_count >= 64:
+            raise ValueError("活动条件单数量已达上限(64)")
+
+        # Avoid bare six-digit substrings: entity masking treats those as
+        # A-share codes and must never rewrite an execution-state identifier.
+        order_id = f"cond-{self._next_conditional_order_id:04d}"
+        self._next_conditional_order_id += 1
+        order = {
+            "order_id": order_id,
+            "agent_id": str(agent_id),
+            "stock_code": str(stock_code),
+            "side": side,
+            "quantity": quantity,
+            "comparator": comparator,
+            "trigger_price": float(trigger),
+            "reasoning": str(reasoning),
+            "protective": bool(protective),
+            "status": "active",
+            "created_day_index": self._day_index,
+            "created_phase": created_phase,
+            "active_after_minute": self._phase_cutoff_minute(created_phase),
+            "not_before_day_index": (
+                int(not_before_day_index) if not_before_day_index is not None else self._day_index
+            ),
+            "expires_day_index": (
+                int(expires_day_index) if expires_day_index is not None else None
+            ),
+            "max_positions": int(max_positions) if max_positions is not None else None,
+            "max_position_pct": (
+                float(max_position_pct) if max_position_pct is not None else None
+            ),
+            "revisions": [],
+            "attempts": [],
+        }
+        self._conditional_orders[order_id] = order
+        self._record_conditional_event("created", order)
+        return dict(order)
+
+    def update_conditional_order(
+        self,
+        order_id: str,
+        *,
+        trigger_price: Decimal | None = None,
+        quantity: int | None = None,
+        reasoning: str = "",
+        created_phase: str | None = None,
+        not_before_day_index: int | None = None,
+    ) -> dict:
+        order = self._conditional_orders.get(str(order_id))
+        if order is None:
+            return {"success": False, "error": f"未知条件单: {order_id}"}
+        if order["status"] != "active":
+            return {"success": False, "error": f"条件单不是活动状态: {order_id}"}
+        changes: dict[str, Any] = {}
+        if trigger_price is not None:
+            trigger = Decimal(str(trigger_price)).quantize(TWO_PLACES)
+            if trigger <= 0:
+                return {"success": False, "error": "条件单触发价必须大于0"}
+            old_trigger = Decimal(str(order["trigger_price"]))
+            if order.get("protective") and order["side"] == "sell" and trigger < old_trigger:
+                return {"success": False, "error": "多头保护止损只能上移，不能下调放宽风险"}
+            if trigger != old_trigger:
+                changes["trigger_price"] = {"from": float(old_trigger), "to": float(trigger)}
+                order["trigger_price"] = float(trigger)
+        if quantity is not None:
+            new_quantity = int(quantity)
+            if order["side"] == "buy" and new_quantity <= 0:
+                return {"success": False, "error": "买入条件单数量必须大于0"}
+            if order.get("protective") and new_quantity != 0:
+                return {"success": False, "error": "保护条件单必须保持全部卖出(quantity=0)"}
+            if new_quantity != order["quantity"]:
+                changes["quantity"] = {"from": order["quantity"], "to": new_quantity}
+                order["quantity"] = new_quantity
+        if not changes:
+            return {"success": False, "error": "条件单没有发生变化"}
+        revision = {
+            "day_index": self._day_index,
+            "reasoning": str(reasoning),
+            "changes": changes,
+        }
+        order["revisions"].append(revision)
+        if created_phase:
+            order["created_day_index"] = self._day_index
+            order["active_after_minute"] = self._phase_cutoff_minute(created_phase)
+        if not_before_day_index is not None:
+            order["not_before_day_index"] = int(not_before_day_index)
+        self._record_conditional_event("updated", order, revision=revision)
+        return {"success": True, "order": dict(order)}
+
+    def cancel_conditional_order(self, order_id: str, *, reasoning: str = "") -> dict:
+        order = self._conditional_orders.get(str(order_id))
+        if order is None:
+            return {"success": False, "error": f"未知条件单: {order_id}"}
+        if order["status"] != "active":
+            return {"success": False, "error": f"条件单不是活动状态: {order_id}"}
+        order["status"] = "cancelled"
+        order["cancelled_day_index"] = self._day_index
+        order["cancel_reasoning"] = str(reasoning)
+        self._record_conditional_event("cancelled", order)
+        return {"success": True, "order": dict(order)}
+
+    def list_conditional_orders(self, *, status: str | None = "active") -> list[dict]:
+        orders = self._conditional_orders.values()
+        if status not in (None, "all"):
+            orders = [order for order in orders if order["status"] == status]
+        return [dict(order) for order in sorted(orders, key=lambda item: item["order_id"])]
+
+    @property
+    def conditional_order_events(self) -> list[dict]:
+        return [dict(event) for event in self._conditional_order_events]
+
+    def _record_conditional_event(self, event: str, order: dict, **extra: Any) -> None:
+        payload = {
+            "event_type": event,
+            "order_id": order["order_id"],
+            "stock_code": order["stock_code"],
+            "date": str(self._current_date),
+            "day_index": self._day_index,
+            **extra,
+        }
+        self._conditional_order_events.append(payload)
+        self._event_bus.emit("conditional_order", **payload)
+
+    @staticmethod
+    def _condition_matches(order: dict, price: Decimal) -> bool:
+        trigger = Decimal(str(order["trigger_price"]))
+        if order["comparator"] == "price_lte":
+            return price <= trigger
+        return price >= trigger
+
+    def _conditional_buy_risk_error(self, order: dict, price: Decimal, timestamp: Any) -> str | None:
+        if order["side"] != "buy":
+            return None
+        code = order["stock_code"]
+        max_positions = order.get("max_positions")
+        if (
+            max_positions is not None
+            and code not in self._portfolio.positions
+            and len(self._portfolio.positions) >= int(max_positions)
+        ):
+            return f"持仓只数已达条件单上限({max_positions}只)"
+        max_pct = order.get("max_position_pct")
+        if max_pct is None:
+            return None
+        prices: dict[str, Decimal] = {}
+        for held_code, position in self._portfolio.positions.items():
+            if held_code == code:
+                prices[held_code] = price
+                continue
+            bars = self.get_5min_bars(held_code)
+            visible = bars[bars["datetime"] <= timestamp] if not bars.empty else bars
+            if not visible.empty:
+                prices[held_code] = Decimal(str(visible.iloc[-1]["close"])).quantize(TWO_PLACES)
+                continue
+            daily = self._market.get(held_code)
+            prior = daily[daily["date"] < self._current_date] if not daily.empty else daily
+            if not prior.empty:
+                prices[held_code] = Decimal(str(prior.iloc[-1]["close"])).quantize(TWO_PLACES)
+            else:
+                prices[held_code] = position.avg_cost
+        total_assets = self._portfolio.total_value(prices)
+        quantity = self._profile.round_lot(int(order["quantity"]))
+        existing = self._portfolio.positions.get(code)
+        position_after = price * (quantity + (existing.quantity if existing else 0))
+        if total_assets > 0 and float(position_after / total_assets * 100) > float(max_pct):
+            return f"触发后{code}仓位超过上限{float(max_pct):.0f}%"
+        return None
+
+    def process_conditional_orders(self, agent_id: str, window: str) -> list[dict]:
+        """Evaluate active conditions chronologically against newly revealed bars."""
+        if self._current_date is None:
+            return []
+        start_minute, end_minute = self._conditional_window_range(window)
+        candidates: list[tuple[Any, str, Decimal]] = []
+        for order in self._conditional_orders.values():
+            if order["status"] != "active" or order["agent_id"] != agent_id:
+                continue
+            if self._day_index < int(order.get("not_before_day_index", 0)):
+                continue
+            expiry = order.get("expires_day_index")
+            if expiry is not None and self._day_index > int(expiry):
+                order["status"] = "expired"
+                self._record_conditional_event("expired", order)
+                continue
+            if order["side"] == "sell" and order["stock_code"] not in self._portfolio.positions:
+                order["status"] = "cancelled"
+                order["cancel_reasoning"] = "position no longer held"
+                self._record_conditional_event("cancelled", order)
+                continue
+            bars = self.get_5min_bars(order["stock_code"])
+            if bars.empty or "datetime" not in bars.columns:
+                continue
+            minutes = bars["datetime"].dt.hour * 60 + bars["datetime"].dt.minute
+            visible = bars[(minutes >= start_minute) & (minutes <= end_minute)].sort_values(
+                "datetime", kind="stable"
+            )
+            if order["created_day_index"] == self._day_index:
+                visible = visible[
+                    (visible["datetime"].dt.hour * 60 + visible["datetime"].dt.minute)
+                    > int(order["active_after_minute"])
+                ]
+            for _, bar in visible.iterrows():
+                price = Decimal(str(bar["close"])).quantize(TWO_PLACES)
+                if self._condition_matches(order, price):
+                    candidates.append((bar["datetime"], order["order_id"], price))
+                    break
+
+        outcomes: list[dict] = []
+        for timestamp, order_id, price in sorted(candidates, key=lambda item: (item[0], item[1])):
+            order = self._conditional_orders[order_id]
+            if order["status"] != "active":
+                continue
+            risk_error = self._conditional_buy_risk_error(order, price, timestamp)
+            if risk_error:
+                result = {"success": False, "error": risk_error}
+            else:
+                result = self.place_order(
+                    agent_id=agent_id,
+                    stock_code=order["stock_code"],
+                    side=order["side"],
+                    quantity=order["quantity"],
+                    reasoning=order["reasoning"],
+                    window=window,
+                    _execution_price=price,
+                    _execution_time=timestamp,
+                    _conditional_order_id=order_id,
+                )
+            attempt = {
+                "date": str(self._current_date),
+                "day_index": self._day_index,
+                "time": timestamp.strftime("%H:%M:%S"),
+                "price": float(price),
+                "success": bool(result.get("success")),
+                "error": result.get("error"),
+            }
+            order["attempts"].append(attempt)
+            if result.get("success"):
+                order["status"] = "triggered"
+                order["triggered_day_index"] = self._day_index
+                order["triggered_time"] = timestamp.strftime("%H:%M:%S")
+                self._record_conditional_event("triggered", order, trade=result["trade"])
+            else:
+                self._record_conditional_event("trigger_failed", order, attempt=attempt)
+            outcomes.append({"order_id": order_id, **result})
+        return outcomes
+
     def place_order(
         self,
         agent_id: str,
@@ -317,6 +631,10 @@ class TradingBus:
         stock_name: str = "",
         reasoning: str = "",
         window: str = "open",
+        *,
+        _execution_price: Decimal | None = None,
+        _execution_time: Any = None,
+        _conditional_order_id: str | None = None,
     ) -> dict:
         """执行交易订单。唯一的下单入口 — tool handler 和 simple agent 都调用此方法。"""
         if self._current_date is None:
@@ -324,7 +642,13 @@ class TradingBus:
         if stock_code in self._traded_today:
             return {"success": False, "error": f"{stock_code} 今天已交易过"}
 
-        price = self.get_execution_price(stock_code, window)
+        if _execution_price is not None:
+            condition = self._conditional_orders.get(str(_conditional_order_id))
+            if condition is None or condition.get("status") != "active":
+                return {"success": False, "error": "无效的内部条件单成交上下文"}
+            price = Decimal(str(_execution_price)).quantize(TWO_PLACES)
+        else:
+            price = self.get_execution_price(stock_code, window)
         if price is None:
             return {
                 "success": False,
@@ -379,9 +703,29 @@ class TradingBus:
         trade["signal_reasoning"] = reasoning
         trade["window"] = window
         trade["date"] = str(self._current_date)
+        if _execution_time is not None:
+            trade["execution_time"] = (
+                _execution_time.strftime("%H:%M:%S")
+                if hasattr(_execution_time, "strftime")
+                else str(_execution_time)
+            )
+            trade["execution_day_index"] = self._day_index
+        if _conditional_order_id is not None:
+            trade["conditional_order_id"] = str(_conditional_order_id)
         self._traded_today.add(stock_code)
         self.trade_history.append(trade)
         self._event_bus.emit("order_placed", trade=trade, agent_id=agent_id)
+        if side == "sell" and stock_code not in self._portfolio.positions:
+            for order in self._conditional_orders.values():
+                if (
+                    order["stock_code"] == stock_code
+                    and order["side"] == "sell"
+                    and order["status"] == "active"
+                    and order["order_id"] != _conditional_order_id
+                ):
+                    order["status"] = "cancelled"
+                    order["cancel_reasoning"] = "position fully exited"
+                    self._record_conditional_event("cancelled", order)
         return {"success": True, "trade": trade}
 
 
@@ -670,7 +1014,12 @@ class BacktestEngine:
             agent_result = {
                 "equity_curve": portfolio.equity_curve,
                 "trades": bus.trade_history,
+                "conditional_orders": bus.list_conditional_orders(status=None),
+                "conditional_order_events": bus.conditional_order_events,
             }
+            memory = getattr(agent, "_memory", None)
+            if memory is not None and hasattr(memory, "audit_events"):
+                agent_result["memory_events"] = memory.audit_events()
             # Include trajectory if available
             if hasattr(agent, "trajectory") and agent.trajectory:
                 traj = agent.trajectory

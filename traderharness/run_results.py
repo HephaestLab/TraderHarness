@@ -37,9 +37,15 @@ def build_result_document(
             )
         )
         trades = data["trades"]
+        conditional_orders = data.get("conditional_orders", [])
+        conditional_order_events = data.get("conditional_order_events", [])
+        memory_events = data.get("memory_events", [])
         if entity_masker is not None:
             trades = entity_masker.mask_obj(trades)
             behavior = entity_masker.mask_obj(behavior)
+            conditional_orders = entity_masker.mask_obj(conditional_orders)
+            conditional_order_events = entity_masker.mask_obj(conditional_order_events)
+            memory_events = entity_masker.mask_obj(memory_events)
         comparison = (
             compare_vs_benchmark(data["equity_curve"], benchmark_curve, initial_cash)
             if benchmark_curve
@@ -48,6 +54,9 @@ def build_result_document(
         agents[agent_id] = {
             "equity_curve": [(str(day), float(value)) for day, value in data["equity_curve"]],
             "trades": trades,
+            "conditional_orders": conditional_orders,
+            "conditional_order_events": conditional_order_events,
+            "memory_events": memory_events,
             "trajectory": data.get("trajectory"),
             "behavior": behavior,
             "vs_benchmark": asdict(comparison) if comparison else None,

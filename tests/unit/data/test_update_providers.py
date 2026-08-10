@@ -3,15 +3,19 @@
 from datetime import date
 
 import pandas as pd
+import pytest
 
+import traderharness.data.update_providers as update_providers
 from traderharness.data.update_providers import (
     BaostockProvider,
     CninfoAnnouncementsProvider,
+    Eastmoney5MinProvider,
     baostock_code,
     cls_sign,
     parse_baostock_rows,
     parse_baostock_valuation_rows,
     parse_cninfo_announcement,
+    parse_eastmoney_5min_klines,
     retry_failed_batches,
 )
 
@@ -53,6 +57,29 @@ def test_parse_baostock_valuation_rows():
             "pb_mrq": 8.1,
             "ps_ttm": 15.2,
             "is_st": False,
+        }
+    ]
+
+
+def test_parse_eastmoney_5min_converts_lots_to_canonical_shares():
+    frame = parse_eastmoney_5min_klines(
+        "600519",
+        [
+            "2026-07-07 10:00,1193.65,1194.00,1194.99,1192.24,488,58256908.00,0.23,0.01,0.10,0.00"
+        ],
+    )
+
+    assert frame.to_dict("records") == [
+        {
+            "stock_code": "600519",
+            "date": pd.Timestamp("2026-07-07"),
+            "datetime": pd.Timestamp("2026-07-07 10:00"),
+            "open": 1193.65,
+            "high": 1194.99,
+            "low": 1192.24,
+            "close": 1194.0,
+            "volume": 48800,
+            "amount": 58256908.0,
         }
     ]
 
@@ -151,3 +178,125 @@ def test_baostock_provider_isolates_residual_failures_into_single_code_batches(
     ]
     assert result["stock_code"].tolist() == ["300997", "603880"]
     assert provider.batch_size == 10
+
+
+def test_baostock_provider_retries_batches_when_process_pool_stalls(monkeypatch):
+    submitted = []
+    shutdown_calls = []
+
+    class FakeFuture:
+        def __init__(self, job):
+            self.job = job
+
+    class FakeExecutor:
+        _processes = {}
+
+        def __init__(self, *, max_workers):
+            assert max_workers == 2
+
+        def submit(self, function, job):
+            future = FakeFuture(job)
+            submitted.append(future)
+            return future
+
+        def shutdown(self, *, wait=True, cancel_futures=False):
+            shutdown_calls.append((wait, cancel_futures))
+
+    monkeypatch.setattr(update_providers, "ProcessPoolExecutor", FakeExecutor)
+    monkeypatch.setattr(
+        update_providers,
+        "wait",
+        lambda pending, **kwargs: (set(), set(pending)),
+    )
+    provider = BaostockProvider(
+        frequency="5",
+        workers=2,
+        batch_size=1,
+        stall_timeout=0.01,
+        max_attempts=1,
+    )
+
+    frames, failed = provider._fetch_once(
+        ["600519", "300750"],
+        date(2026, 7, 1),
+        date(2026, 7, 2),
+    )
+
+    assert frames == []
+    assert failed == ["600519", "300750"]
+    assert len(submitted) == 2
+    assert shutdown_calls == [(False, True)]
+
+
+def test_eastmoney_5min_provider_resumes_from_per_code_cache(tmp_path, monkeypatch):
+    provider = Eastmoney5MinProvider(
+        cache_dir=tmp_path,
+        workers=1,
+        max_attempts=1,
+        retry_delay=0,
+        max_passes=1,
+        pass_delay=0,
+    )
+    calls = []
+    fail_once = {"000001"}
+
+    def fake_fetch_one(client, code, start, end):
+        calls.append(code)
+        if code in fail_once:
+            fail_once.remove(code)
+            raise RuntimeError("temporary failure")
+        return parse_eastmoney_5min_klines(
+            code,
+            ["2026-07-08 09:35,10,10.1,10.2,9.9,100,100000,0,0,0,0"],
+        )
+
+    monkeypatch.setattr(provider, "_fetch_one", fake_fetch_one)
+
+    with pytest.raises(RuntimeError, match="Completed code caches are preserved"):
+        provider.fetch(
+            ["600519", "000001"],
+            date(2026, 7, 8),
+            date(2026, 7, 8),
+        )
+
+    result = provider.fetch(
+        ["600519", "000001"],
+        date(2026, 7, 8),
+        date(2026, 7, 8),
+    )
+
+    assert calls == ["600519", "000001", "000001"]
+    assert sorted(result["stock_code"].tolist()) == ["000001", "600519"]
+
+
+def test_eastmoney_5min_provider_retries_failed_codes_in_a_fresh_pass(tmp_path, monkeypatch):
+    provider = Eastmoney5MinProvider(
+        cache_dir=tmp_path,
+        workers=1,
+        max_attempts=1,
+        retry_delay=0,
+        max_passes=2,
+        pass_delay=0,
+    )
+    calls = []
+
+    def fake_fetch_one(client, code, start, end):
+        calls.append(code)
+        if len(calls) == 1:
+            raise RuntimeError("temporary failure")
+        return parse_eastmoney_5min_klines(
+            code,
+            ["2026-07-08 09:35,10,10.1,10.2,9.9,100,100000,0,0,0,0"],
+        )
+
+    monkeypatch.setattr(provider, "_fetch_one", fake_fetch_one)
+
+    result = provider.fetch(
+        ["600519"],
+        date(2026, 7, 8),
+        date(2026, 7, 8),
+    )
+
+    assert calls == ["600519", "600519"]
+    assert result["stock_code"].tolist() == ["600519"]
+    assert provider.last_failed == []

@@ -8,16 +8,37 @@ from __future__ import annotations
 from traderharness.tools.registry import ToolContext, ToolDefinition
 
 
+def _position_plan(ctx: ToolContext, code: str) -> dict | None:
+    plans = ctx.tool_call_cache.get("_position_plans", {})
+    plan = plans.get(code)
+    if plan is None:
+        return None
+    return {
+        **plan,
+        "holding_trading_days": max(0, ctx.day_index - int(plan["entry_day_index"])),
+    }
+
+
 async def handle_get_portfolio(params: dict, ctx: ToolContext) -> dict:
     portfolio = ctx.portfolio
-    if ctx.current_phase == "pre_market":
-        from traderharness.agents.window_context import previous_close_prices
+    from traderharness.agents.window_context import previous_close_prices
 
+    if ctx.current_phase == "pre_market":
         prices = previous_close_prices(ctx)
     else:
-        prices = ctx.execution_price if ctx.execution_price else {}
+        prices = dict(ctx.execution_price)
 
-    total_value = float(portfolio.total_value(prices)) if prices else float(portfolio.cash)
+    # A stock can be bought from a research result without first entering the
+    # phase focus set. In that case ``execution_price`` has no entry until the
+    # next window refresh. Fall back to the latest point-in-time-safe close,
+    # then acquisition cost, so invested capital is never mistaken for a loss.
+    previous = previous_close_prices(ctx)
+    for code, pos in portfolio.positions.items():
+        if code not in prices and code in previous:
+            prices[code] = previous[code]
+        prices.setdefault(code, pos.avg_cost)
+
+    total_value = float(portfolio.total_value(prices))
     initial = float(ctx.initial_cash)
     return_pct = ((total_value - initial) / initial * 100) if initial > 0 else 0.0
 
@@ -38,6 +59,7 @@ async def handle_get_portfolio(params: dict, ctx: ToolContext) -> dict:
                 "current_price": current_price,
                 "pnl_pct": round(pnl_pct, 2),
                 "market_value": round(current_price * pos.quantity, 2),
+                "position_plan": _position_plan(ctx, code),
             }
         )
 
@@ -67,6 +89,7 @@ async def handle_get_position(params: dict, ctx: ToolContext) -> dict:
         ((current_price - float(pos.avg_cost)) / float(pos.avg_cost) * 100) if pos.avg_cost else 0
     )
     sellable = pos.sellable_quantity(ctx.current_date)
+    plan = _position_plan(ctx, code)
 
     return {
         "stock_code": code,
@@ -76,6 +99,8 @@ async def handle_get_position(params: dict, ctx: ToolContext) -> dict:
         "pnl_pct": round(pnl_pct, 2),
         "sellable_quantity": sellable,
         "days_held": (ctx.current_date - pos.buy_date).days,
+        "holding_trading_days": plan["holding_trading_days"] if plan else None,
+        "position_plan": plan,
     }
 
 

@@ -5,10 +5,12 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from datetime import date, timedelta
+from ipaddress import ip_address
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
-from fastapi import FastAPI, HTTPException, Response, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -30,9 +32,9 @@ from traderharness.config.llm_settings import (
 from traderharness.paths import agents_dir, dataset_dir, results_dir
 from traderharness.result_analysis import (
     MarketDatasetBarSource,
-    build_comparison,
     build_result_analysis,
 )
+from traderharness.results import ensure_result_summary, result_summary_path
 from traderharness.tools.catalog import normalize_allowed_tools, tool_catalog_payload
 
 
@@ -128,28 +130,34 @@ class LLMTestPayload(BaseModel):
 
 
 def _result_summary(path: Path) -> dict[str, Any]:
-    data = json.loads(path.read_text(encoding="utf-8"))
-    summary: dict[str, Any] = {
-        "file": path.name,
-        "status": data.get("status", "done"),
-        "start_date": data.get("start_date") or data.get("config", {}).get("start_date"),
-        "end_date": data.get("end_date") or data.get("config", {}).get("end_date"),
-        "trading_days": data.get("trading_days", 0),
-    }
-    agent_data = data.get("agent_data") or {}
-    summary["agent_count"] = len(agent_data)
-    if len(agent_data) == 1:
-        # Single agent: the metrics ARE the run's metrics, no ranking needed.
-        summary["metrics"] = next(iter(agent_data.values())).get("metrics") or {}
-    elif len(agent_data) > 1:
-        # Multiple agents: showing only the first agent's metrics would
-        # misrepresent the run. Surface a ranked summary instead.
-        comparison = build_comparison(agent_data)
-        if comparison:
-            summary["agents"] = comparison["agents"]
-            summary["best_agent_id"] = comparison["best_agent_id"]
-            summary["best_return"] = comparison["agents"][0]["total_return_pct"]
-    return summary
+    return ensure_result_summary(path)
+
+
+def _compact_result_analysis(analysis: dict[str, Any]) -> dict[str, Any]:
+    """Keep the useful first screen while deferring bulky trajectory evidence."""
+    for agent in analysis.get("agents", {}).values():
+        decisions = agent.get("decisions") or []
+        tools = agent.get("tools") or []
+        for review in agent.get("trade_reviews") or []:
+            review["decisions"] = [
+                decisions[index]
+                for index in review.get("decision_indices") or []
+                if isinstance(index, int) and 0 <= index < len(decisions)
+            ]
+            order_index = review.get("order_tool_index")
+            review["order_tool"] = (
+                tools[order_index]
+                if isinstance(order_index, int) and 0 <= order_index < len(tools)
+                else None
+            )
+        agent["days"] = []
+        agent["decisions"] = []
+        agent["tools"] = []
+        # Charts needed by trade review are already copied into each review.
+        # The per-security trajectory dossier is only used by full evidence.
+        agent["securities"] = {}
+    analysis["detail"] = "summary"
+    return analysis
 
 
 def _evaluation_bar_provider(data_root: Path) -> MarketDatasetBarSource | None:
@@ -166,6 +174,54 @@ def _evaluation_bar_provider(data_root: Path) -> MarketDatasetBarSource | None:
     if not manager.has_daily_cache():
         return None
     return MarketDatasetBarSource(manager)
+
+
+def _build_result_entity_revealer(document: dict[str, Any], data_root: Path):
+    """Reconstruct the run-scoped entity permutation from local canonical data."""
+    from traderharness.core.entity_masking import EntityMasker
+    from traderharness.data.market_data_manager import MarketDataManager
+    from traderharness.data.stock_registry_loader import get_stock_registry
+
+    config = document.get("config") or {}
+    if not config.get("mask_entities"):
+        return None
+    start_text = config.get("start_date") or document.get("start_date")
+    end_text = config.get("end_date") or document.get("end_date")
+    try:
+        start_date = date.fromisoformat(str(start_text))
+        end_date = date.fromisoformat(str(end_text))
+    except (TypeError, ValueError):
+        return None
+
+    manager = MarketDataManager(data_root)
+    if not manager.has_daily_cache():
+        return None
+    daily = manager.load_daily(
+        start_date=start_date - timedelta(days=180),
+        end_date=end_date,
+    )
+    if daily.empty or "stock_code" not in daily.columns:
+        return None
+    codes = sorted({str(code).zfill(6) for code in daily["stock_code"].dropna().unique()})
+    registry = get_stock_registry()
+    names = {code: registry.get(code, {}).get("name", code) for code in codes}
+    return EntityMasker(
+        codes,
+        names=names,
+        seed=config.get("entity_mask_seed", 0),
+    )
+
+
+def _require_loopback(request: Request) -> None:
+    host = request.client.host if request.client is not None else ""
+    if host == "testclient":
+        return
+    try:
+        is_loopback = ip_address(host).is_loopback
+    except ValueError:
+        is_loopback = False
+    if not is_loopback:
+        raise HTTPException(403, "解除实体遮罩仅允许从本机访问")
 
 
 def create_app(
@@ -199,7 +255,9 @@ def create_app(
     # files on every library/dossier request. Analysis payloads are large,
     # so that cache is kept small; summaries are tiny and kept per file.
     summary_cache: dict[str, tuple[tuple[int, int], dict[str, Any]]] = {}
-    analysis_cache: dict[str, tuple[tuple[int, int], dict[str, Any]]] = {}
+    analysis_cache: dict[
+        tuple[str, bool, str], tuple[tuple[int, int], dict[str, Any]]
+    ] = {}
     analysis_cache_max_entries = 4
 
     def _file_stamp(path: Path) -> tuple[int, int]:
@@ -375,20 +433,55 @@ def create_app(
         return summaries
 
     @app.get("/api/results/{filename}/analysis")
-    def get_result_analysis(filename: str) -> dict[str, Any]:
+    def get_result_analysis(
+        filename: str,
+        request: Request,
+        reveal_entities: bool = False,
+        detail: Literal["summary", "full"] = "full",
+    ) -> dict[str, Any]:
         if Path(filename).name != filename or not filename.endswith("_result.json"):
             raise HTTPException(400, "结果文件名无效")
         path = result_root / filename
         if not path.is_file():
             raise HTTPException(404, "未找到回测结果")
         stamp = _file_stamp(path)
-        cached = analysis_cache.get(filename)
+        cache_key = (filename, reveal_entities, detail)
+        cached = analysis_cache.get(cache_key)
         if cached is not None and cached[0] == stamp:
             return cached[1]
         document = json.loads(path.read_text(encoding="utf-8"))
         evaluation_bars = _evaluation_bar_provider(data_root)
+        # Persisted masked trades carry pseudocodes. Evaluation-only chart
+        # backfill must query the canonical code, otherwise the masked page
+        # silently displays a different company's price history.
+        revealer = _build_result_entity_revealer(document, data_root)
+        if evaluation_bars is not None and revealer is not None:
+            canonical_evaluation_bars = evaluation_bars
+
+            def evaluation_bars(code: str, trade_date: str) -> list[dict[str, Any]]:
+                return canonical_evaluation_bars(revealer.unmask_code(code), trade_date)
+
         analysis = build_result_analysis(document, evaluation_bars=evaluation_bars)
-        analysis_cache[filename] = (stamp, analysis)
+        reveal_available = bool(
+            (document.get("config") or {}).get("mask_entities")
+            and (data_root / "daily.parquet").is_file()
+        )
+        if reveal_entities:
+            _require_loopback(request)
+            if revealer is None:
+                raise HTTPException(409, "无法从本地数据重建该次运行的实体映射")
+            analysis = revealer.reveal_obj(analysis)
+            analysis["entity_view"] = {"available": True, "mode": "original"}
+        else:
+            analysis["entity_view"] = {
+                "available": reveal_available,
+                "mode": "masked",
+            }
+        if detail == "summary":
+            analysis = _compact_result_analysis(analysis)
+        else:
+            analysis["detail"] = "full"
+        analysis_cache[cache_key] = (stamp, analysis)
         while len(analysis_cache) > analysis_cache_max_entries:
             analysis_cache.pop(next(iter(analysis_cache)))
         return analysis
@@ -410,10 +503,14 @@ def create_app(
         if not path.is_file():
             raise HTTPException(404, "未找到回测结果")
         path.unlink()
+        sidecar = result_summary_path(path)
+        if sidecar.is_file():
+            sidecar.unlink()
         # Both caches key on the bare filename (path.name), so drop any stale
         # entries alongside the artifact itself.
         summary_cache.pop(filename, None)
-        analysis_cache.pop(filename, None)
+        for cache_key in [key for key in analysis_cache if key[0] == filename]:
+            analysis_cache.pop(cache_key, None)
         return Response(status_code=204)
 
     @app.post("/api/runs", status_code=202)

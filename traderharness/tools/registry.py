@@ -39,6 +39,14 @@ class ToolContext:
     workspace_root: str = ""
     max_position_pct: float = 25.0
     max_positions: int = 4
+    require_structured_plan: bool = False
+    minimum_holding_days: int = 0
+    day_index: int = 0
+    research_interval_days: int = 0
+    full_market_research_allowed: bool | None = None
+    sandbox_pre_market_only: bool = False
+    allowed_tools: frozenset[str] | None = None
+    sandbox_max_calls_per_day: int = 0
     date_masker: Any = None
     entity_masker: Any = None
     _bus: Any = field(default=None, repr=False)
@@ -53,6 +61,12 @@ class ToolDefinition:
     description: str
     parameters: dict
     handler: Callable[[dict, ToolContext], Awaitable[dict]]
+    # Most handlers return canonical engine values and rely on the registry to
+    # mask their egress. A trusted boundary such as execute_code is different:
+    # every object exposed inside its sandbox is already masked before Agent
+    # code can inspect it, so applying the permutation again would change the
+    # pseudocode and make subsequent tool calls address the wrong security.
+    handler_masks_egress: bool = False
 
     def to_openai_schema(self) -> dict:
         return {
@@ -87,8 +101,19 @@ class ToolRegistry:
             return {"error": f"未知工具: {name}"}
         try:
             masker = ctx.entity_masker
-            internal_arguments = masker.unmask_obj(arguments) if masker is not None else arguments
+            # execute_code owns the masking boundary end-to-end: its source
+            # contains Agent-visible pseudocodes that the sandbox APIs unmask
+            # when they are used. Rewriting embedded literals in the source
+            # here would make those APIs unmask a second time and query the
+            # wrong security.
+            internal_arguments = (
+                masker.unmask_obj(arguments)
+                if masker is not None and not tool.handler_masks_egress
+                else arguments
+            )
             result = await tool.handler(internal_arguments, ctx)
+            if tool.handler_masks_egress:
+                return result
             date_masker = ctx.date_masker
             if date_masker is not None:
                 result = date_masker.mask_obj(result)

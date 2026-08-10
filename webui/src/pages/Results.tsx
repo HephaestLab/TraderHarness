@@ -1,5 +1,5 @@
-import { Activity, BrainCircuit, CandlestickChart as ChartIcon, ChevronLeft, ChevronRight, Download, GitCompareArrows, List, Trash2, Trophy } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { Activity, BrainCircuit, CandlestickChart as ChartIcon, ChevronLeft, ChevronRight, CircleDollarSign, Download, Eye, EyeOff, GitCompareArrows, List, Trash2, Trophy } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { DecisionTimeline } from "../components/DecisionTimeline";
@@ -24,6 +24,23 @@ import type { AnalyzedAgent, ResultAnalysis, ResultSummary } from "../types";
 
 function pct(value?: number) {
   return value == null ? "—" : `${value.toFixed(2)}%`;
+}
+
+function signedMoney(value: number) {
+  const sign = value > 0 ? "+" : value < 0 ? "-" : "";
+  return `${sign}¥${Math.abs(value).toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function signedPct(value: number | null) {
+  if (value == null) return "—";
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${value.toFixed(2)}%`;
+}
+
+function securityLabel(stockCode?: string, stockName?: string) {
+  const code = stockCode || "—";
+  const name = stockName?.trim();
+  return name && name !== code && !name.startsWith("公司-") ? `${name}（${code}）` : code;
 }
 
 type SortMode = "latest" | "return" | "days";
@@ -77,14 +94,18 @@ export function Results() {
   const [analysis, setAnalysis] = useState<ResultAnalysis | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [evidenceLoading, setEvidenceLoading] = useState(false);
   const [filter, setFilter] = useState("");
   const [sort, setSort] = useState<SortMode>("latest");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [compareFiles, setCompareFiles] = useState<string[] | null>(null);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [revealedFile, setRevealedFile] = useState<string | null>(null);
   const toast = useToast();
   const file = params.get("file");
+  const revealEntities = Boolean(file && revealedFile === file);
+  const requestKeyRef = useRef("");
 
   useEffect(() => {
     api.results().then(setItems).catch((reason: Error) => setError(reason.message));
@@ -92,17 +113,52 @@ export function Results() {
   useEffect(() => {
     if (!file) {
       setAnalysis(null);
+      requestKeyRef.current = "";
       return;
     }
+    const requestKey = `${file}:${revealEntities ? "original" : "masked"}`;
+    requestKeyRef.current = requestKey;
+    let cancelled = false;
     setLoading(true);
+    setEvidenceLoading(false);
+    setAnalysis(null);
     setError("");
     // Only the analysis dossier is loaded up front; the raw artifact can be
     // tens of MB (full trajectory) and is only needed when exporting.
-    api.resultAnalysis(file)
-      .then(setAnalysis)
-      .catch((reason: Error) => setError(reason.message))
-      .finally(() => setLoading(false));
-  }, [file]);
+    const request = revealEntities
+      ? api.resultAnalysis(file, true)
+      : api.resultAnalysis(file);
+    request
+      .then((payload) => {
+        if (!cancelled && requestKeyRef.current === requestKey) setAnalysis(payload);
+      })
+      .catch((reason: Error) => {
+        if (cancelled) return;
+        setError(reason.message);
+        if (revealEntities) setRevealedFile(null);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [file, revealEntities]);
+
+  async function loadFullEvidence() {
+    if (!file || !analysis || analysis.detail !== "summary" || evidenceLoading) return;
+    const requestKey = `${file}:${revealEntities ? "original" : "masked"}`;
+    setEvidenceLoading(true);
+    setError("");
+    try {
+      const payload = await api.resultAnalysis(file, revealEntities, "full");
+      if (requestKeyRef.current === requestKey) setAnalysis(payload);
+    } catch (reason) {
+      if (requestKeyRef.current === requestKey) setError((reason as Error).message);
+    } finally {
+      if (requestKeyRef.current === requestKey) setEvidenceLoading(false);
+    }
+  }
 
   const visibleItems = useMemo(() => {
     const needle = filter.trim().toLowerCase();
@@ -180,6 +236,20 @@ export function Results() {
           mode === "detail" && analysis ? (
             <>
               <button className="button secondary" onClick={() => setParams({})}><ChevronLeft size={16} /> 返回资料库</button>
+              {analysis.entity_view?.available ? (
+                <label className={`entity-reveal-switch${revealEntities ? " active" : ""}`}>
+                  <input
+                    type="checkbox"
+                    role="switch"
+                    aria-label="显示原始股票名称"
+                    checked={revealEntities}
+                    disabled={loading}
+                    onChange={(event) => setRevealedFile(event.target.checked ? file : null)}
+                  />
+                  {revealEntities ? <Eye size={16} /> : <EyeOff size={16} />}
+                  <span>{revealEntities ? "已显示真实实体" : "显示真实实体"}</span>
+                </label>
+              ) : null}
               <a
                 className="button secondary"
                 href={`/api/results/${encodeURIComponent(file ?? "")}`}
@@ -197,7 +267,7 @@ export function Results() {
       {mode === "compare" ? (
         <ResultCompare files={compareFiles ?? []} onBack={() => setCompareFiles(null)} />
       ) : null}
-      {mode === "detail" && loading ? (
+      {mode === "detail" && loading && !analysis ? (
         <div role="status" aria-label="正在生成研究档案">
           <div className="metric-grid dossier-metrics" style={{ marginBottom: 16 }}>
             {Array.from({ length: 6 }, (_, index) => (
@@ -208,7 +278,11 @@ export function Results() {
         </div>
       ) : null}
       {mode === "detail" && analysis ? (
-        <ResultDetail analysis={analysis} />
+        <ResultDetail
+          analysis={analysis}
+          evidenceLoading={evidenceLoading}
+          onLoadEvidence={loadFullEvidence}
+        />
       ) : null}
       {mode === "library" ? (
         <>
@@ -421,13 +495,17 @@ function ComparisonOverview({
 
 function ResultDetail({
   analysis,
+  evidenceLoading,
+  onLoadEvidence,
 }: {
   analysis: ResultAnalysis;
+  evidenceLoading: boolean;
+  onLoadEvidence: () => void;
 }) {
   const agentIds = Object.keys(analysis.agents);
   const isMultiAgent = agentIds.length > 1;
   const [agentId, setAgentId] = useState<string | null>(isMultiAgent ? null : agentIds[0] ?? null);
-  const [tab, setTab] = useState<"review" | "overview" | "decisions" | "trades">("review");
+  const [tab, setTab] = useState<"review" | "securities" | "overview" | "decisions" | "trades">("review");
 
   const activeAgentId = agentId ?? agentIds[0] ?? "";
   const agent = analysis.agents[activeAgentId] ?? analysis.agents[agentIds[0]];
@@ -470,6 +548,12 @@ function ResultDetail({
 
   return (
     <>
+      {analysis.entity_view?.mode === "original" ? (
+        <div className="entity-reveal-notice" role="status" aria-label="实体遮罩已解除">
+          <Eye size={16} />
+          <span><strong>实体遮罩已解除</strong>：当前页面显示本地映射还原后的真实证券代码和名称；原始 result、replay 与下载工件仍保持遮罩。</span>
+        </div>
+      ) : null}
       <div className="dossier-toolbar">
         <div className="run-identity">
           <span className="status-chip">{statusLabel(analysis.status)}</span>
@@ -492,15 +576,75 @@ function ResultDetail({
       </div>
       <div className="dossier-tabs" role="tablist">
         <button className={tab === "review" ? "active" : ""} onClick={() => setTab("review")}><ChartIcon size={15} /> 逐笔复盘 <span>{agent.trade_reviews.length}</span></button>
+        <button className={tab === "securities" ? "active" : ""} onClick={() => setTab("securities")}><CircleDollarSign size={15} /> 证券收益 <span>{agent.security_performance?.length ?? 0}</span></button>
         <button className={tab === "overview" ? "active" : ""} onClick={() => setTab("overview")}><Activity size={15} /> 绩效总览</button>
-        <button className={tab === "decisions" ? "active" : ""} onClick={() => setTab("decisions")}><BrainCircuit size={15} /> 完整决策轨迹 <span>{agent.decisions.length}</span></button>
+        <button
+          className={tab === "decisions" ? "active" : ""}
+          onClick={() => {
+            setTab("decisions");
+            if (analysis.detail === "summary") onLoadEvidence();
+          }}
+        ><BrainCircuit size={15} /> 完整决策轨迹 <span>{agent.reasoning_coverage.responses}</span></button>
         <button className={tab === "trades" ? "active" : ""} onClick={() => setTab("trades")}><List size={15} /> 成交台账 <span>{agent.trades.length}</span></button>
       </div>
       {tab === "review" ? <TradeReviewWorkbench agent={agent} /> : null}
+      {tab === "securities" ? <SecurityPerformancePanel agent={agent} /> : null}
       {tab === "overview" ? <Overview agent={agent} series={series} markers={markers} /> : null}
-      {tab === "decisions" ? <article className="panel decision-panel"><DecisionTimeline agent={agent} /></article> : null}
+      {tab === "decisions" ? (
+        <article className="panel decision-panel">
+          {evidenceLoading || analysis.detail === "summary"
+            ? <div className="empty-state" role="status">正在按需加载完整决策与工具证据…</div>
+            : <DecisionTimeline agent={agent} />}
+        </article>
+      ) : null}
       {tab === "trades" ? <TradeLedger agent={agent} /> : null}
     </>
+  );
+}
+
+function SecurityPerformancePanel({ agent }: { agent: AnalyzedAgent }) {
+  const rows = agent.security_performance ?? [];
+  const realizedPnl = rows.reduce((sum, row) => sum + row.realized_pnl, 0);
+  const winners = rows.filter((row) => row.realized_pnl > 0).length;
+  const losers = rows.filter((row) => row.realized_pnl < 0).length;
+  const openPositions = rows.filter((row) => row.open_quantity > 0).length;
+
+  return (
+    <article className="panel security-performance-panel">
+      <div className="panel-heading">
+        <div><span className="eyebrow">按证券归并</span><h2>同一证券累计操作收益</h2></div>
+        <span className="status-chip">{rows.length} 只证券</span>
+      </div>
+      <div className="metric-grid security-performance-summary">
+        <Metric label="累计已实现盈亏" value={signedMoney(realizedPnl)} tone={realizedPnl >= 0 ? "positive" : "negative"} />
+        <Metric label="盈利证券" value={`${winners} 只`} note={`亏损 ${losers} 只`} />
+        <Metric label="仍有持仓" value={`${openPositions} 只`} note="不计期末浮动盈亏" />
+        <Metric label="累计交易费用" value={`¥${rows.reduce((sum, row) => sum + row.fees, 0).toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} />
+      </div>
+      <p className="security-performance-note">以成交 pnl 为基础，并按卖出比例计入买入佣金；收益率按已卖出仓位的完整成本计算，未平仓部分不计入浮动盈亏。</p>
+      <div className="table-wrap">
+        <table aria-label="按证券汇总收益">
+          <thead><tr><th>证券</th><th>持仓状态</th><th>操作次数</th><th>买入 / 卖出</th><th>已实现盈亏</th><th>已实现收益率</th><th>费用</th><th>操作区间</th></tr></thead>
+          <tbody>{rows.map((row) => {
+            const tone = row.realized_pnl > 0 ? "positive" : row.realized_pnl < 0 ? "negative" : "";
+            const returnTone = row.realized_return_pct != null && row.realized_return_pct > 0 ? "positive" : row.realized_return_pct != null && row.realized_return_pct < 0 ? "negative" : "";
+            return (
+              <tr key={row.code}>
+                <td><strong>{securityLabel(row.code, row.name)}</strong></td>
+                <td><span className={`position-status ${row.status}`}>{row.open_quantity > 0 ? `持仓中 · ${row.open_quantity.toLocaleString("zh-CN")} 股` : "已清仓"}</span></td>
+                <td>{row.trade_count} 笔<small>{row.buy_count} 买 · {row.sell_count} 卖</small></td>
+                <td>¥{row.buy_amount.toLocaleString("zh-CN", { maximumFractionDigits: 2 })}<small>卖出 ¥{row.sell_amount.toLocaleString("zh-CN", { maximumFractionDigits: 2 })}</small></td>
+                <td className={tone}>{signedMoney(row.realized_pnl)}</td>
+                <td className={returnTone}>{signedPct(row.realized_return_pct)}</td>
+                <td>¥{row.fees.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                <td>{formatDate(row.first_trade_date)}<small>至 {formatDate(row.last_trade_date)}</small></td>
+              </tr>
+            );
+          })}</tbody>
+        </table>
+      </div>
+      {!rows.length ? <div className="empty-state">该智能体在本次回测中没有可统计的证券操作。</div> : null}
+    </article>
   );
 }
 
@@ -550,16 +694,35 @@ function Overview({
 }
 
 function TradeLedger({ agent }: { agent: AnalyzedAgent }) {
+  const conditionalOrders = agent.conditional_orders ?? [];
   return (
+    <>
     <article className="panel trade-panel">
       <div className="panel-heading"><div><span className="eyebrow">订单成交</span><h2>含决策理由的逐笔交易台账</h2></div><span className="status-chip">{agent.trades.length} 笔成交</span></div>
       <div className="table-wrap"><table><thead><tr><th>日期 / 窗口</th><th>证券代码</th><th>方向</th><th>数量</th><th>价格</th><th>成交额</th><th>决策理由</th></tr></thead>
         <tbody>{agent.trades.map((trade, index) => {
           const side = trade.side ?? trade.action ?? "—";
-          return <tr key={`${trade.trade_date}-${trade.stock_code}-${index}`}><td>{formatDate(trade.trade_date ?? trade.date)}<small>{windowLabel(trade.window)}</small></td><td>{trade.stock_code}</td><td><span className={`side ${side.toLowerCase()}`}>{sideLabel(side)}</span></td><td>{trade.quantity ?? "—"}</td><td>{trade.price == null ? "—" : Number(trade.price).toFixed(2)}</td><td>{trade.amount == null ? "—" : Number(trade.amount).toLocaleString("zh-CN")}</td><td className="rationale-cell">{trade.signal_reasoning ?? trade.reasoning ?? "—"}</td></tr>;
+          return <tr key={`${trade.trade_date}-${trade.stock_code}-${index}`}><td>{formatDate(trade.trade_date ?? trade.date)}<small>{windowLabel(trade.window)}</small></td><td>{securityLabel(trade.stock_code, trade.stock_name)}</td><td><span className={`side ${side.toLowerCase()}`}>{sideLabel(side)}</span></td><td>{trade.quantity ?? "—"}</td><td>{trade.price == null ? "—" : Number(trade.price).toFixed(2)}</td><td>{trade.amount == null ? "—" : Number(trade.amount).toLocaleString("zh-CN")}</td><td className="rationale-cell">{trade.signal_reasoning ?? trade.reasoning ?? "—"}</td></tr>;
         })}</tbody>
       </table></div>
       {!agent.trades.length ? <div className="empty-state">该智能体在本次回测中没有成交。</div> : null}
     </article>
+    <article className="panel trade-panel">
+      <div className="panel-heading"><div><span className="eyebrow">环境托管执行</span><h2>条件单及版本状态</h2></div><span className="status-chip">{conditionalOrders.length} 张</span></div>
+      <div className="table-wrap"><table><thead><tr><th>订单 / 创建日</th><th>证券代码</th><th>方向</th><th>触发条件</th><th>数量</th><th>状态</th><th>修改 / 尝试</th><th>执行理由</th></tr></thead>
+        <tbody>{conditionalOrders.map((order) => <tr key={order.order_id}>
+          <td><code>{order.order_id}</code><small>{order.created_day_index == null ? "—" : `第 ${order.created_day_index + 1} 个交易日`}</small></td>
+          <td>{securityLabel(order.stock_code)}</td>
+          <td><span className={`side ${order.side}`}>{sideLabel(order.side)}</span></td>
+          <td>{order.comparator === "price_lte" ? "≤" : "≥"} {Number(order.trigger_price).toFixed(2)}{order.protective ? <small>只可上移的保护价</small> : null}</td>
+          <td>{order.quantity === 0 ? "全部可卖" : order.quantity}</td>
+          <td><span className="status-chip">{{ active: "活动", triggered: "已触发", cancelled: "已取消", expired: "已过期" }[order.status] ?? order.status}</span></td>
+          <td>{order.revisions?.length ?? 0} 次修改<small>{order.attempts?.length ?? 0} 次触发尝试</small></td>
+          <td className="rationale-cell">{order.reasoning ?? "—"}</td>
+        </tr>)}</tbody>
+      </table></div>
+      {!conditionalOrders.length ? <div className="empty-state">本次回测没有创建条件单。</div> : null}
+    </article>
+    </>
   );
 }

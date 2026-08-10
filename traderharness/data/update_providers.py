@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import socket
 import time
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, ThreadPoolExecutor, as_completed, wait
 from datetime import date, datetime, timedelta
 from datetime import time as datetime_time
+from pathlib import Path
 from typing import Any
 
 import httpx
 import pandas as pd
+import pyarrow.parquet as pq
 
 from traderharness.data.stock_registry_loader import is_a_share_stock_code
 
@@ -22,6 +25,257 @@ logger = logging.getLogger(__name__)
 def baostock_code(code: str) -> str:
     code = str(code).zfill(6)
     return f"sh.{code}" if code.startswith(("6", "9")) else f"sz.{code}"
+
+
+EASTMONEY_5MIN_COLUMNS = [
+    "stock_code",
+    "date",
+    "datetime",
+    "open",
+    "high",
+    "low",
+    "close",
+    "volume",
+    "amount",
+]
+
+
+def parse_eastmoney_5min_klines(code: str, klines: list[str]) -> pd.DataFrame:
+    """Normalize unadjusted Eastmoney 5-minute rows to canonical units."""
+    rows = [item.split(",")[:7] for item in klines if len(item.split(",")) >= 7]
+    if not rows:
+        return pd.DataFrame(columns=EASTMONEY_5MIN_COLUMNS)
+    frame = pd.DataFrame(
+        rows,
+        columns=["datetime", "open", "close", "high", "low", "volume", "amount"],
+    )
+    frame["datetime"] = pd.to_datetime(frame["datetime"], errors="coerce")
+    frame = frame[frame["datetime"].notna()].copy()
+    frame["date"] = frame["datetime"].dt.normalize()
+    frame["stock_code"] = str(code).zfill(6)
+    for column in ("open", "high", "low", "close", "volume", "amount"):
+        frame[column] = pd.to_numeric(frame[column], errors="coerce")
+    # Eastmoney documents minute volume in lots; the canonical dataset uses shares.
+    frame["volume"] *= 100
+    return frame[EASTMONEY_5MIN_COLUMNS]
+
+
+class Eastmoney5MinProvider:
+    """Resumable Eastmoney 5-minute updater with per-code durable staging."""
+
+    _URL = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
+    _FIELDS1 = "f1,f2,f3,f4,f5,f6"
+    _FIELDS2 = "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61"
+
+    def __init__(
+        self,
+        *,
+        cache_dir: str | Path,
+        workers: int = 1,
+        timeout: float = 20,
+        max_attempts: int = 4,
+        retry_delay: float = 1,
+        request_delay: float = 0.15,
+        max_passes: int = 6,
+        pass_delay: float = 30,
+    ) -> None:
+        self.cache_dir = Path(cache_dir)
+        self.workers = workers
+        self.timeout = timeout
+        self.max_attempts = max_attempts
+        self.retry_delay = retry_delay
+        self.request_delay = request_delay
+        self.max_passes = max_passes
+        self.pass_delay = pass_delay
+        self.last_failed: list[str] = []
+        self.progress_path: Path | None = None
+
+    @staticmethod
+    def _market(code: str) -> int:
+        return 1 if str(code).zfill(6).startswith("6") else 0
+
+    def _fetch_one(
+        self,
+        client: httpx.Client,
+        code: str,
+        start: date,
+        end: date,
+    ) -> pd.DataFrame:
+        params = {
+            "secid": f"{self._market(code)}.{str(code).zfill(6)}",
+            "klt": "5",
+            "fqt": "0",
+            "beg": start.strftime("%Y%m%d"),
+            "end": end.strftime("%Y%m%d"),
+            "lmt": "1000000",
+            "fields1": self._FIELDS1,
+            "fields2": self._FIELDS2,
+            "ut": "7eea3edcaed734bea9cbfc24409ed989",
+        }
+        last_error: Exception | None = None
+        for attempt in range(1, self.max_attempts + 1):
+            try:
+                if self.request_delay:
+                    time.sleep(self.request_delay)
+                response = client.get(self._URL, params=params)
+                response.raise_for_status()
+                payload = response.json()
+                if payload.get("rc") not in (None, 0):
+                    raise RuntimeError(f"Eastmoney rc={payload.get('rc')}")
+                data = payload.get("data")
+                if data is None:
+                    return pd.DataFrame(columns=EASTMONEY_5MIN_COLUMNS)
+                frame = parse_eastmoney_5min_klines(code, data.get("klines") or [])
+                if not frame.empty:
+                    dates = frame["datetime"].dt.date
+                    frame = frame[(dates >= start) & (dates <= end)].reset_index(drop=True)
+                return frame
+            except Exception as exc:  # noqa: BLE001 - retry network and malformed payloads
+                last_error = exc
+                if attempt < self.max_attempts:
+                    time.sleep(self.retry_delay * attempt)
+        raise RuntimeError(f"Eastmoney 5min failed for {code}: {last_error}") from last_error
+
+    @staticmethod
+    def _cache_file(window: Path, code: str) -> Path:
+        return window / f"{str(code).zfill(6)}.parquet"
+
+    @staticmethod
+    def _valid_cache(path: Path) -> bool:
+        if not path.exists():
+            return False
+        try:
+            columns = set(pq.ParquetFile(path).schema.names)
+            return set(EASTMONEY_5MIN_COLUMNS).issubset(columns)
+        except Exception:
+            return False
+
+    @staticmethod
+    def _write_cache(path: Path, frame: pd.DataFrame) -> None:
+        temporary = path.with_suffix(".parquet.tmp")
+        frame.reindex(columns=EASTMONEY_5MIN_COLUMNS).to_parquet(
+            temporary,
+            index=False,
+            compression="zstd",
+        )
+        temporary.replace(path)
+
+    def _write_progress(
+        self,
+        *,
+        total: int,
+        completed: int,
+        rows: int,
+        failed: list[str],
+        pass_number: int,
+    ) -> None:
+        assert self.progress_path is not None
+        payload = {
+            "provider": "eastmoney",
+            "total_codes": total,
+            "completed_codes": completed,
+            "rows_downloaded_this_run": rows,
+            "failed_codes": len(failed),
+            "failed_preview": failed[:20],
+            "pass": pass_number,
+            "updated_at": datetime.now().isoformat(timespec="seconds"),
+        }
+        temporary = self.progress_path.with_suffix(".json.tmp")
+        temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        temporary.replace(self.progress_path)
+
+    def fetch(self, codes: list[str], start: date, end: date) -> pd.DataFrame:
+        normalized_codes = [str(code).zfill(6) for code in codes]
+        window = self.cache_dir / f"{start.isoformat()}_{end.isoformat()}"
+        window.mkdir(parents=True, exist_ok=True)
+        self.progress_path = window / "progress.json"
+        cached = {
+            code for code in normalized_codes if self._valid_cache(self._cache_file(window, code))
+        }
+        pending = [code for code in normalized_codes if code not in cached]
+        completed = len(cached)
+        rows_downloaded = 0
+        failed: list[str] = []
+        self._write_progress(
+            total=len(normalized_codes),
+            completed=completed,
+            rows=rows_downloaded,
+            failed=failed,
+            pass_number=0,
+        )
+
+        headers = {
+            "User-Agent": "Mozilla/5.0",
+            "Referer": "https://quote.eastmoney.com/",
+            "Connection": "close",
+        }
+        limits = httpx.Limits(max_connections=self.workers, max_keepalive_connections=self.workers)
+        pass_number = 0
+        while pending and pass_number < self.max_passes:
+            pass_number += 1
+            failed = []
+            with httpx.Client(timeout=self.timeout, headers=headers, limits=limits) as client:
+                with ThreadPoolExecutor(max_workers=self.workers) as executor:
+                    futures = {
+                        executor.submit(self._fetch_one, client, code, start, end): code
+                        for code in pending
+                    }
+                    processed_in_pass = 0
+                    for future in as_completed(futures):
+                        code = futures[future]
+                        try:
+                            frame = future.result()
+                            self._write_cache(self._cache_file(window, code), frame)
+                            completed += 1
+                            rows_downloaded += len(frame)
+                        except Exception:
+                            logger.exception("Eastmoney 5min failed for %s", code)
+                            failed.append(code)
+                        processed_in_pass += 1
+                        if processed_in_pass % 25 == 0:
+                            self._write_progress(
+                                total=len(normalized_codes),
+                                completed=completed,
+                                rows=rows_downloaded,
+                                failed=failed,
+                                pass_number=pass_number,
+                            )
+            pending = sorted(failed)
+            self._write_progress(
+                total=len(normalized_codes),
+                completed=completed,
+                rows=rows_downloaded,
+                failed=pending,
+                pass_number=pass_number,
+            )
+            if pending and pass_number < self.max_passes:
+                time.sleep(self.pass_delay * pass_number)
+
+        self.last_failed = pending
+        self._write_progress(
+            total=len(normalized_codes),
+            completed=completed,
+            rows=rows_downloaded,
+            failed=self.last_failed,
+            pass_number=pass_number,
+        )
+        if self.last_failed:
+            preview = ", ".join(self.last_failed[:10])
+            raise RuntimeError(
+                f"Eastmoney 5min update failed for {len(self.last_failed)} codes ({preview}). "
+                f"Completed code caches are preserved at {window}."
+            )
+
+        frames = [
+            pd.read_parquet(self._cache_file(window, code))
+            for code in normalized_codes
+        ]
+        nonempty = [frame for frame in frames if not frame.empty]
+        return (
+            pd.concat(nonempty, ignore_index=True)
+            if nonempty
+            else pd.DataFrame(columns=EASTMONEY_5MIN_COLUMNS)
+        )
 
 
 def parse_baostock_rows(code: str, rows: list[list[str]], *, frequency: str) -> pd.DataFrame:
@@ -176,6 +430,7 @@ class BaostockProvider:
         workers: int = 2,
         batch_size: int = 10,
         socket_timeout: int = 45,
+        stall_timeout: float = 120,
         max_attempts: int = 3,
         retry_delay: float = 10,
     ) -> None:
@@ -183,6 +438,7 @@ class BaostockProvider:
         self.workers = workers
         self.batch_size = batch_size
         self.socket_timeout = socket_timeout
+        self.stall_timeout = stall_timeout
         self.max_attempts = max_attempts
         self.retry_delay = retry_delay
         self.last_failed: list[str] = []
@@ -236,15 +492,64 @@ class BaostockProvider:
         frames: list[pd.DataFrame] = []
         failed: list[str] = []
         jobs = [(batch, start, end, self.frequency, self.socket_timeout) for batch in batches]
-        with ProcessPoolExecutor(max_workers=self.workers) as executor:
-            futures = [executor.submit(_fetch_baostock_batch, job) for job in jobs]
-            for completed, future in enumerate(as_completed(futures), 1):
-                frame, batch_failed = future.result()
-                if not frame.empty:
-                    frames.append(frame)
-                failed.extend(batch_failed)
-                if completed % 50 == 0:
-                    logger.info("BaoStock %s: %d/%d batches", self.frequency, completed, len(jobs))
+        executor = ProcessPoolExecutor(max_workers=self.workers)
+        future_batches = {
+            executor.submit(_fetch_baostock_batch, job): batch
+            for job, batch in zip(jobs, batches, strict=True)
+        }
+        pending = set(future_batches)
+        completed = 0
+        stalled = False
+        try:
+            while pending:
+                done, pending = wait(
+                    pending,
+                    timeout=self.stall_timeout,
+                    return_when=FIRST_COMPLETED,
+                )
+                if not done:
+                    stalled = True
+                    timed_out_set = {
+                        code for future in pending for code in future_batches[future]
+                    }
+                    timed_out = [code for code in codes if code in timed_out_set]
+                    failed.extend(timed_out)
+                    logger.warning(
+                        "BaoStock %s stalled for %.0fs; retrying %d codes in a fresh pool",
+                        self.frequency,
+                        self.stall_timeout,
+                        len(timed_out),
+                    )
+                    break
+                for future in done:
+                    batch = future_batches[future]
+                    try:
+                        frame, batch_failed = future.result()
+                    except Exception:
+                        logger.exception("BaoStock %s batch failed", self.frequency)
+                        frame, batch_failed = pd.DataFrame(), list(batch)
+                    if not frame.empty:
+                        frames.append(frame)
+                    failed.extend(batch_failed)
+                    completed += 1
+                    if completed % 50 == 0:
+                        logger.info(
+                            "BaoStock %s: %d/%d batches",
+                            self.frequency,
+                            completed,
+                            len(jobs),
+                        )
+        finally:
+            if stalled:
+                processes = list(getattr(executor, "_processes", {}).values())
+                executor.shutdown(wait=False, cancel_futures=True)
+                for process in processes:
+                    if process.is_alive():
+                        process.terminate()
+                for process in processes:
+                    process.join(timeout=5)
+            else:
+                executor.shutdown()
         return frames, failed
 
 

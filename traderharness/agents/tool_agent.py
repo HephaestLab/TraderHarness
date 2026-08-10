@@ -15,12 +15,22 @@ from traderharness.agents.llm_client import LLMClient
 from traderharness.agents.loop import AgentLoop, DayResult
 from traderharness.agents.memory import DailyMemory
 from traderharness.core.events import EventBus
-from traderharness.tools.analysis import GET_MARKET_OVERVIEW, GET_SECTOR_SUMMARY, SCREEN_STOCKS
+from traderharness.tools.analysis import (
+    GET_MARKET_OVERVIEW,
+    GET_SECTOR_SUMMARY,
+    SCREEN_BEHAVIORAL_CYCLE,
+    SCREEN_STOCKS,
+)
 from traderharness.tools.business import GET_BUSINESS_SEGMENTS
 from traderharness.tools.catalog import normalize_allowed_tools
+from traderharness.tools.conditional_orders import (
+    LIST_CONDITIONAL_ORDERS,
+    MANAGE_CONDITIONAL_ORDER,
+)
 from traderharness.tools.control import FINISH_DAY
 from traderharness.tools.fundamentals import GET_FUNDAMENTALS
 from traderharness.tools.market import GET_KLINE, GET_STOCK_INFO, GET_STOCK_PRICE
+from traderharness.tools.memory import GET_MEMORY, REMEMBER, SEARCH_MEMORY
 from traderharness.tools.news import GET_ANNOUNCEMENTS, GET_NEWS
 from traderharness.tools.portfolio import GET_PORTFOLIO, GET_POSITION
 from traderharness.tools.registry import ToolContext, ToolRegistry
@@ -40,16 +50,22 @@ TOOL_DEFINITIONS = (
     GET_STOCK_INFO,
     GET_MARKET_OVERVIEW,
     SCREEN_STOCKS,
+    SCREEN_BEHAVIORAL_CYCLE,
     GET_SECTOR_SUMMARY,
     GET_PORTFOLIO,
     GET_POSITION,
     PLACE_ORDER,
+    MANAGE_CONDITIONAL_ORDER,
+    LIST_CONDITIONAL_ORDERS,
     GET_FUNDAMENTALS,
     GET_ANNOUNCEMENTS,
     GET_NEWS,
     ADD_WATCHLIST,
     REMOVE_WATCHLIST,
     GET_WATCHLIST,
+    REMEMBER,
+    SEARCH_MEMORY,
+    GET_MEMORY,
     EXECUTE_CODE,
     GET_BUSINESS_SEGMENTS,
     GET_VALUATION,
@@ -148,11 +164,19 @@ SYSTEM_PROMPT_TEMPLATE = """
 | get_portfolio | 查持仓全貌 |
 | get_position | 查单只股票持仓详情 |
 | place_order | 下单买入/卖出（仅开盘/尾盘窗口可用） |
+| manage_conditional_order | 创建、上移/修改或取消环境托管条件单 |
+| list_conditional_orders | 查看条件单状态、版本与触发失败记录 |
 | add_watchlist | 加入自选股 |
 | remove_watchlist | 移出自选股 |
 | get_watchlist | 查看自选股 |
+| remember | 保存结构化长期记忆或留痕替换旧版本 |
+| search_memory | 按需检索未注入上下文的历史记忆 |
+| get_memory | 按 ID 读取完整记忆记录 |
 | execute_code | 执行Python代码（通过traderharness_api访问数据） |
 | finish_day | 结束交易日并写总结 |
+
+Specialized screen: `screen_behavioral_cycle` deterministically ranks point-in-time
+accumulation/test/washout/markup evidence and returns structural invalidation levels.
 
 ### execute_code / traderharness_api 契约
 
@@ -161,11 +185,24 @@ SYSTEM_PROMPT_TEMPLATE = """
 **market 合法方法**（禁止臆造其它名字）：
 `get_kline(code, days=60)`、`get_kline_5min(code)`、`get_stock_list()`、`get_all_stocks()`（=list 别名）、
 `get_all_daily(days=20)`、`get_stock_price(code)`、`get_fundamentals(code)`、
+`get_behavioral_features()`（无标签、无综合分、由 Agent 在沙盒中自行排序）、
 `get_market_overview()`、`get_sector_summary(sector)`、`get_sector_stocks(sector)`、`screen_stocks(**筛选参数)`。
 
 **get_all_daily 列名**：`stock_code, date, open, high, low, close, volume, change_pct`。
 `date` 为相对整数偏移（开启日期遮罩时），不是日历字符串；只用参数 `days=`，不要传 `offset`/`date_offset`。
+`date` 是日历日偏移，周末和休市日自然会形成跳号，不代表行情数据缺失。
 缺少的涨跌幅用返回的 `change_pct` 或自行用 close 计算。
+
+**get_kline 返回列名**：`date, open, high, low, close, volume`（部分数据另含 `amount`），
+不含 `change_pct`；如需收益率请用 `close.pct_change()` 自行计算。
+
+**get_behavioral_features 列名**：`stock_code, last_close, last_low, range_position_60,
+drawdown_120_pct, change_20_pct, atr_20_pct, atr_5_to_20, volume_5_to_20,
+up_down_volume_ratio, clv_5, clv_last, obv_flow_20, breakout_20d_pct,
+support_20, resistance_20, earlier_resistance, observations, touched_support,
+recently_broke_out, extended_20d, distribution_risk, zero_volume_baseline`。
+该方法可能返回数千行；不要用 `dir()`、`columns` 或 `head()` 探查。
+一次调用后直接在同一段代码内筛选、排序并只打印少量候选。
 
 **portfolio**：`get_positions()`、`get_cash()`、`get_total_value()`。
 **news**：`get_announcements(code, days=30)`、`get_policy_news(days=7)`。
@@ -179,6 +216,9 @@ SYSTEM_PROMPT_TEMPLATE = """
 - 公告推送：持仓和自选股的重要公告会出现在晨报 P0 段
 - 政策推送：央行/证监会/国务院等国家级政策出现在晨报 P1 段
 - 每日总结写在 finish_day 中，这是你跨天记忆的来源
+- 活动条件单由环境逐根检查后续5分钟bar收盘价并自动执行；它们不是提醒事项。
+- 保护止损只能上移，修改后只对尚未揭示的bar生效。需要动态管理时调用 manage_conditional_order。
+- 重要假设和复盘可写入 remember；系统只常驻精简长期记忆和近期日志，旧日志用 search_memory 检索。
 
 ## 你的交易风格
 
@@ -237,6 +277,13 @@ class ToolAgent:
             initial_cash=Decimal(str(card.initial_cash)),
             max_positions=card.max_positions,
             max_position_pct=card.max_position_pct,
+            max_pre_iterations=card.max_pre_iterations,
+            max_window_iterations=card.max_window_iterations,
+            require_structured_plan=card.require_structured_plan,
+            minimum_holding_days=card.minimum_holding_days,
+            research_interval_days=card.research_interval_days,
+            sandbox_pre_market_only=card.sandbox_pre_market_only,
+            sandbox_max_calls_per_day=card.sandbox_max_calls_per_day,
             allowed_tools=card.allowed_tools,
         )
 
@@ -249,8 +296,16 @@ class ToolAgent:
         initial_cash: Decimal = Decimal("1000000"),
         max_positions: int = 4,
         max_position_pct: float = 25.0,
+        max_pre_iterations: int = 10,
+        max_window_iterations: int = 3,
+        require_structured_plan: bool = False,
+        minimum_holding_days: int = 0,
+        research_interval_days: int = 0,
+        sandbox_pre_market_only: bool = False,
+        sandbox_max_calls_per_day: int = 0,
         allowed_tools: list[str] | None = None,
         memory_dir: str | None = None,
+        workspace_root: str | None = None,
         live_file: str | None = None,
         event_bus: EventBus | None = None,
         mask_dates: bool = True,
@@ -262,10 +317,17 @@ class ToolAgent:
         self.name = name
         self.llm_client = llm_client
         self.persona = persona
+        self.initial_cash = initial_cash
         self.max_positions = max_positions
         self.max_position_pct = max_position_pct
+        self.require_structured_plan = require_structured_plan
+        self.minimum_holding_days = max(0, int(minimum_holding_days))
+        self.research_interval_days = max(0, int(research_interval_days))
+        self.sandbox_pre_market_only = bool(sandbox_pre_market_only)
+        self.sandbox_max_calls_per_day = max(0, int(sandbox_max_calls_per_day))
         self.mask_dates = mask_dates
         self.allowed_tools = normalize_allowed_tools(allowed_tools)
+        self.workspace_root = workspace_root or agent_id
 
         contract_text, self.prompt_contract_version = resolve_decision_contract(
             llm_client, prompt_contract_version
@@ -279,6 +341,42 @@ class ToolAgent:
             decision_recording_contract=contract_text,
             allowed_tool_names=", ".join(self.allowed_tools),
         )
+        if not compact_prompt:
+            import re
+
+            allowed = set(self.allowed_tools)
+            prompt_lines = []
+            for line in self._system_prompt.splitlines():
+                first_column = line.split("|", 2)[1].strip() if line.startswith("|") else ""
+                if re.fullmatch(r"[a-z][a-z0-9_]*", first_column) and first_column not in allowed:
+                    continue
+                prompt_lines.append(line)
+            self._system_prompt = "\n".join(prompt_lines)
+            if "execute_code" not in allowed:
+                self._system_prompt = re.sub(
+                    r"\n### execute_code / traderharness_api .*?(?=\n## )",
+                    "",
+                    self._system_prompt,
+                    flags=re.DOTALL,
+                )
+            if "screen_behavioral_cycle" not in allowed:
+                self._system_prompt = re.sub(
+                    r"\nSpecialized screen: `screen_behavioral_cycle`.*?levels\.\n",
+                    "\n",
+                    self._system_prompt,
+                    flags=re.DOTALL,
+                )
+            if not ({"get_news", "get_announcements"} & allowed):
+                self._system_prompt = re.sub(r"\n\*\*news\*\*：.*?。\n", "\n", self._system_prompt)
+
+        if self.sandbox_pre_market_only:
+            self._system_prompt += (
+                "\n\n## 本 Agent 的研究执行约束\n"
+                "execute_code 仅在盘前可用。研究日盘前最多调用两次：第一次完成机械筛选，"
+                "第二次只复核最终候选的 K 线；不得在沙盒里查询新闻、公告、政策、估值或基本面。"
+                "之后停止代码研究，使用普通行情工具把候选缩减到最多3只；离开盘前前必须调用 "
+                "add_watchlist 登记最终候选，否则窗口没有这些股票的分钟行情，不得开仓。\n"
+            )
 
         self._registry = ToolRegistry()
         for tool in TOOL_DEFINITIONS:
@@ -296,6 +394,8 @@ class ToolAgent:
             tool_registry=self._registry,
             system_prompt=self._system_prompt,
             memory=self._memory,
+            max_pre_iterations=max_pre_iterations,
+            max_window_iterations=max_window_iterations,
             event_bus=event_bus,
             committee=committee,
         )
@@ -303,6 +403,7 @@ class ToolAgent:
 
         # 自选股（Agent 通过 add_watchlist 工具动态管理，跨天持久）
         self._watchlist_codes: set[str] = set()
+        self._position_plans: dict[str, dict] = {}
 
         self.day_results: list[DayResult] = []
 
@@ -320,10 +421,6 @@ class ToolAgent:
 
         portfolio = bus._portfolio
 
-        initial = portfolio.cash + sum(
-            p.avg_cost * p.quantity for p in portfolio.positions.values()
-        )
-
         preloaded_daily = {code: bus.market.get(code) for code in bus.market.all_codes()}
 
         # Day-start window/execution snapshots stay empty. AgentLoop rebuilds
@@ -334,19 +431,33 @@ class ToolAgent:
             current_date=current_date,
             current_phase="pre_market",
             portfolio=portfolio,
-            initial_cash=initial,
+            initial_cash=self.initial_cash,
             preloaded_daily=preloaded_daily,
             window_minutes={},
             execution_price={},
             close_prices={},
-            workspace_root=self.agent_id,
+            workspace_root=self.workspace_root,
             max_position_pct=self.max_position_pct,
             max_positions=self.max_positions,
+            require_structured_plan=self.require_structured_plan,
+            minimum_holding_days=self.minimum_holding_days,
+            day_index=bus._day_index,
+            research_interval_days=self.research_interval_days,
+            sandbox_pre_market_only=self.sandbox_pre_market_only,
+            allowed_tools=frozenset(self.allowed_tools),
+            sandbox_max_calls_per_day=self.sandbox_max_calls_per_day,
             _bus=bus,
         )
         # Seed persisted watchlist so morning brief / tools see yesterday's set,
         # and so an emptied watchlist can be written back at day end.
         ctx.tool_call_cache["watchlist"] = {code: "" for code in sorted(self._watchlist_codes)}
+        self._position_plans = {
+            code: plan
+            for code, plan in self._position_plans.items()
+            if code in portfolio.positions
+        }
+        ctx.tool_call_cache["_position_plans"] = self._position_plans
+        ctx.tool_call_cache["_memory"] = self._memory
 
         from traderharness.core.masking import DateMasker
 

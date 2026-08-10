@@ -21,6 +21,13 @@ class TestAgentCard:
         assert card.model == "deepseek-v4-pro"
         assert card.initial_cash == 1_000_000
         assert card.max_positions == 4
+        assert card.max_pre_iterations == 10
+        assert card.max_window_iterations == 3
+        assert card.require_structured_plan is False
+        assert card.minimum_holding_days == 0
+        assert card.research_interval_days == 0
+        assert card.sandbox_pre_market_only is False
+        assert card.sandbox_max_calls_per_day == 0
 
     def test_create_full(self):
         card = AgentCard(
@@ -31,9 +38,23 @@ class TestAgentCard:
             initial_cash=2_000_000,
             max_positions=6,
             max_position_pct=30.0,
+            max_pre_iterations=3,
+            max_window_iterations=1,
+            require_structured_plan=True,
+            minimum_holding_days=5,
+            research_interval_days=5,
+            sandbox_pre_market_only=True,
+            sandbox_max_calls_per_day=2,
         )
         assert card.persona == "追涨杀跌，快进快出。"
         assert card.max_positions == 6
+        assert card.max_pre_iterations == 3
+        assert card.max_window_iterations == 1
+        assert card.require_structured_plan is True
+        assert card.minimum_holding_days == 5
+        assert card.research_interval_days == 5
+        assert card.sandbox_pre_market_only is True
+        assert card.sandbox_max_calls_per_day == 2
 
     def test_to_dict_roundtrip(self):
         card = AgentCard(
@@ -127,6 +148,11 @@ class TestFromCard:
             initial_cash=500_000,
             max_positions=3,
             max_position_pct=30.0,
+            max_pre_iterations=3,
+            max_window_iterations=1,
+            research_interval_days=5,
+            sandbox_pre_market_only=True,
+            sandbox_max_calls_per_day=2,
         )
         save_card(card, storage_dir=tmp_path)
 
@@ -139,6 +165,11 @@ class TestFromCard:
         assert agent.agent_id == "test-from-card"
         assert agent.name == "Test From Card"
         assert agent.max_positions == 3
+        assert agent._loop.max_pre_iterations == 3
+        assert agent._loop.max_window_iterations == 1
+        assert agent.research_interval_days == 5
+        assert agent.sandbox_pre_market_only is True
+        assert agent.sandbox_max_calls_per_day == 2
         assert "测试" in agent.persona
 
     def test_from_card_applies_tool_allowlist_and_protected_core(self, tmp_path, monkeypatch):
@@ -177,8 +208,8 @@ class TestFromCard:
             ToolAgent.from_card("nonexistent", llm_client=llm)
 
 
-def test_builtin_registry_uses_deepseek_v4_pro_model():
-    """All bundled builtin agent cards should use the flagship model, not a mix."""
+def test_builtin_registry_uses_current_deepseek_v4_models():
+    """Bundled cards use current DeepSeek V4 model IDs."""
     cards = {
         path.stem: load_card(path.stem, BUILTIN_STORAGE_DIR)
         for path in BUILTIN_STORAGE_DIR.glob("*.json")
@@ -186,7 +217,10 @@ def test_builtin_registry_uses_deepseek_v4_pro_model():
     assert cards
     for card_id, card in cards.items():
         assert card is not None
-        assert card.model == "deepseek-v4-pro", f"{card_id} still uses {card.model}"
+        assert card.model in {"deepseek-v4-pro", "deepseek-v4-flash"}, (
+            f"{card_id} still uses {card.model}"
+        )
+    assert cards["behavioral-cycle"].model == "deepseek-v4-flash"
 
 
 def test_builtin_registry_contains_distinct_production_strategies():
@@ -197,6 +231,7 @@ def test_builtin_registry_contains_distinct_production_strategies():
         "contrarian-guardian",
         "quant-researcher",
         "trend-breakout",
+        "behavioral-cycle",
     }
     cards = {
         path.stem: load_card(path.stem, BUILTIN_STORAGE_DIR)

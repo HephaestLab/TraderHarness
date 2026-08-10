@@ -122,7 +122,10 @@ class AgentLoop:
             agent_id=getattr(ctx, "agent_id", ""),
             phase="pre_market",
         )
-        morning_brief = self._build_morning_brief(ctx)
+        available_tool_names = [
+            schema["function"]["name"] for schema in self.registry.get_openai_tools_schema()
+        ]
+        morning_brief = self._build_morning_brief(ctx, available_tool_names)
 
         # Record morning brief in trajectory
         if self.trajectory:
@@ -134,6 +137,14 @@ class AgentLoop:
                 f"\n回测进度: 第{day_num}天/{self.total_trading_days}天"
                 f"（剩余{self.remaining_trading_days}个交易日）"
             )
+            interval = max(0, int(getattr(ctx, "research_interval_days", 0)))
+            if interval:
+                research_day = (day_num - 1) % interval == 0
+                ctx.full_market_research_allowed = research_day
+                remaining_info += (
+                    f"\n研究日：{'是' if research_day else '否'}"
+                    "（由环境计算；只有“是”时才做全市场行为特征研究）"
+                )
         self._context.add_message(
             {
                 "role": "user",
@@ -143,7 +154,12 @@ class AgentLoop:
         )
         await self._run_phase(ctx, max_iter=self.max_pre_iterations, exclude_tools={"place_order"})
 
+        window_exclude_tools = (
+            {"execute_code"} if getattr(ctx, "sandbox_pre_market_only", False) else set()
+        )
+
         # === Phase 2: 开盘窗口 (分两轮推进) ===
+        self._flush_memory_state(ctx)
         await self._context.compress()
 
         from traderharness.agents.window_context import refresh_trading_window
@@ -153,6 +169,7 @@ class AgentLoop:
 
         ctx.current_phase = "open_window"
         ctx._current_sub_window = "open_1"
+        self._process_conditional_orders(ctx, "open_1")
         self._emit(
             "phase_change",
             date=current_date,
@@ -177,10 +194,15 @@ class AgentLoop:
                 ),
             }
         )
-        await self._run_phase(ctx, max_iter=self.max_window_iterations, exclude_tools=set())
+        await self._run_phase(
+            ctx,
+            max_iter=self.max_window_iterations,
+            exclude_tools=window_exclude_tools,
+        )
 
         # Round 2: 9:50-10:00 (后3根bar)
         ctx._current_sub_window = "open_2"
+        self._process_conditional_orders(ctx, "open_2")
         half2 = self._filter_window_bars(ctx.window_minutes, 9 * 60 + 55, 10 * 60)
         window_text = self._format_window_klines(
             half2, "开盘窗口 后半 (9:50-10:00)", ctx.execution_price, ctx
@@ -193,9 +215,14 @@ class AgentLoop:
                 ),
             }
         )
-        await self._run_phase(ctx, max_iter=self.max_window_iterations, exclude_tools=set())
+        await self._run_phase(
+            ctx,
+            max_iter=self.max_window_iterations,
+            exclude_tools=window_exclude_tools,
+        )
 
         # Compress open window phase before close
+        self._flush_memory_state(ctx)
         await self._context.compress()
 
         # === Phase 3: 尾盘窗口 (分两轮推进) ===
@@ -204,6 +231,7 @@ class AgentLoop:
 
         ctx.current_phase = "close_window"
         ctx._current_sub_window = "close_1"
+        self._process_conditional_orders(ctx, "midday_close_1")
         self._emit(
             "phase_change",
             date=current_date,
@@ -228,10 +256,15 @@ class AgentLoop:
                 ),
             }
         )
-        await self._run_phase(ctx, max_iter=self.max_window_iterations, exclude_tools=set())
+        await self._run_phase(
+            ctx,
+            max_iter=self.max_window_iterations,
+            exclude_tools=window_exclude_tools,
+        )
 
         # Round 2: 14:50-15:00 (后3根bar)
         ctx._current_sub_window = "close_2"
+        self._process_conditional_orders(ctx, "close_2")
         half2 = self._filter_window_bars(ctx.window_minutes, 14 * 60 + 55, 15 * 60)
         window_text = self._format_window_klines(
             half2, "尾盘窗口 后半 (14:50-15:00)", ctx.execution_price, ctx
@@ -245,7 +278,11 @@ class AgentLoop:
                 ),
             }
         )
-        await self._run_phase(ctx, max_iter=self.max_window_iterations, exclude_tools=set())
+        await self._run_phase(
+            ctx,
+            max_iter=self.max_window_iterations,
+            exclude_tools=window_exclude_tools,
+        )
 
         # 确保 finish_day 被调用
         if "finish_day_summary" in ctx.tool_call_cache:
@@ -255,6 +292,7 @@ class AgentLoop:
 
         # 保存记忆
         if self.memory:
+            self._flush_memory_state(ctx)
             self.memory.add(
                 current_date,
                 summary,
@@ -280,6 +318,58 @@ class AgentLoop:
     def _emit(self, event_type: str, **kwargs) -> None:
         if self._event_bus:
             self._event_bus.emit(event_type, **kwargs)
+
+    def _flush_memory_state(self, ctx: ToolContext) -> None:
+        if self.memory is None:
+            return
+        plans = ctx.tool_call_cache.get("_position_plans", {})
+        conditions = []
+        if ctx._bus is not None and hasattr(ctx._bus, "list_conditional_orders"):
+            conditions = ctx._bus.list_conditional_orders(status="active")
+        self.memory.flush_runtime_state(
+            ctx.current_date,
+            {
+                "position_plans": plans,
+                "active_conditional_orders": conditions,
+            },
+        )
+
+    def _process_conditional_orders(self, ctx: ToolContext, window: str) -> None:
+        bus = ctx._bus
+        if bus is None or not hasattr(bus, "process_conditional_orders"):
+            return
+        outcomes = bus.process_conditional_orders(ctx.agent_id, window)
+        if not outcomes:
+            return
+        plans = ctx.tool_call_cache.get("_position_plans", {})
+        for outcome in outcomes:
+            trade = outcome.get("trade")
+            if not outcome.get("success") or trade is None:
+                continue
+            ctx.trade_results.append(trade)
+            ctx.traded_today.add(trade["stock_code"])
+            if trade.get("action") == "sell" and trade["stock_code"] not in ctx.portfolio.positions:
+                plans.pop(trade["stock_code"], None)
+
+        visible = outcomes
+        date_masker = getattr(ctx, "date_masker", None)
+        entity_masker = getattr(ctx, "entity_masker", None)
+        if date_masker is not None:
+            visible = date_masker.mask_obj(visible)
+        if entity_masker is not None:
+            visible = entity_masker.mask_obj(visible)
+        self._context.add_message(
+            {
+                "role": "user",
+                "content": "=== 环境条件单事件 ===\n" + _serialize_tool_result({"events": visible}),
+            }
+        )
+        if self.trajectory:
+            self.trajectory.record_step(
+                ctx.current_date,
+                "conditional_order",
+                {"window": window, "events": visible},
+            )
 
     async def _run_phase(
         self,
@@ -333,6 +423,7 @@ class AgentLoop:
                 return
 
             if self._context.needs_compression():
+                self._flush_memory_state(ctx)
                 await self._context.compress()
 
             request_messages = self._context.get_api_messages()
@@ -465,6 +556,9 @@ class AgentLoop:
                 "get_announcements",
                 "get_news",
                 "get_watchlist",
+                "list_conditional_orders",
+                "search_memory",
+                "get_memory",
             }
 
             parsed_calls = []
@@ -631,7 +725,9 @@ class AgentLoop:
         return summary or "（Agent 未提供当日总结）"
 
     @staticmethod
-    def _build_morning_brief(ctx: ToolContext) -> str:
+    def _build_morning_brief(
+        ctx: ToolContext, available_tool_names: list[str] | None = None
+    ) -> str:
         """从已有数据生成晨报。包含持仓涨跌、总收益率、板块概览、P0公告、P1政策。"""
         lines = ["=== 市场晨报 ==="]
 
@@ -771,15 +867,38 @@ class AgentLoop:
                             wl_str += f" {chg:+.2f}%"
                 lines.append(wl_str)
 
+        bus = ctx._bus
+        if bus is not None and hasattr(bus, "list_conditional_orders"):
+            active_conditions = bus.list_conditional_orders(status="active")
+            if active_conditions:
+                lines.append("\n环境托管的活动条件单:")
+                for order in active_conditions:
+                    symbol = "≤" if order["comparator"] == "price_lte" else "≥"
+                    lines.append(
+                        f"  [{order['order_id']}] {order['side']} {order['stock_code']} "
+                        f"价格{symbol}{order['trigger_price']:.2f}，数量{order['quantity']}，"
+                        f"状态={order['status']}"
+                    )
+
         # 可用工具提示
-        lines.append(
-            "\n可用工具: get_kline(K线), get_stock_price(最新价), get_stock_info(基本面), "
-            "get_market_overview(全市场概览), screen_stocks(选股), get_sector_summary(板块), "
-            "get_portfolio(持仓), get_position(个股持仓), "
-            "get_fundamentals(财务指标), get_announcements(公告), get_news(快讯), "
-            "add_watchlist/remove_watchlist(自选股), "
-            "execute_code(Python沙箱, 工作目录文件可直接读写)"
-        )
+        if available_tool_names is None:
+            available_tool_names = [
+                "get_kline",
+                "get_stock_price",
+                "get_stock_info",
+                "get_market_overview",
+                "screen_stocks",
+                "get_sector_summary",
+                "get_portfolio",
+                "get_position",
+                "get_fundamentals",
+                "get_announcements",
+                "get_news",
+                "add_watchlist",
+                "remove_watchlist",
+                "execute_code",
+            ]
+        lines.append("\n可用工具: " + ", ".join(available_tool_names))
 
         brief = "\n".join(lines)
         date_masker = getattr(ctx, "date_masker", None)

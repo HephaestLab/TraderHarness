@@ -34,6 +34,35 @@ def _make_bundle(tmp_path, agent_ids: list[str]) -> "Path":  # noqa: F821
 
 
 class TestBundleMultiAgentReplay:
+    def test_agent_execution_controls_are_propagated(self, tmp_path):
+        from traderharness.trajectory.replay import ReplayRecorder
+
+        cassette = tmp_path / "controls.jsonl"
+        ReplayRecorder().save(cassette)
+        config = RunConfig(
+            start_date=date(2024, 3, 4),
+            end_date=date(2024, 3, 4),
+            agents=[
+                {
+                    "id": "controlled",
+                    "require_structured_plan": True,
+                    "minimum_holding_days": 5,
+                    "research_interval_days": 5,
+                    "sandbox_pre_market_only": True,
+                    "sandbox_max_calls_per_day": 2,
+                }
+            ],
+            replay_path=cassette,
+        )
+
+        agent = BacktestRunner(config)._build_agents()[0]
+
+        assert agent.require_structured_plan is True
+        assert agent.minimum_holding_days == 5
+        assert agent.research_interval_days == 5
+        assert agent.sandbox_pre_market_only is True
+        assert agent.sandbox_max_calls_per_day == 2
+
     def test_bundle_directory_builds_one_agent_per_config_scoped_by_id(self, tmp_path):
         bundle_dir = _make_bundle(tmp_path, ["trend-breakout", "quality-compounder"])
         config = RunConfig(

@@ -383,6 +383,170 @@ def test_result_analysis_endpoint_returns_normalized_dossier(tmp_path):
     assert invalid.status_code == 400
 
 
+def test_result_analysis_summary_defers_bulk_evidence_but_keeps_trade_review(tmp_path):
+    client = _client(tmp_path)
+    results = tmp_path / "results"
+    document = {
+        "status": "done",
+        "agent_data": {
+            "agent": {
+                "equity_curve": [["2024-03-14", 101]],
+                "trades": [
+                    {
+                        "trade_date": "2024-03-14",
+                        "stock_code": "000777",
+                        "action": "buy",
+                        "price": 10.5,
+                        "quantity": 100,
+                    }
+                ],
+                "trajectory": {
+                    "steps": [
+                        {
+                            "date": "2024-03-14",
+                            "step": 1,
+                            "type": "assistant",
+                            "data": {
+                                "phase": "open_window",
+                                "content": "建立仓位",
+                                "reasoning_content": "量价确认",
+                            },
+                        },
+                        {
+                            "date": "2024-03-14",
+                            "step": 2,
+                            "type": "tool_call",
+                            "data": {
+                                "name": "place_order",
+                                "args": {"stock_code": "000777", "action": "buy"},
+                                "result": {"success": True},
+                            },
+                        },
+                    ]
+                },
+            }
+        },
+    }
+    (results / "20260717_result.json").write_text(
+        json.dumps(document, ensure_ascii=False), encoding="utf-8"
+    )
+
+    with client:
+        summary = client.get(
+            "/api/results/20260717_result.json/analysis?detail=summary"
+        ).json()
+        full = client.get(
+            "/api/results/20260717_result.json/analysis?detail=full"
+        ).json()
+
+    compact_agent = summary["agents"]["agent"]
+    assert summary["detail"] == "summary"
+    assert compact_agent["days"] == []
+    assert compact_agent["decisions"] == []
+    assert compact_agent["tools"] == []
+    assert compact_agent["securities"] == {}
+    review = compact_agent["trade_reviews"][0]
+    assert review["decisions"][0]["reasoning"] == "量价确认"
+    assert review["order_tool"]["name"] == "place_order"
+
+    assert full["detail"] == "full"
+    assert full["agents"]["agent"]["decisions"][0]["content"] == "建立仓位"
+    assert full["agents"]["agent"]["tools"][0]["name"] == "place_order"
+
+
+def test_result_analysis_can_reveal_entities_without_mutating_artifact(tmp_path):
+    import pandas as pd
+
+    from traderharness.core.entity_masking import EntityMasker
+
+    dataset = tmp_path / "dataset"
+    dataset.mkdir()
+    codes = ["600519", "601318"]
+    pd.DataFrame(
+        {
+            "stock_code": codes,
+            "date": pd.to_datetime(["2024-03-13", "2024-03-13"]),
+            "open": [10.0, 20.0],
+            "high": [10.5, 20.5],
+            "low": [9.5, 19.5],
+            "close": [10.2, 20.2],
+            "volume": [1000, 2000],
+        }
+    ).to_parquet(dataset / "daily.parquet", index=False)
+    results = tmp_path / "results"
+    results.mkdir()
+    agents = tmp_path / "agents"
+    masker = EntityMasker(
+        codes,
+        names={"600519": "贵州茅台", "601318": "中国平安"},
+        seed=42,
+    )
+    pseudo = masker.mask_code("600519")
+    document = {
+        "status": "done",
+        "start_date": "2024-03-14",
+        "end_date": "2024-03-15",
+        "trading_days": 2,
+        "config": {
+            "start_date": "2024-03-14",
+            "end_date": "2024-03-15",
+            "mask_entities": True,
+            "entity_mask_seed": 42,
+        },
+        "agent_data": {
+            "agent": {
+                "equity_curve": [["2024-03-14", 1_000_000]],
+                "metrics": {"total_return_pct": 0},
+                "behavior": {},
+                "trades": [
+                    {
+                        "trade_date": "2024-03-14",
+                        "stock_code": pseudo,
+                        "stock_name": f"公司-{pseudo}",
+                        "action": "buy",
+                        "price": 10.2,
+                        "quantity": 100,
+                        "signal_reasoning": f"观察公司-{pseudo}（{pseudo}）",
+                    }
+                ],
+                "trajectory": {"steps": []},
+            }
+        },
+        "benchmark": {"name": "CSI 300", "equity_curve": []},
+    }
+    path = results / "20260717_result.json"
+    path.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+    client = TestClient(
+        create_app(
+            run_manager=FakeRunManager(),
+            dataset_path=dataset,
+            results_path=results,
+            agents_path=agents,
+        )
+    )
+
+    with client:
+        masked = client.get("/api/results/20260717_result.json/analysis")
+        revealed = client.get(
+            "/api/results/20260717_result.json/analysis?reveal_entities=true"
+        )
+        raw = client.get("/api/results/20260717_result.json")
+
+    assert masked.status_code == 200
+    assert masked.json()["agents"]["agent"]["trades"][0]["stock_code"] == pseudo
+    assert masked.json()["entity_view"] == {"available": True, "mode": "masked"}
+    masked_review = masked.json()["agents"]["agent"]["trade_reviews"][0]
+    assert masked_review["bars_source"] == "evaluation"
+    assert masked_review["bars"][0]["close"] == 10.2
+    assert revealed.status_code == 200
+    revealed_trade = revealed.json()["agents"]["agent"]["trades"][0]
+    assert revealed_trade["stock_code"] == "600519"
+    assert revealed_trade["stock_name"] == "贵州茅台"
+    assert revealed_trade["signal_reasoning"] == "观察贵州茅台（600519）"
+    assert revealed.json()["entity_view"] == {"available": True, "mode": "original"}
+    assert raw.json()["agent_data"]["agent"]["trades"][0]["stock_code"] == pseudo
+
+
 def test_result_analysis_endpoint_backfills_evaluation_bars_for_untracked_trades(tmp_path):
     import pandas as pd
 

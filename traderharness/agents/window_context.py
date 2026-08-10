@@ -16,7 +16,15 @@ from traderharness.tools.registry import ToolContext
 def active_focus_codes(ctx: ToolContext) -> list[str]:
     """Sorted codes the agent is currently focused on (positions ∪ watchlist)."""
     watchlist = ctx.tool_call_cache.get("watchlist") or {}
-    return sorted(set(ctx.portfolio.positions.keys()) | set(watchlist.keys()))
+    condition_codes: set[str] = set()
+    bus = ctx._bus
+    if bus is not None and hasattr(bus, "list_conditional_orders"):
+        condition_codes = {
+            order["stock_code"] for order in bus.list_conditional_orders(status="active")
+        }
+    return sorted(
+        set(ctx.portfolio.positions.keys()) | set(watchlist.keys()) | condition_codes
+    )
 
 
 def previous_close_prices(ctx: ToolContext) -> dict[str, Decimal]:

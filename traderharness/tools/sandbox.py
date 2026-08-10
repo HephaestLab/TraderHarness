@@ -98,6 +98,15 @@ class _ImportBlocker:
 
 
 async def handle_execute_code(params: dict, ctx: ToolContext) -> dict:
+    limit = max(0, int(getattr(ctx, "sandbox_max_calls_per_day", 0)))
+    calls = int(ctx.tool_call_cache.get("_sandbox_call_count", 0))
+    if limit and calls >= limit:
+        return {
+            "error": (
+                f"execute_code daily limit reached ({limit}); use ordinary allowed tools "
+                "to validate and register the final candidates"
+            )
+        }
     code = params.get("code", "")
     if not code.strip():
         return {"error": "code 不能为空"}
@@ -184,6 +193,9 @@ async def handle_execute_code(params: dict, ctx: ToolContext) -> dict:
     if not response:
         response["stdout"] = "(no output)"
 
+    if error_msg is None:
+        ctx.tool_call_cache["_sandbox_call_count"] = calls + 1
+
     return response
 
 
@@ -206,4 +218,5 @@ EXECUTE_CODE = ToolDefinition(
         "required": ["code"],
     },
     handler=handle_execute_code,
+    handler_masks_egress=True,
 )

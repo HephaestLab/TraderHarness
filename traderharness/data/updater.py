@@ -85,7 +85,10 @@ class DataUpdater:
             provider = self.providers[name]
             if provider is None:
                 raise RuntimeError(f"No provider configured for {name}")
-            if name in {"daily", "5min", "valuation"}:
+            if name == "5min":
+                codes = self._stock_codes_with_trades(plan.start, plan.end)
+                delta = provider.fetch(codes, plan.start, plan.end)
+            elif name in {"daily", "valuation"}:
                 codes = self._stock_codes()
                 delta = provider.fetch(codes, plan.start, plan.end)
             else:
@@ -181,6 +184,17 @@ class DataUpdater:
             raise FileNotFoundError("daily.parquet is required to determine the stock universe")
         frame = pd.read_parquet(path, columns=["stock_code"])
         return sorted(frame["stock_code"].astype(str).str.zfill(6).unique())
+
+    def _stock_codes_with_trades(self, start: date, end: date) -> list[str]:
+        """Return only stocks with positive-volume daily bars in the update window."""
+        path = self.root / "daily.parquet"
+        if not path.exists():
+            raise FileNotFoundError("daily.parquet is required to determine the stock universe")
+        frame = pd.read_parquet(path, columns=["stock_code", "date", "volume"])
+        dates = pd.to_datetime(frame["date"]).dt.date
+        volume = pd.to_numeric(frame["volume"], errors="coerce").fillna(0)
+        active = frame[(dates >= start) & (dates <= end) & (volume > 0)]
+        return sorted(active["stock_code"].astype(str).str.zfill(6).unique())
 
     def _writer(self, name: str):
         if name == "daily":

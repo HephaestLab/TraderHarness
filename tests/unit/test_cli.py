@@ -55,6 +55,46 @@ def test_run_persists_resolved_model_not_hardcoded_default(monkeypatch, tmp_path
     assert saved["config"]["model"] != "deepseek-chat"
 
 
+def test_run_propagates_all_agent_card_execution_controls(monkeypatch, tmp_path):
+    from traderharness.agents.tool_agent import ToolAgent
+    from traderharness.core.engine import BacktestEngine
+
+    captured = {}
+    original_init = ToolAgent.__init__
+
+    def spy_init(self, *args, **kwargs):
+        captured.update(kwargs)
+        original_init(self, *args, **kwargs)
+
+    async def _boom(self, *args, **kwargs):
+        raise RuntimeError("stop-before-backtest")
+
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    monkeypatch.setattr("traderharness.results.RESULTS_DIR", tmp_path)
+    monkeypatch.setattr(ToolAgent, "__init__", spy_init)
+    monkeypatch.setattr(BacktestEngine, "run", _boom)
+
+    result = CliRunner().invoke(
+        main,
+        [
+            "run",
+            "--agent",
+            "behavioral-cycle",
+            "--start",
+            "2024-03-14",
+            "--end",
+            "2024-03-14",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert captured["require_structured_plan"] is True
+    assert captured["minimum_holding_days"] == 5
+    assert captured["research_interval_days"] == 5
+    assert captured["sandbox_pre_market_only"] is True
+    assert captured["sandbox_max_calls_per_day"] == 2
+
+
 def test_run_exposes_entity_masking_controls():
     result = CliRunner().invoke(main, ["run", "--help"])
 

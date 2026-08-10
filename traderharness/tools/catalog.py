@@ -41,6 +41,13 @@ TOOL_CATALOG: tuple[dict[str, Any], ...] = (
         "required": False,
     },
     {
+        "name": "screen_behavioral_cycle",
+        "label": "行为量价周期筛选",
+        "description": "用冻结的点时量价公式筛选低位建仓、试盘、洗盘和确认拉升候选。",
+        "category": "quant",
+        "required": False,
+    },
+    {
         "name": "get_sector_summary",
         "label": "行业概览",
         "description": "比较各行业在当前时间点的强弱与成分股。",
@@ -104,6 +111,20 @@ TOOL_CATALOG: tuple[dict[str, Any], ...] = (
         "required": True,
     },
     {
+        "name": "manage_conditional_order",
+        "label": "管理条件单",
+        "description": "创建、修改或取消由环境按后续5分钟收盘价触发的条件单。",
+        "category": "execution",
+        "required": False,
+    },
+    {
+        "name": "list_conditional_orders",
+        "label": "条件单列表",
+        "description": "查询条件单状态、修改版本、触发及失败记录。",
+        "category": "execution",
+        "required": False,
+    },
+    {
         "name": "add_watchlist",
         "label": "加入自选",
         "description": "将证券加入可跨交易日保留的自选列表。",
@@ -122,6 +143,27 @@ TOOL_CATALOG: tuple[dict[str, Any], ...] = (
         "label": "查询自选",
         "description": "查看当前跨交易日自选列表。",
         "category": "workflow",
+        "required": False,
+    },
+    {
+        "name": "remember",
+        "label": "写入长期记忆",
+        "description": "持久保存假设、事实、风控规则或复盘教训，并保留版本链。",
+        "category": "memory",
+        "required": False,
+    },
+    {
+        "name": "search_memory",
+        "label": "检索记忆",
+        "description": "确定性检索未常驻上下文的历史记忆。",
+        "category": "memory",
+        "required": False,
+    },
+    {
+        "name": "get_memory",
+        "label": "读取记忆",
+        "description": "按 memory_id 读取完整内容与版本状态。",
+        "category": "memory",
         "required": False,
     },
     {

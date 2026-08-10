@@ -121,6 +121,14 @@ def test_morning_brief_values_positions_at_previous_close_not_open_fill():
     assert "昨日+10.00%" in brief
 
 
+def test_morning_brief_lists_only_supplied_tools():
+    brief = AgentLoop._build_morning_brief(
+        _ctx(), ["get_market_overview", "screen_behavioral_cycle", "finish_day"]
+    )
+    assert "screen_behavioral_cycle" in brief
+    assert "execute_code" not in brief
+
+
 @pytest.mark.asyncio
 async def test_get_portfolio_pre_market_uses_previous_close():
     from traderharness.tools.portfolio import handle_get_portfolio
@@ -129,6 +137,21 @@ async def test_get_portfolio_pre_market_uses_previous_close():
     result = await handle_get_portfolio({}, ctx)
     assert result["positions"][0]["current_price"] == 110.0
     assert result["positions"][0]["pnl_pct"] == 10.0
+
+
+@pytest.mark.asyncio
+async def test_get_portfolio_marks_new_intraday_position_when_focus_price_is_missing():
+    from traderharness.tools.portfolio import handle_get_portfolio
+
+    ctx = _ctx(held=True)
+    ctx.current_phase = "close_window"
+    ctx.execution_price = {}
+
+    result = await handle_get_portfolio({}, ctx)
+
+    assert result["positions"][0]["current_price"] == 110.0
+    assert result["total_value"] == pytest.approx(float(ctx.portfolio.cash) + 11_000.0)
+    assert result["return_pct"] > -1.0
 
 
 def test_sandbox_get_kline_5min_falls_back_to_bus_when_window_missing():

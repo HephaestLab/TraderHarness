@@ -131,6 +131,19 @@ async def test_aclose_closes_provider_once_and_releases_reference():
 
 class TestThinkingModeExtraBody:
     @pytest.mark.asyncio
+    async def test_v4_flash_uses_official_thinking_mode_contract(self):
+        fake = FakeAsyncOpenAI([FakeResponse(FakeMessage(content="ok"))])
+        client = LLMClient(model="deepseek-v4-flash", api_key="test", cache_enabled=False)
+        client._client = fake
+
+        await client.chat([{"role": "user", "content": "hi"}])
+
+        call = fake.calls[0]
+        assert call["extra_body"] == {"thinking": {"type": "enabled"}}
+        assert call["reasoning_effort"] == "high"
+        assert "temperature" not in call
+
+    @pytest.mark.asyncio
     async def test_thinking_model_sends_thinking_extra_body_and_high_reasoning_effort(self):
         fake = FakeAsyncOpenAI([FakeResponse(FakeMessage(content="ok"))])
         client = LLMClient(model="deepseek-v4-pro", api_key="test", cache_enabled=False)

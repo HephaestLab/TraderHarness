@@ -47,8 +47,17 @@ export const api = {
   results: () => request<ResultSummary[]>("/api/results"),
   result: (file: string) =>
     request<ResultDocument>(`/api/results/${encodeURIComponent(file)}`),
-  resultAnalysis: (file: string) =>
-    request<ResultAnalysis>(`/api/results/${encodeURIComponent(file)}/analysis`),
+  resultAnalysis: (
+    file: string,
+    revealEntities = false,
+    detail: "summary" | "full" = "summary",
+  ) => {
+    const params = new URLSearchParams({ detail });
+    if (revealEntities) params.set("reveal_entities", "true");
+    return request<ResultAnalysis>(
+      `/api/results/${encodeURIComponent(file)}/analysis?${params.toString()}`,
+    );
+  },
   deleteResult: (file: string) =>
     request<void>(`/api/results/${encodeURIComponent(file)}`, { method: "DELETE" }),
   startRun: (payload: {

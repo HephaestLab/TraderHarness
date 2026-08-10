@@ -234,6 +234,13 @@ def run(
             initial_cash=Decimal(str(cash)),
             max_positions=card.max_positions,
             max_position_pct=card.max_position_pct,
+            max_pre_iterations=card.max_pre_iterations,
+            max_window_iterations=card.max_window_iterations,
+            require_structured_plan=card.require_structured_plan,
+            minimum_holding_days=card.minimum_holding_days,
+            research_interval_days=card.research_interval_days,
+            sandbox_pre_market_only=card.sandbox_pre_market_only,
+            sandbox_max_calls_per_day=card.sandbox_max_calls_per_day,
             allowed_tools=card.allowed_tools,
             mask_dates=mask_dates,
             prompt_contract_version=prompt_contract_version,
@@ -262,6 +269,16 @@ def run(
         "entity_mask_seed": entity_mask_seed,
     }
     save_pending(result_filename, config)
+
+    # Each run receives a clean sandbox workspace. This prevents an earlier
+    # experiment's scratch features or scripts from contaminating a rerun,
+    # while preserving files across all trading days within this run.
+    agent_obj.workspace_root = str(
+        RESULTS_DIR.parent
+        / "workspaces"
+        / result_filename.removesuffix("_result.json")
+        / agent_id
+    )
 
     # Set live file on agent for real-time streaming
     agent_obj._trajectory._live_file = Path(live_file)
@@ -719,6 +736,13 @@ def compare(
                 initial_cash=initial_cash,
                 max_positions=card.max_positions,
                 max_position_pct=card.max_position_pct,
+                max_pre_iterations=card.max_pre_iterations,
+                max_window_iterations=card.max_window_iterations,
+                require_structured_plan=card.require_structured_plan,
+                minimum_holding_days=card.minimum_holding_days,
+                research_interval_days=card.research_interval_days,
+                sandbox_pre_market_only=card.sandbox_pre_market_only,
+                sandbox_max_calls_per_day=card.sandbox_max_calls_per_day,
                 allowed_tools=card.allowed_tools,
                 mask_dates=mask_dates,
                 prompt_contract_version=prompt_contract_version,
@@ -848,11 +872,20 @@ def compare(
     agent_runs = {}
     for agent_id, data in engine_result.agent_data.items():
         trades = data["trades"]
+        conditional_orders = data.get("conditional_orders", [])
+        conditional_order_events = data.get("conditional_order_events", [])
+        memory_events = data.get("memory_events", [])
         if entity_masker is not None:
             trades = entity_masker.mask_obj(trades)
+            conditional_orders = entity_masker.mask_obj(conditional_orders)
+            conditional_order_events = entity_masker.mask_obj(conditional_order_events)
+            memory_events = entity_masker.mask_obj(memory_events)
         agent_runs[agent_id] = {
             "equity_curve": [(str(day), float(value)) for day, value in data["equity_curve"]],
             "trades": trades,
+            "conditional_orders": conditional_orders,
+            "conditional_order_events": conditional_order_events,
+            "memory_events": memory_events,
             "trajectory": data.get("trajectory"),
         }
     json_path.write_text(
@@ -1005,12 +1038,12 @@ def data_download(dataset: str | None, full_dataset: bool, force: bool):
 def data_update(only: str, since, end, dry_run: bool):
     """Incrementally update canonical local datasets from upstream sources."""
     from traderharness.data.update_providers import (
-        Baostock5MinProvider,
         BaostockCsi300Provider,
         BaostockDailyProvider,
         BaostockValuationProvider,
         ClsNewsProvider,
         CninfoAnnouncementsProvider,
+        Eastmoney5MinProvider,
     )
     from traderharness.data.updater import DataUpdater, UpdatePlan
     from traderharness.paths import dataset_dir
@@ -1019,7 +1052,9 @@ def data_update(only: str, since, end, dry_run: bool):
     updater = DataUpdater(
         dataset_dir(),
         daily_provider=BaostockDailyProvider(),
-        min5_provider=Baostock5MinProvider(),
+        min5_provider=Eastmoney5MinProvider(
+            cache_dir=dataset_dir() / ".update_cache" / "eastmoney_5min"
+        ),
         valuation_provider=BaostockValuationProvider(),
         announcements_provider=CninfoAnnouncementsProvider(),
         news_provider=ClsNewsProvider(),

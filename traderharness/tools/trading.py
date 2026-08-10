@@ -6,10 +6,20 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 from traderharness.core.market_profile import AShareProfile
 from traderharness.tools.registry import ToolContext, ToolDefinition
 
 _PROFILE = AShareProfile()
+
+_STRUCTURED_BUY_FIELDS = (
+    "behavior_hypothesis",
+    "confirmation_level",
+    "original_structural_stop",
+    "exit_condition",
+    "expected_holding_days",
+)
 
 
 async def handle_place_order(params: dict, ctx: ToolContext) -> dict:
@@ -30,6 +40,60 @@ async def handle_place_order(params: dict, ctx: ToolContext) -> dict:
     if ctx._bus is None:
         return {"success": False, "error": "无交易总线"}
 
+    window = getattr(ctx, "_current_sub_window", None) or (
+        "open" if ctx.current_phase == "open_window" else "close"
+    )
+    execution_price = ctx._bus.get_execution_price(code, window)
+
+    plans = ctx.tool_call_cache.setdefault("_position_plans", {})
+    was_new_position = code not in ctx.portfolio.positions
+
+    if action == "buy" and ctx.require_structured_plan and was_new_position:
+        missing = [field for field in _STRUCTURED_BUY_FIELDS if params.get(field) in (None, "")]
+        if missing:
+            return {
+                "success": False,
+                "error": f"结构化持仓计划缺少字段: {', '.join(missing)}",
+            }
+        try:
+            original_stop = float(params["original_structural_stop"])
+            confirmation_level = float(params["confirmation_level"])
+            expected_holding_days = int(params["expected_holding_days"])
+        except (TypeError, ValueError):
+            return {"success": False, "error": "结构化持仓计划的价格和持有期必须是数值"}
+        if original_stop <= 0 or confirmation_level <= 0 or expected_holding_days <= 0:
+            return {"success": False, "error": "结构化持仓计划的价格和持有期必须大于0"}
+        if execution_price is not None and original_stop >= float(execution_price):
+            return {
+                "success": False,
+                "error": "多头仓位的 original_structural_stop 必须低于当前成交价",
+            }
+
+    if action == "sell" and ctx.require_structured_plan:
+        plan = plans.get(code)
+        if plan is None:
+            return {"success": False, "error": f"{code} 缺少冻结的结构化持仓计划"}
+        holding_days = max(0, ctx.day_index - int(plan["entry_day_index"]))
+        minimum_days = int(plan["minimum_holding_days"])
+        if holding_days < minimum_days:
+            original_stop = float(plan["original_structural_stop"])
+            if execution_price is None or float(execution_price) > original_stop:
+                return {
+                    "success": False,
+                    "error": (
+                        f"最短持有期未满：已持有{holding_days}个交易日，"
+                        f"至少需要{minimum_days}日；当前价尚未触发原始止损{original_stop:.3f}"
+                    ),
+                    "position_plan": {**plan, "holding_trading_days": holding_days},
+                }
+            position = ctx.portfolio.positions.get(code)
+            if position is not None and quantity not in (0, position.quantity):
+                return {
+                    "success": False,
+                    "error": "最短持有期内触发原始止损时必须一次卖出全部可卖数量",
+                    "position_plan": {**plan, "holding_trading_days": holding_days},
+                }
+
     # ST 股禁止交易
     valuation_data = ctx.tool_call_cache.get("_valuation_data")
     if valuation_data is not None and not valuation_data.empty:
@@ -48,7 +112,6 @@ async def handle_place_order(params: dict, ctx: ToolContext) -> dict:
                 "error": f"持仓只数已达上限({ctx.max_positions}只)，请先减仓再买入新股",
             }
 
-        window = "open" if ctx.current_phase == "open_window" else "close"
         price = ctx._bus.get_execution_price(code, window)
         if price:
             total_assets = (
@@ -72,9 +135,6 @@ async def handle_place_order(params: dict, ctx: ToolContext) -> dict:
                 }
 
     # 3. 委托 TradingBus 执行（唯一撮合入口）
-    window = getattr(ctx, "_current_sub_window", None) or (
-        "open" if ctx.current_phase == "open_window" else "close"
-    )
     result = ctx._bus.place_order(
         agent_id=ctx.agent_id,
         stock_code=code,
@@ -93,6 +153,43 @@ async def handle_place_order(params: dict, ctx: ToolContext) -> dict:
     ctx.trade_results.append(trade)
     ctx.traded_today.add(code)
 
+    if action == "buy" and ctx.require_structured_plan and was_new_position:
+        plan = {
+            "behavior_hypothesis": str(params["behavior_hypothesis"]),
+            "confirmation_level": float(params["confirmation_level"]),
+            "original_structural_stop": float(params["original_structural_stop"]),
+            "current_protective_stop": float(params["original_structural_stop"]),
+            "exit_condition": str(params["exit_condition"]),
+            "expected_holding_days": int(params["expected_holding_days"]),
+            "minimum_holding_days": ctx.minimum_holding_days,
+            "entry_price": float(trade["price"]),
+            "entry_date": str(ctx.current_date),
+            "entry_day_index": ctx.day_index,
+        }
+        plans[code] = plan
+        # A structured stop is execution state, not prose memory.  Install it
+        # automatically so it remains effective even if the model forgets to
+        # revisit the position. T+1 means the first useful scan is next day.
+        if hasattr(ctx._bus, "create_conditional_order"):
+            try:
+                conditional = ctx._bus.create_conditional_order(
+                    agent_id=ctx.agent_id,
+                    stock_code=code,
+                    side="sell",
+                    quantity=0,
+                    comparator="price_lte",
+                    trigger_price=Decimal(str(params["original_structural_stop"])),
+                    reasoning=f"原始结构止损：{params['exit_condition']}",
+                    created_phase=window,
+                    protective=True,
+                    not_before_day_index=ctx.day_index + 1,
+                )
+                plan["conditional_order_id"] = conditional["order_id"]
+            except (TypeError, ValueError) as exc:
+                plan["conditional_order_error"] = str(exc)
+    if action == "sell" and code not in ctx.portfolio.positions:
+        plans.pop(code, None)
+
     # 5. 构建友好返回
     portfolio_after = {
         "cash": round(float(ctx.portfolio.cash), 2),
@@ -101,7 +198,7 @@ async def handle_place_order(params: dict, ctx: ToolContext) -> dict:
     }
 
     if action == "buy":
-        return {
+        response = {
             "success": True,
             "action": "buy",
             "stock_code": code,
@@ -111,6 +208,12 @@ async def handle_place_order(params: dict, ctx: ToolContext) -> dict:
             "remaining_cash": round(float(ctx.portfolio.cash), 2),
             "portfolio_after": portfolio_after,
         }
+        plan = plans.get(code)
+        if plan and plan.get("conditional_order_id"):
+            response["protective_conditional_order_id"] = plan["conditional_order_id"]
+        if plan and plan.get("conditional_order_error"):
+            response["warning"] = f"成交成功，但自动保护条件单创建失败: {plan['conditional_order_error']}"
+        return response
     else:
         return {
             "success": True,
@@ -139,6 +242,26 @@ PLACE_ORDER = ToolDefinition(
                 "description": "数量（股），买入必须是100的整数倍。卖出时0表示全部卖出。",
             },
             "reasoning": {"type": "string", "description": "交易理由"},
+            "behavior_hypothesis": {
+                "type": "string",
+                "description": "新建仓时必填：可证伪的群体行为压力假设",
+            },
+            "confirmation_level": {
+                "type": "number",
+                "description": "新建仓时必填：已经确认并需要守住的价格",
+            },
+            "original_structural_stop": {
+                "type": "number",
+                "description": "新建仓时必填：冻结的原始结构止损价",
+            },
+            "exit_condition": {
+                "type": "string",
+                "description": "新建仓时必填：可机械核验的退出条件",
+            },
+            "expected_holding_days": {
+                "type": "integer",
+                "description": "新建仓时必填：预期持有交易日数",
+            },
         },
         "required": ["action", "stock_code", "quantity", "reasoning"],
     },

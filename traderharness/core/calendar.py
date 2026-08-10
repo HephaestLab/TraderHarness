@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-# Chinese market holidays and compensation workdays
-# Format: year -> (holidays set, compensation_workdays set)
+# Chinese market holidays and government compensation workdays.
+# The second set contains weekend make-up office workdays. Chinese stock
+# exchanges remain closed on those weekends, so both sets are market closures.
+# Format: year -> (holiday closures, weekend make-up closures)
 _CALENDAR_DATA: dict[int, tuple[set[date], set[date]]] = {
     2023: (
         {
@@ -127,21 +129,17 @@ _CALENDAR_DATA: dict[int, tuple[set[date], set[date]]] = {
 class TradingCalendar:
     """Chinese A-share trading calendar.
 
-    A day is a trading day if:
-    - It is a weekday (Mon-Fri) AND not a public holiday, OR
-    - It is a weekend compensation workday (调休).
+    A day is a trading day only when it is a weekday (Mon-Fri) and not an
+    exchange holiday. Government weekend make-up workdays remain closed.
     """
 
     def __init__(self) -> None:
         self._holidays: set[date] = set()
-        self._workdays: set[date] = set()
-        for _year, (holidays, workdays) in _CALENDAR_DATA.items():
+        for _year, (holidays, weekend_closures) in _CALENDAR_DATA.items():
             self._holidays.update(holidays)
-            self._workdays.update(workdays)
+            self._holidays.update(weekend_closures)
 
     def is_trading_day(self, d: date) -> bool:
-        if d in self._workdays:
-            return True
         if d in self._holidays:
             return False
         return d.weekday() < 5

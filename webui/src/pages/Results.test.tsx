@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../api";
@@ -30,6 +30,7 @@ function emptyAgent(overrides: Partial<AnalyzedAgent["metrics"]>, dailyEquity: n
     tool_usage: [],
     securities: {},
     trade_reviews: [],
+    security_performance: [],
   };
 }
 
@@ -87,6 +88,23 @@ function singleAgentAnalysis(): ResultAnalysis {
     agents: { momentum: emptyAgent({ total_return_pct: -1.0 }, 990_000) },
     comparison: null,
   };
+}
+
+function maskedSingleAgentAnalysis(mode: "masked" | "original"): ResultAnalysis {
+  const analysis = singleAgentAnalysis();
+  analysis.config = { mask_entities: true };
+  analysis.entity_view = { available: true, mode };
+  analysis.agents.momentum.trades = [{
+    trade_date: "2024-03-14",
+    stock_code: mode === "masked" ? "601318" : "600519",
+    stock_name: mode === "masked" ? "公司-601318" : "贵州茅台",
+    action: "buy",
+    quantity: 100,
+    price: 10,
+    amount: 1000,
+    signal_reasoning: mode === "masked" ? "观察公司-601318" : "观察贵州茅台",
+  }];
+  return analysis;
 }
 
 describe("Results", () => {
@@ -154,6 +172,76 @@ describe("Results", () => {
     expect(exportLink).toHaveAttribute("download", "20260718_result.json");
   });
 
+  it("loads full decision evidence only after the decision tab is opened", async () => {
+    const summary = singleAgentAnalysis();
+    summary.detail = "summary";
+    summary.agents.momentum.reasoning_coverage = { responses: 1, with_reasoning: 1 };
+    const full = singleAgentAnalysis();
+    full.detail = "full";
+    full.agents.momentum.reasoning_coverage = { responses: 1, with_reasoning: 1 };
+    full.agents.momentum.decisions = [{
+      date: "2024-03-14",
+      step: 1,
+      phase: "open_window",
+      content: "按计划建立仓位",
+      reasoning: "量价确认",
+      tool_calls: [],
+    }];
+    full.agents.momentum.days = [{
+      date: "2024-03-14",
+      brief: "",
+      decision_indices: [0],
+      tool_indices: [],
+      trades: [],
+    }];
+    mockedApi.resultAnalysis.mockImplementation(
+      (_file: string, _reveal?: boolean, detail?: "summary" | "full") =>
+        Promise.resolve(detail === "full" ? full : summary),
+    );
+
+    render(
+      <MemoryRouter initialEntries={["/results?file=20260718_result.json"]}>
+        <Results />
+      </MemoryRouter>,
+    );
+
+    const decisionsTab = await screen.findByRole("button", { name: /完整决策轨迹 1/ });
+    expect(mockedApi.resultAnalysis).toHaveBeenCalledTimes(1);
+    fireEvent.click(decisionsTab);
+
+    expect(await screen.findByText("按计划建立仓位")).toBeVisible();
+    expect(mockedApi.resultAnalysis).toHaveBeenLastCalledWith(
+      "20260718_result.json",
+      false,
+      "full",
+    );
+  });
+
+  it("reveals original entity names on demand while keeping export masked", async () => {
+    mockedApi.resultAnalysis.mockImplementation((_file: string, reveal?: boolean) =>
+      Promise.resolve(maskedSingleAgentAnalysis(reveal ? "original" : "masked")),
+    );
+
+    render(
+      <MemoryRouter initialEntries={["/results?file=20260718_result.json"]}>
+        <Results />
+      </MemoryRouter>,
+    );
+
+    const revealSwitch = await screen.findByRole("switch", { name: "显示原始股票名称" });
+    expect(revealSwitch).not.toBeChecked();
+    fireEvent.click(revealSwitch);
+
+    expect(await screen.findByRole("status", { name: "实体遮罩已解除" })).toBeVisible();
+    expect(mockedApi.resultAnalysis).toHaveBeenLastCalledWith("20260718_result.json", true);
+    fireEvent.click(screen.getByRole("button", { name: /成交台账 1/ }));
+    expect(screen.getByText("贵州茅台（600519）")).toBeVisible();
+    expect(screen.getByRole("link", { name: /导出完整工件/ })).toHaveAttribute(
+      "href",
+      "/api/results/20260718_result.json",
+    );
+  });
+
   it("skips the comparison overview for single-agent runs", async () => {
     mockedApi.resultAnalysis.mockResolvedValue(singleAgentAnalysis());
 
@@ -166,6 +254,78 @@ describe("Results", () => {
     await screen.findByText(/momentum/);
     expect(screen.queryByText("横向排名")).not.toBeInTheDocument();
     expect(screen.queryByText(/返回对比总览/)).not.toBeInTheDocument();
+  });
+
+  it("shows audited conditional-order state beside the trade ledger", async () => {
+    const analysis = singleAgentAnalysis();
+    analysis.agents.momentum.conditional_orders = [{
+      order_id: "cond-0001",
+      stock_code: "600519",
+      side: "sell",
+      quantity: 0,
+      comparator: "price_lte",
+      trigger_price: 1425,
+      status: "triggered",
+      reasoning: "structural stop",
+      protective: true,
+      created_day_index: 0,
+      revisions: [],
+      attempts: [{ success: true, error: null }],
+    }];
+    mockedApi.resultAnalysis.mockResolvedValue(analysis);
+
+    render(
+      <MemoryRouter initialEntries={["/results?file=20260718_result.json"]}>
+        <Results />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: /成交台账 0/ }));
+    expect(screen.getByRole("heading", { name: "条件单及版本状态" })).toBeVisible();
+    expect(screen.getByText("cond-0001")).toBeVisible();
+    expect(screen.getByText("≤ 1425.00")).toBeVisible();
+    expect(screen.getByText("只可上移的保护价")).toBeVisible();
+    expect(screen.getByText("已触发")).toBeVisible();
+  });
+
+  it("shows realized profit aggregated across all trades for the same security", async () => {
+    const analysis = singleAgentAnalysis();
+    analysis.agents.momentum.security_performance = [{
+      code: "000777",
+      name: "测试股份",
+      trade_count: 3,
+      buy_count: 2,
+      sell_count: 1,
+      bought_quantity: 1500,
+      sold_quantity: 1200,
+      open_quantity: 300,
+      buy_amount: 16000,
+      sell_amount: 14400,
+      fees: 55,
+      realized_pnl: 1546,
+      realized_cost_basis: 12804,
+      realized_return_pct: 12.07,
+      first_trade_date: "2024-03-14",
+      last_trade_date: "2024-03-15",
+      status: "open",
+    }];
+    mockedApi.resultAnalysis.mockResolvedValue(analysis);
+
+    render(
+      <MemoryRouter initialEntries={["/results?file=20260718_result.json"]}>
+        <Results />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: /证券收益 1/ }));
+
+    const table = screen.getByRole("table", { name: "按证券汇总收益" });
+    expect(table).toBeVisible();
+    expect(within(table).getByText("测试股份（000777）")).toBeVisible();
+    expect(within(table).getByText("+¥1,546.00")).toHaveClass("positive");
+    expect(within(table).getByText("+12.07%")).toHaveClass("positive");
+    expect(within(table).getByText("持仓中 · 300 股")).toBeVisible();
+    expect(screen.getByText(/未平仓部分不计入浮动盈亏/)).toBeVisible();
   });
 
   it("deletes a result artifact after confirmation and removes it from the list", async () => {

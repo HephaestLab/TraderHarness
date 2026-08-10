@@ -239,3 +239,24 @@ def test_min5_watermark_uses_oldest_active_stock_not_global_max(tmp_path):
     updater.update(only={"5min"}, end=date(2024, 3, 6))
 
     assert provider.calls[0][1] == date(2024, 3, 2)
+
+
+def test_min5_fetches_only_codes_with_trades_in_update_window(tmp_path):
+    pd.DataFrame(
+        {
+            "stock_code": ["600519", "000001", "000001"],
+            "date": pd.to_datetime(["2024-03-02", "2024-03-01", "2024-03-02"]),
+            "close": [100.0, 10.0, 10.0],
+            "volume": [1000.0, 1000.0, 0.0],
+        }
+    ).to_parquet(tmp_path / "daily.parquet", index=False)
+    provider = FakeMin5Provider()
+    updater = DataUpdater(tmp_path, min5_provider=provider)
+
+    updater.update(
+        only={"5min"},
+        since=date(2024, 3, 2),
+        end=date(2024, 3, 2),
+    )
+
+    assert provider.calls[0][0] == ["600519"]

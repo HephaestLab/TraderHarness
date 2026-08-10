@@ -31,11 +31,28 @@ class TestTradingCalendar:
         assert cal.is_trading_day(date(2024, 10, 1)) is False
         assert cal.is_trading_day(date(2024, 10, 4)) is False
 
-    def test_weekend_workday_compensation(self):
+    def test_weekend_workday_compensation_is_still_market_closed(self):
         """调休日 — 周末上班 should be trading day."""
         cal = TradingCalendar()
         # 2024-02-04 (Sun) is a compensation workday for Spring Festival
-        assert cal.is_trading_day(date(2024, 2, 4)) is True
+        for closed_day in (
+            date(2024, 2, 4),
+            date(2024, 2, 18),
+            date(2024, 4, 7),
+            date(2024, 4, 28),
+            date(2024, 5, 11),
+            date(2024, 9, 14),
+            date(2024, 9, 29),
+            date(2024, 10, 12),
+        ):
+            assert cal.is_trading_day(closed_day) is False
+
+    def test_behavioral_cycle_window_has_59_exchange_days(self):
+        cal = TradingCalendar()
+        days = cal.get_trading_days(date(2024, 8, 1), date(2024, 10, 31))
+
+        assert len(days) == 59
+        assert all(day.weekday() < 5 for day in days)
 
     def test_get_trading_days_range(self):
         cal = TradingCalendar()

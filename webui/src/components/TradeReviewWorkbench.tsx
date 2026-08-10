@@ -19,6 +19,13 @@ function json(value: unknown) {
   return JSON.stringify(value, null, 2);
 }
 
+function securityLabel(code: string, name?: string) {
+  const actualName = name?.trim();
+  return actualName && actualName !== code && !actualName.startsWith("公司-")
+    ? `${actualName}（${code}）`
+    : code;
+}
+
 export function TradeReviewWorkbench({ agent }: { agent: AnalyzedAgent }) {
   const [selectedId, setSelectedId] = useState(agent.trade_reviews[0]?.id ?? "");
   useEffect(() => {
@@ -33,10 +40,13 @@ export function TradeReviewWorkbench({ agent }: { agent: AnalyzedAgent }) {
   );
   const review = agent.trade_reviews[selectedIndex];
   const decisions = useMemo(
-    () => review?.decision_indices.map((index) => agent.decisions[index]).filter(Boolean) ?? [],
+    () => review?.decisions
+      ?? review?.decision_indices.map((index) => agent.decisions[index]).filter(Boolean)
+      ?? [],
     [agent.decisions, review],
   );
-  const order = review?.order_tool_index == null ? undefined : agent.tools[review.order_tool_index];
+  const order = review?.order_tool
+    ?? (review?.order_tool_index == null ? undefined : agent.tools[review.order_tool_index]);
 
   if (!review) {
     return <div className="panel empty-state">本次回测没有可复盘的已成交订单。</div>;
@@ -54,16 +64,17 @@ export function TradeReviewWorkbench({ agent }: { agent: AnalyzedAgent }) {
         <div className="fill-list">
           {agent.trade_reviews.map((item, index) => {
             const itemSide = sideOf(item).toLowerCase();
+            const itemLabel = securityLabel(item.code, item.trade.stock_name);
             return (
               <button
                 key={item.id}
                 className={item.id === review.id ? "active" : ""}
                 onClick={() => setSelectedId(item.id)}
-                aria-label={`交易 ${index + 1} ${item.code} ${sideLabel(itemSide)}`}
+                aria-label={`交易 ${index + 1} ${itemLabel} ${sideLabel(itemSide)}`}
               >
                 <span className={`fill-sequence ${itemSide}`}>{String(index + 1).padStart(2, "0")}</span>
                 <span>
-                  <strong>{item.code}</strong>
+                  <strong>{itemLabel}</strong>
                   <small>{formatDate(item.marker.date)} · {windowLabel(item.marker.window)}</small>
                 </span>
                 <b className={`side ${itemSide}`}>{sideLabel(itemSide)}</b>
@@ -77,7 +88,7 @@ export function TradeReviewWorkbench({ agent }: { agent: AnalyzedAgent }) {
         <header className="trade-review-header">
           <div>
             <span className="eyebrow">第 {selectedIndex + 1} / {agent.trade_reviews.length} 笔交易</span>
-            <h2>{review.code} <span className={`side ${side}`}>{sideLabel(side)}</span></h2>
+            <h2>{securityLabel(review.code, review.trade.stock_name)} <span className={`side ${side}`}>{sideLabel(side)}</span></h2>
             <p>{formatDate(review.marker.date)} · {windowLabel(review.marker.window)}</p>
           </div>
           <div className="fill-facts">

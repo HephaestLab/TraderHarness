@@ -76,6 +76,21 @@ class TestExecuteCodeBasic:
         assert "error" in result
         assert "ZeroDivisionError" in result["error"]
 
+    @pytest.mark.asyncio
+    async def test_daily_call_limit_is_enforced(self):
+        ctx = _make_ctx()
+        ctx.sandbox_max_calls_per_day = 2
+
+        failed = await handle_execute_code({"code": "raise RuntimeError('retry')"}, ctx)
+        first = await handle_execute_code({"code": "result = 1"}, ctx)
+        second = await handle_execute_code({"code": "result = 2"}, ctx)
+        third = await handle_execute_code({"code": "result = 3"}, ctx)
+
+        assert "RuntimeError" in failed["error"]
+        assert first["result"] == 1
+        assert second["result"] == 2
+        assert "daily limit reached" in third["error"]
+
 
 class TestExecuteCodeWithAPI:
     @pytest.mark.asyncio
@@ -153,6 +168,24 @@ result = {'cols': list(df.columns), 'rows': len(df)}
         data = result.get("result", {})
         assert "stock_code" in data.get("cols", [])
         assert data["rows"] > 0
+
+    @pytest.mark.asyncio
+    async def test_behavioral_features_and_portfolio_api_work_inside_execute_code(self):
+        ctx = _make_ctx()
+        code = """
+from traderharness_api import market, portfolio
+features = market.get_behavioral_features()
+result = {
+    'rows': len(features),
+    'gross_exposure_pct': portfolio.get_gross_exposure_pct(),
+    'total_value': portfolio.get_total_value(),
+}
+"""
+        result = await handle_execute_code({"code": code}, ctx)
+        assert "error" not in result
+        assert result["result"]["rows"] == 0
+        assert result["result"]["gross_exposure_pct"] == 0.0
+        assert result["result"]["total_value"] == 1_000_000.0
 
 
 class TestExecuteCodeTimeout:

@@ -37,6 +37,8 @@ Custom agents implement the public protocol in `traderharness.agents.protocol`. 
 - `GET /api/results` — persisted result summaries;
 - `GET /api/results/{file}` — complete artifact;
 - `GET /api/results/{file}/analysis` — normalized research dossier;
+- `GET /api/results/{file}/analysis?detail=summary` — lightweight first-screen dossier; it retains the decisions and order proof linked to each fill while deferring the complete decision, tool, day, and security trajectories; use `detail=full` for all evidence;
+- `GET /api/results/{file}/analysis?reveal_entities=true` — localhost-only entity reveal for masked security codes, names, and related dossier text; the raw result, replay, and downloaded artifact remain unchanged;
 - `POST /api/demo` — start the bundled replay;
 - `GET /api/health` — process health.
 
