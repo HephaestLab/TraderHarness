@@ -40,6 +40,8 @@ class ToolContext:
     max_position_pct: float = 25.0
     max_positions: int = 4
     require_structured_plan: bool = False
+    require_decision_card: bool = False
+    require_phase_completion: bool = False
     minimum_holding_days: int = 0
     day_index: int = 0
     research_interval_days: int = 0
@@ -47,8 +49,12 @@ class ToolContext:
     sandbox_pre_market_only: bool = False
     allowed_tools: frozenset[str] | None = None
     sandbox_max_calls_per_day: int = 0
+    watchlist_ttl_days: int = 0
+    max_active_memories: int = 0
+    max_daily_memories: int = 0
     date_masker: Any = None
     entity_masker: Any = None
+    replay_mode: bool = False
     _bus: Any = field(default=None, repr=False)
     _workspace: Any = field(default=None, repr=False)
 
@@ -98,9 +104,35 @@ class ToolRegistry:
     async def execute(self, name: str, arguments: dict, ctx: ToolContext) -> dict:
         tool = self._tools.get(name)
         if tool is None:
-            return {"error": f"未知工具: {name}"}
+            return {
+                "success": False,
+                "error": f"未知工具: {name}",
+                "error_code": "unknown_tool",
+                "retryable": True,
+                "correction": {
+                    "instruction": "Use a tool from the schemas supplied for this turn."
+                },
+            }
         try:
             masker = ctx.entity_masker
+            visible_code = arguments.get("stock_code") if isinstance(arguments, dict) else None
+            candidate_resolver = getattr(masker, "masked_code_candidates", None)
+            if candidate_resolver is not None and visible_code is not None:
+                candidates = candidate_resolver(visible_code)
+                if len(candidates) > 1:
+                    return {
+                        "success": False,
+                        "error": (
+                            f"Masked stock code suffix '{visible_code}' is ambiguous; "
+                            "use one complete board-prefixed alias."
+                        ),
+                        "error_code": "ambiguous_masked_stock_code",
+                        "retryable": True,
+                        "correction": {
+                            "instruction": "Retry this tool with one exact candidate_alias.",
+                            "candidate_aliases": candidates,
+                        },
+                    }
             # execute_code owns the masking boundary end-to-end: its source
             # contains Agent-visible pseudocodes that the sandbox APIs unmask
             # when they are used. Rewriting embedded literals in the source
@@ -117,15 +149,59 @@ class ToolRegistry:
             date_masker = ctx.date_masker
             if date_masker is not None:
                 result = date_masker.mask_obj(result)
-            return masker.mask_obj(result) if masker is not None else result
+            if masker is not None:
+                result = masker.mask_obj(result)
+                # Tool handlers are re-executed during deterministic replay;
+                # new decision-card cassettes therefore use the same sanitizer
+                # as live runs. Legacy demo cassettes keep their old fingerprint.
+                if not ctx.replay_mode or ctx.require_decision_card:
+                    result = masker.sanitize_agent_obj(result)
+            if (
+                getattr(ctx, "require_decision_card", False)
+                and name
+                in {
+                    "get_stock_info",
+                    "get_business_segments",
+                    "get_valuation",
+                    "get_kline",
+                    "get_stock_price",
+                    "get_announcement_evidence",
+                }
+                and isinstance(result, dict)
+                and not result.get("error")
+            ):
+                visible_code = result.get("stock_code") or arguments.get("stock_code")
+                if visible_code:
+                    evidence = ctx.tool_call_cache.setdefault("_agent_tool_results", {})
+                    by_code = evidence.setdefault(name, {})
+                    by_code[str(visible_code)] = result
+                    canonical_code = internal_arguments.get("stock_code")
+                    if canonical_code:
+                        by_code[str(canonical_code)] = result
+            return result
         except Exception as e:
             logger.exception("tool_execution_error: %s", name)
-            result = {"error": f"工具执行失败: {type(e).__name__}: {str(e)}"}
+            result = {
+                "success": False,
+                "error": f"工具执行失败: {type(e).__name__}: {str(e)}",
+                "error_code": "tool_execution_failed",
+                "retryable": True,
+                "correction": {
+                    "instruction": (
+                        "Read the exception, correct only the tool arguments or code, "
+                        "and retry in the same phase."
+                    )
+                },
+            }
             date_masker = ctx.date_masker
             if date_masker is not None:
                 result = date_masker.mask_obj(result)
             masker = ctx.entity_masker
-            return masker.mask_obj(result) if masker is not None else result
+            if masker is not None:
+                result = masker.mask_obj(result)
+                if not ctx.replay_mode or ctx.require_decision_card:
+                    result = masker.sanitize_agent_obj(result)
+            return result
 
     def __len__(self) -> int:
         return len(self._tools)

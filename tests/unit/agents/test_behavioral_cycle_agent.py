@@ -8,14 +8,19 @@ def test_behavioral_cycle_card_freezes_the_research_contract():
     card = load_card("behavioral-cycle", BUILTIN_STORAGE_DIR)
 
     assert card is not None
-    assert card.model == "deepseek-v4-flash"
-    assert card.holding_period == "10-40 trading days"
+    assert card.model == "deepseek-v4-pro"
+    assert card.holding_period == "1-30 trading days"
     assert card.max_positions == 4
     assert card.max_position_pct == 100.0
-    assert card.max_pre_iterations == 5
-    assert card.max_window_iterations == 1
+    assert card.max_pre_iterations == 9
+    assert card.max_window_iterations == 2
     assert card.require_structured_plan is True
-    assert card.minimum_holding_days == 5
+    assert card.require_decision_card is True
+    assert card.require_phase_completion is True
+    assert card.minimum_holding_days == 0
+    assert card.watchlist_ttl_days == 10
+    assert card.max_active_memories == 24
+    assert card.max_daily_memories == 2
     assert card.research_interval_days == 5
     assert card.sandbox_pre_market_only is True
     assert card.sandbox_max_calls_per_day == 2
@@ -23,39 +28,63 @@ def test_behavioral_cycle_card_freezes_the_research_contract():
     assert "execute_code" in card.allowed_tools
     assert "screen_behavioral_cycle" not in card.allowed_tools
 
-    # The strategy must express falsifiable price/volume hypotheses, not
-    # attribute an unknowable intention to a supposed market operator.
+    # Python exposes facts; the LLM owns the semantic market/leadership verdict.
     for required in (
-        "群体行为压力",
-        "不推断参与者身份",
+        "Python只负责整理点时安全的事实",
+        "市场为什么交易一个方向",
+        "主题、板块、公司、交易阶段",
+        "leader_attack",
+        "high_low_rotation",
+        "leaders 只是量价比较候选",
+        "新增文本催化",
+        "板块扩散",
         "execute_code",
         "get_behavioral_features",
-        "risk_off / neutral / risk_on",
-        "不设固定的单股仓位上限",
-        "每只新股票首次建仓通常25%至40%",
-        "上涨比例低于35%时视为risk_off，禁止新增风险",
-        "risk_on且两个强确认机会",
-        "90%至100%",
-        "研究日：是",
-        "同一份缓存快照",
+        "get_narrative_news",
+        "第五轮完成判断",
+        "get_announcement_evidence",
+        "get_narrative_sector_summary",
+        "get_business_segments",
+        "成交额、换手和分时流动性",
+        "true_leader",
+        "rotation_core",
+        "sector_state",
+        "sector_confirmation",
+        "single_stock_only",
+        "补涨、跟风",
+        "low_base_ignition",
+        "trend_continuation",
+        "leader_pullback",
+        "emerging_leader",
+        "managed_extension",
+        "单一涨幅阈值",
+        "overextended",
+        "decision_card",
+        "business_fit",
+        "business_fit_basis",
+        "capacity_liquidity",
+        "abstention_case",
+        "不再用分号标签拼接",
+        "跳空风险",
         "add_watchlist",
-        "开盘和尾盘阶段禁止 execute_code",
-        "extended_20d",
-        "禁止把 change_20_pct 或绝对涨幅设为正向得分",
-        "注意力冲击",
-        "价格反应",
-        "完整确认",
-        "已经完整收盘的交易日",
-        "10个交易日冷却期",
-        "至少5个交易日",
+        "开盘与尾盘禁止 execute_code",
+        "目标持有1至30个交易日",
         "original_structural_stop",
-        "minimum_holding_days",
-        "不得重新解释阶段",
         "反证",
-        "失效条件",
-        "不得向下摊平成本",
+        "禁止向下摊平",
+        "主营业务",
+        "决策卡",
+        "仓位不设固定单股或总股票硬上限",
+        "最大仓位不是用来弥补证据不足",
+        "主动调用 complete_phase",
+        "最后收盘阶段调用一次 finish_day",
+        "资金明确迁往更强方向时卖出",
     ):
         assert required in card.persona
+
+    for obsolete in ("MODE=", "THEME=", "LEADER_EVIDENCE="):
+        assert obsolete not in card.persona
+    assert "至少5日内" not in card.persona
 
 
 def test_behavioral_cycle_card_has_only_documented_tools():
@@ -66,7 +95,12 @@ def test_behavioral_cycle_card_has_only_documented_tools():
         "get_kline",
         "get_stock_price",
         "get_stock_info",
-        "get_market_overview",
+        "get_narrative_market_overview",
+        "get_narrative_sector_summary",
+        "get_announcement_evidence",
+        "get_narrative_news",
+        "get_business_segments",
+        "get_valuation",
         "get_portfolio",
         "get_position",
         "place_order",
@@ -79,6 +113,7 @@ def test_behavioral_cycle_card_has_only_documented_tools():
         "search_memory",
         "get_memory",
         "execute_code",
+        "complete_phase",
         "finish_day",
     }
     assert set(card.allowed_tools) == expected_tools

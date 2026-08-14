@@ -15,9 +15,115 @@ from traderharness.tools.registry import ToolContext, ToolDefinition
 logger = logging.getLogger(__name__)
 
 
-def build_market_overview(ctx: ToolContext) -> dict:
-    """Point-in-time market overview shared by tools and sandbox MarketAPI."""
-    sector_data: dict[str, list[float]] = {}
+def _horizon_change(close: np.ndarray, sessions: int) -> float | None:
+    """Latest close return over N completed sessions, or None when unavailable."""
+    if len(close) <= sessions:
+        return None
+    start = float(close[-sessions - 1])
+    end = float(close[-1])
+    if start <= 0 or not math.isfinite(start) or not math.isfinite(end):
+        return None
+    return (end / start - 1.0) * 100.0
+
+
+def _stock_leadership_metrics(filtered: pd.DataFrame, code: str) -> dict | None:
+    """Return raw multi-horizon evidence used for sector and leader comparison."""
+    if len(filtered) < 2 or "close" not in filtered.columns:
+        return None
+    close = pd.to_numeric(filtered["close"], errors="coerce").to_numpy(dtype=float)
+    if not np.isfinite(close).all() or float(close[-1]) <= 0:
+        return None
+    change_1d = _horizon_change(close, 1)
+    if change_1d is None:
+        return None
+
+    volume_ratio = None
+    if "volume" in filtered.columns and len(filtered) >= 20:
+        volume = pd.to_numeric(filtered["volume"], errors="coerce").to_numpy(dtype=float)
+        if np.isfinite(volume[-20:]).all():
+            baseline = float(np.mean(volume[-20:]))
+            if baseline > 0:
+                volume_ratio = float(np.mean(volume[-5:])) / baseline
+
+    amount_1d = None
+    amount_5d = None
+    amount_20d = None
+    if "amount" in filtered.columns:
+        amount = pd.to_numeric(filtered["amount"], errors="coerce").to_numpy(dtype=float)
+        if len(amount) and math.isfinite(float(amount[-1])):
+            amount_1d = float(amount[-1]) / 1_000_000
+        if len(amount) >= 5 and np.isfinite(amount[-5:]).all():
+            amount_5d = float(np.mean(amount[-5:])) / 1_000_000
+        if len(amount) >= 20 and np.isfinite(amount[-20:]).all():
+            amount_20d = float(np.mean(amount[-20:])) / 1_000_000
+
+    distance_from_20d_high = None
+    if "high" in filtered.columns and len(filtered) >= 20:
+        high = pd.to_numeric(filtered["high"], errors="coerce").to_numpy(dtype=float)
+        recent_high = float(np.nanmax(high[-20:]))
+        if math.isfinite(recent_high) and recent_high > 0:
+            distance_from_20d_high = (float(close[-1]) / recent_high - 1.0) * 100.0
+
+    change_5d = _horizon_change(close, 5)
+    change_20d = _horizon_change(close, 20)
+    return {
+        "code": code,
+        "close": round(float(close[-1]), 2),
+        # Backward-compatible name used by existing clients.
+        "change_pct": round(float(change_1d), 2),
+        "change_1d_pct": round(float(change_1d), 2),
+        "change_5d_pct": round(float(change_5d), 2) if change_5d is not None else None,
+        "change_20d_pct": round(float(change_20d), 2) if change_20d is not None else None,
+        "volume_5_to_20": round(float(volume_ratio), 3) if volume_ratio is not None else None,
+        "amount_1d_million": _rounded_or_none(amount_1d),
+        "amount_5d_avg_million": _rounded_or_none(amount_5d),
+        "amount_20d_avg_million": _rounded_or_none(amount_20d),
+        "distance_from_20d_high_pct": (
+            round(float(distance_from_20d_high), 2)
+            if distance_from_20d_high is not None
+            else None
+        ),
+    }
+
+
+def _mean_present(rows: list[dict], key: str) -> float | None:
+    values = [float(row[key]) for row in rows if row.get(key) is not None]
+    return sum(values) / len(values) if values else None
+
+
+def _positive_ratio(rows: list[dict], key: str) -> float | None:
+    values = [float(row[key]) for row in rows if row.get(key) is not None]
+    return sum(value > 0 for value in values) / len(values) * 100.0 if values else None
+
+
+def _rounded_or_none(value: float | None, digits: int = 2) -> float | None:
+    return round(float(value), digits) if value is not None and math.isfinite(value) else None
+
+
+def _sector_metrics(sector: str, rows: list[dict]) -> dict:
+    change_1d = _mean_present(rows, "change_1d_pct")
+    return {
+        "sector": sector,
+        "stock_count": len(rows),
+        # Backward-compatible name used by the current UI and prompt.
+        "avg_change_pct": _rounded_or_none(change_1d),
+        "change_1d_pct": _rounded_or_none(change_1d),
+        "change_5d_pct": _rounded_or_none(_mean_present(rows, "change_5d_pct")),
+        "change_20d_pct": _rounded_or_none(_mean_present(rows, "change_20d_pct")),
+        "up_ratio_1d_pct": _rounded_or_none(_positive_ratio(rows, "change_1d_pct")),
+        "up_ratio_5d_pct": _rounded_or_none(_positive_ratio(rows, "change_5d_pct")),
+        "up_ratio_20d_pct": _rounded_or_none(_positive_ratio(rows, "change_20d_pct")),
+    }
+
+
+def _metric(row: dict, key: str, default: float = -math.inf) -> float:
+    value = row.get(key)
+    return float(value) if value is not None else default
+
+
+def build_narrative_market_overview(ctx: ToolContext) -> dict:
+    """Point-in-time multi-horizon market evidence for narrative agents."""
+    sector_data: dict[str, list[dict]] = {}
     total_up = 0
     total_down = 0
 
@@ -27,39 +133,75 @@ def build_market_overview(ctx: ToolContext) -> dict:
         filtered = df[df["date"] < ctx.current_date]
         if len(filtered) < 2:
             continue
-        last = filtered.iloc[-1]
-        prev = filtered.iloc[-2]
-        prev_close = float(prev["close"])
-        if prev_close == 0:
+        metrics = _stock_leadership_metrics(filtered.tail(120), code)
+        if metrics is None:
             continue
-        change = (float(last["close"]) - prev_close) / prev_close * 100
+        change = float(metrics["change_1d_pct"])
         if change > 0:
             total_up += 1
         elif change < 0:
             total_down += 1
 
         industry = get_stock_industry(code)
-        if industry not in sector_data:
-            sector_data[industry] = []
-        sector_data[industry].append(change)
+        sector_data.setdefault(industry, []).append(metrics)
 
     if not sector_data:
         return {"error": "当前交易日无市场数据"}
 
-    sector_avg = {s: sum(v) / len(v) for s, v in sector_data.items() if len(v) >= 3}
-    sorted_sectors = sorted(sector_avg.items(), key=lambda x: -x[1])
+    sector_rows = [
+        _sector_metrics(sector, rows)
+        for sector, rows in sector_data.items()
+        if len(rows) >= 3
+    ]
+    strongest = sorted(
+        sector_rows,
+        key=lambda row: (
+            -_metric(row, "change_5d_pct"),
+            -_metric(row, "change_20d_pct"),
+            -_metric(row, "up_ratio_5d_pct"),
+            -_metric(row, "change_1d_pct"),
+            row["sector"],
+        ),
+    )
+    weakest = sorted(
+        sector_rows,
+        key=lambda row: (
+            _metric(row, "change_20d_pct", math.inf),
+            _metric(row, "change_5d_pct", math.inf),
+            _metric(row, "change_1d_pct", math.inf),
+            row["sector"],
+        ),
+    )
+    rotation = [
+        row
+        for row in sector_rows
+        if _metric(row, "change_20d_pct", math.inf) <= 0
+        and _metric(row, "change_5d_pct") > 0
+        and _metric(row, "change_1d_pct") > 0
+        and _metric(row, "up_ratio_1d_pct") >= 50
+    ]
+    rotation.sort(
+        key=lambda row: (
+            -_metric(row, "up_ratio_1d_pct"),
+            -_metric(row, "change_5d_pct"),
+            -_metric(row, "change_1d_pct"),
+            row["sector"],
+        )
+    )
 
     return {
         "total_stocks": total_up + total_down,
         "up_count": total_up,
         "down_count": total_down,
-        "top_sectors": [
-            {"sector": s, "avg_change_pct": round(c, 2)} for s, c in sorted_sectors[:5]
-        ],
-        "bottom_sectors": [
-            {"sector": s, "avg_change_pct": round(c, 2)} for s, c in sorted_sectors[-5:]
-        ],
-        "total_sectors": len(sorted_sectors),
+        "top_sectors": strongest[:5],
+        "bottom_sectors": weakest[:5],
+        "rotation_candidates": rotation[:5],
+        "total_sectors": len(sector_rows),
+        "ranking_rule": "top sectors rank by 5d, 20d, 5d breadth, then 1d strength",
+        "rotation_candidate_rule": (
+            "20d sector return <= 0, 5d and 1d returns > 0, 1d advancing breadth >= 50%; "
+            "text catalyst is still required"
+        ),
     }
 
 
@@ -368,8 +510,8 @@ def build_behavioral_cycle_screen(ctx: ToolContext, max_results: int = 8) -> dic
     }
 
 
-def build_sector_constituents(ctx: ToolContext, sector: str) -> list[dict] | dict:
-    """All point-in-time constituents for a sector, or an error dict."""
+def build_narrative_sector_constituents(ctx: ToolContext, sector: str) -> list[dict] | dict:
+    """Multi-horizon point-in-time constituents for a sector."""
     if not sector:
         return {"error": "请指定板块名称（如：电力设备、医药生物、金融行业）"}
 
@@ -383,12 +525,9 @@ def build_sector_constituents(ctx: ToolContext, sector: str) -> list[dict] | dic
         filtered = df[df["date"] < ctx.current_date]
         if len(filtered) < 2:
             continue
-        last = filtered.iloc[-1]
-        prev = filtered.iloc[-2]
-        close = float(last["close"])
-        prev_close = float(prev["close"])
-        change = ((close - prev_close) / prev_close * 100) if prev_close != 0 else 0.0
-        stocks.append({"code": code, "close": round(close, 2), "change_pct": round(change, 2)})
+        metrics = _stock_leadership_metrics(filtered.tail(120), code)
+        if metrics is not None:
+            stocks.append(metrics)
 
     if not stocks:
         return {"error": f"未找到板块「{sector}」或该板块在当前日期无数据"}
@@ -398,13 +537,110 @@ def build_sector_constituents(ctx: ToolContext, sector: str) -> list[dict] | dic
     return stocks
 
 
-def build_sector_summary(ctx: ToolContext, sector: str) -> dict:
-    """Point-in-time sector summary shared by tools and sandbox MarketAPI."""
-    stocks = build_sector_constituents(ctx, sector)
+def build_narrative_sector_summary(ctx: ToolContext, sector: str) -> dict:
+    """Point-in-time multi-horizon sector and leader evidence."""
+    stocks = build_narrative_sector_constituents(ctx, sector)
     if isinstance(stocks, dict):
         return stocks
 
-    avg_change = sum(s["change_pct"] for s in stocks) / len(stocks)
+    sector_metrics = _sector_metrics(sector, stocks)
+    leaders = sorted(
+        stocks,
+        key=lambda row: (
+            -_metric(row, "change_5d_pct"),
+            -_metric(row, "change_20d_pct"),
+            -_metric(row, "change_1d_pct"),
+            -_metric(row, "volume_5_to_20"),
+            row["code"],
+        ),
+    )
+    return {
+        **sector_metrics,
+        "top_gainers": stocks[:5],
+        "top_losers": stocks[-5:] if len(stocks) > 5 else [],
+        "leaders": leaders[:5],
+        "leader_ranking_rule": "5d, 20d, 1d relative strength, then 5d/20d volume ratio",
+    }
+
+
+def build_market_overview(ctx: ToolContext) -> dict:
+    """Backward-compatible point-in-time market overview."""
+    sector_data: dict[str, list[float]] = {}
+    total_up = 0
+    total_down = 0
+
+    for code, df in ctx.preloaded_daily.items():
+        if df.empty:
+            continue
+        filtered = df[df["date"] < ctx.current_date]
+        if len(filtered) < 2:
+            continue
+        last = filtered.iloc[-1]
+        prev = filtered.iloc[-2]
+        prev_close = float(prev["close"])
+        if prev_close == 0:
+            continue
+        change = (float(last["close"]) - prev_close) / prev_close * 100
+        if change > 0:
+            total_up += 1
+        elif change < 0:
+            total_down += 1
+
+        industry = get_stock_industry(code)
+        sector_data.setdefault(industry, []).append(change)
+
+    if not sector_data:
+        return {"error": "当前交易日无市场数据"}
+
+    sector_avg = {sector: sum(values) / len(values) for sector, values in sector_data.items() if len(values) >= 3}
+    sorted_sectors = sorted(sector_avg.items(), key=lambda item: -item[1])
+    return {
+        "total_stocks": total_up + total_down,
+        "up_count": total_up,
+        "down_count": total_down,
+        "top_sectors": [
+            {"sector": sector, "avg_change_pct": round(change, 2)}
+            for sector, change in sorted_sectors[:5]
+        ],
+        "bottom_sectors": [
+            {"sector": sector, "avg_change_pct": round(change, 2)}
+            for sector, change in sorted_sectors[-5:]
+        ],
+        "total_sectors": len(sorted_sectors),
+    }
+
+
+def build_sector_constituents(ctx: ToolContext, sector: str) -> list[dict] | dict:
+    """Backward-compatible point-in-time sector constituents."""
+    if not sector:
+        return {"error": "请指定板块名称（如：电力设备、医药生物、金融行业）"}
+
+    stocks = []
+    for code, df in ctx.preloaded_daily.items():
+        if df.empty or sector not in get_stock_industry(code):
+            continue
+        filtered = df[df["date"] < ctx.current_date]
+        if len(filtered) < 2:
+            continue
+        last = filtered.iloc[-1]
+        prev = filtered.iloc[-2]
+        close = float(last["close"])
+        prev_close = float(prev["close"])
+        change = ((close - prev_close) / prev_close * 100) if prev_close != 0 else 0.0
+        stocks.append({"code": code, "close": round(close, 2), "change_pct": round(change, 2)})
+
+    if not stocks:
+        return {"error": f"未找到板块「{sector}」或该板块在当前日期无数据"}
+    stocks.sort(key=lambda item: (-item["change_pct"], item["code"]))
+    return stocks
+
+
+def build_sector_summary(ctx: ToolContext, sector: str) -> dict:
+    """Backward-compatible point-in-time sector summary."""
+    stocks = build_sector_constituents(ctx, sector)
+    if isinstance(stocks, dict):
+        return stocks
+    avg_change = sum(stock["change_pct"] for stock in stocks) / len(stocks)
     return {
         "sector": sector,
         "avg_change_pct": round(avg_change, 2),
@@ -416,6 +652,15 @@ def build_sector_summary(ctx: ToolContext, sector: str) -> dict:
 
 async def handle_get_market_overview(params: dict, ctx: ToolContext) -> dict:
     return build_market_overview(ctx)
+
+
+async def handle_get_narrative_market_overview(params: dict, ctx: ToolContext) -> dict:
+    cache_key = "_narrative_market_overview_payload"
+    payload = ctx.tool_call_cache.get(cache_key)
+    if payload is None:
+        payload = build_narrative_market_overview(ctx)
+        ctx.tool_call_cache[cache_key] = payload
+    return payload
 
 
 async def handle_screen_stocks(params: dict, ctx: ToolContext) -> dict:
@@ -431,11 +676,35 @@ async def handle_get_sector_summary(params: dict, ctx: ToolContext) -> dict:
     return build_sector_summary(ctx, params.get("sector", ""))
 
 
+async def handle_get_narrative_sector_summary(params: dict, ctx: ToolContext) -> dict:
+    sector = str(params.get("sector", "")).strip()
+    cache = ctx.tool_call_cache.setdefault("_narrative_sector_summary_cache", {})
+    if sector in cache:
+        return cache[sector]
+    if len(cache) >= 2:
+        return {
+            "budget_exhausted": True,
+            "limit": 2,
+            "instruction": "Use the two sector summaries already returned; do not retry today.",
+        }
+    payload = build_narrative_sector_summary(ctx, sector)
+    cache[sector] = payload
+    ctx.tool_call_cache["_narrative_sector_summary_calls"] = len(cache)
+    return payload
+
+
 GET_MARKET_OVERVIEW = ToolDefinition(
     name="get_market_overview",
     description="查看全市场概览：涨跌家数、板块涨幅前5/跌幅前5",
     parameters={"type": "object", "properties": {}, "required": []},
     handler=handle_get_market_overview,
+)
+
+GET_NARRATIVE_MARKET_OVERVIEW = ToolDefinition(
+    name="get_narrative_market_overview",
+    description="查看全市场的板块1/5/20日强度、上涨扩散、强势主线和早期轮动候选。",
+    parameters={"type": "object", "properties": {}, "required": []},
+    handler=handle_get_narrative_market_overview,
 )
 
 SCREEN_STOCKS = ToolDefinition(
@@ -498,4 +767,20 @@ GET_SECTOR_SUMMARY = ToolDefinition(
         "required": ["sector"],
     },
     handler=handle_get_sector_summary,
+)
+
+GET_NARRATIVE_SECTOR_SUMMARY = ToolDefinition(
+    name="get_narrative_sector_summary",
+    description="查看指定板块的1/5/20日强度、上涨扩散和板块内持续性龙头排名。",
+    parameters={
+        "type": "object",
+        "properties": {
+            "sector": {
+                "type": "string",
+                "description": "板块名称，如：电力设备、医药生物、金融行业",
+            },
+        },
+        "required": ["sector"],
+    },
+    handler=handle_get_narrative_sector_summary,
 )

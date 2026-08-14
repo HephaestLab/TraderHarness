@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,23 @@ from traderharness.result_analysis import build_comparison
 RESULTS_DIR = results_dir()
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 SUMMARY_SCHEMA_VERSION = 1
+ANALYSIS_SUMMARY_SCHEMA_VERSION = 1
+logger = logging.getLogger(__name__)
+
+
+def _atomic_write_json(path: Path, payload: dict[str, Any], *, indent: int | None = None) -> None:
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(
+        json.dumps(
+            payload,
+            ensure_ascii=False,
+            default=str,
+            indent=indent,
+            separators=None if indent is not None else (",", ":"),
+        ),
+        encoding="utf-8",
+    )
+    temporary.replace(path)
 
 
 def generate_result_filename() -> str:
@@ -22,6 +40,84 @@ def generate_result_filename() -> str:
 def result_summary_path(path: Path) -> Path:
     """Return the persistent lightweight-index path for a result artifact."""
     return path.with_name(f"{path.name}.summary.json")
+
+
+def result_analysis_summary_path(path: Path) -> Path:
+    return path.with_name(f"{path.name}.analysis.summary.json")
+
+
+def compact_result_analysis(analysis: dict[str, Any]) -> dict[str, Any]:
+    """Drop full trajectory indexes while retaining each trade's linked evidence."""
+    for agent in analysis.get("agents", {}).values():
+        decisions = agent.get("decisions") or []
+        tools = agent.get("tools") or []
+        for review in agent.get("trade_reviews") or []:
+            review["decisions"] = [
+                decisions[index]
+                for index in review.get("decision_indices") or []
+                if isinstance(index, int) and 0 <= index < len(decisions)
+            ]
+            order_index = review.get("order_tool_index")
+            review["order_tool"] = (
+                tools[order_index]
+                if isinstance(order_index, int) and 0 <= order_index < len(tools)
+                else None
+            )
+        agent["days"] = []
+        agent["decisions"] = []
+        agent["tools"] = []
+        agent["securities"] = {}
+    analysis["detail"] = "summary"
+    return analysis
+
+
+def write_result_analysis_summary(
+    path: Path,
+    document: dict[str, Any],
+    analysis: dict[str, Any] | None = None,
+) -> Path:
+    """Precompute the result page's first screen while the document is in memory."""
+    from traderharness.result_analysis import build_result_analysis
+
+    analysis = analysis or compact_result_analysis(build_result_analysis(document))
+    stat = path.stat()
+    payload = {
+        "schema_version": ANALYSIS_SUMMARY_SCHEMA_VERSION,
+        "artifact": {
+            "size": stat.st_size,
+            "mtime_ns": stat.st_mtime_ns,
+            "ctime_ns": stat.st_ctime_ns,
+        },
+        "document": {
+            "start_date": document.get("start_date"),
+            "end_date": document.get("end_date"),
+            "config": document.get("config") or {},
+        },
+        "analysis": analysis,
+    }
+    sidecar = result_analysis_summary_path(path)
+    _atomic_write_json(sidecar, payload)
+    return sidecar
+
+
+def read_result_analysis_summary(path: Path) -> dict[str, Any] | None:
+    sidecar = result_analysis_summary_path(path)
+    try:
+        payload = json.loads(sidecar.read_text(encoding="utf-8"))
+        stat = path.stat()
+    except (OSError, json.JSONDecodeError):
+        return None
+    artifact = payload.get("artifact") or {}
+    if (
+        payload.get("schema_version") != ANALYSIS_SUMMARY_SCHEMA_VERSION
+        or artifact.get("size") != stat.st_size
+        or artifact.get("mtime_ns") != stat.st_mtime_ns
+        or artifact.get("ctime_ns") != stat.st_ctime_ns
+    ):
+        return None
+    if not isinstance(payload.get("analysis"), dict):
+        return None
+    return payload
 
 
 def build_result_summary(document: dict[str, Any], filename: str) -> dict[str, Any]:
@@ -35,6 +131,8 @@ def build_result_summary(document: dict[str, Any], filename: str) -> dict[str, A
         or (document.get("config") or {}).get("end_date"),
         "trading_days": document.get("trading_days", 0),
     }
+    if document.get("status") == "failed" and document.get("error"):
+        summary["error"] = str(document["error"])
     agent_data = document.get("agent_data") or {}
     summary["agent_count"] = len(agent_data)
     if len(agent_data) == 1:
@@ -53,14 +151,15 @@ def write_result_summary(path: Path, document: dict[str, Any]) -> Path:
     stat = path.stat()
     payload = {
         "schema_version": SUMMARY_SCHEMA_VERSION,
-        "artifact": {"size": stat.st_size, "mtime_ns": stat.st_mtime_ns},
+        "artifact": {
+            "size": stat.st_size,
+            "mtime_ns": stat.st_mtime_ns,
+            "ctime_ns": stat.st_ctime_ns,
+        },
         "summary": build_result_summary(document, path.name),
     }
     sidecar = result_summary_path(path)
-    sidecar.write_text(
-        json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=str),
-        encoding="utf-8",
-    )
+    _atomic_write_json(sidecar, payload)
     return sidecar
 
 
@@ -77,6 +176,7 @@ def read_result_summary(path: Path) -> dict[str, Any] | None:
         payload.get("schema_version") != SUMMARY_SCHEMA_VERSION
         or artifact.get("size") != stat.st_size
         or artifact.get("mtime_ns") != stat.st_mtime_ns
+        or artifact.get("ctime_ns") != stat.st_ctime_ns
     ):
         return None
     summary = payload.get("summary")
@@ -112,21 +212,34 @@ def save_pending(filename: str, config: dict) -> Path:
         "started_at": datetime.now().isoformat(),
         "config": config,
     }
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    _atomic_write_json(path, data, indent=2)
     write_result_summary(path, data)
     return path
 
 
 def save_complete(filename: str, result_data: dict, *, status: str = "done") -> Path:
-    """Write a completed result file."""
+    """Durably commit a result, then materialize optional UI sidecars.
+
+    Once the main artifact has been atomically replaced it is authoritative.
+    A derived summary failure must not make callers overwrite that completed
+    research result with a small ``failed`` placeholder.
+    """
     path = RESULTS_DIR / filename
     result_data["status"] = status
     result_data["completed_at"] = datetime.now().isoformat()
-    path.write_text(
-        json.dumps(result_data, ensure_ascii=False, default=str, indent=2),
-        encoding="utf-8",
-    )
-    write_result_summary(path, result_data)
+    _atomic_write_json(path, result_data, indent=2)
+    for label, writer in (
+        ("result index", write_result_summary),
+        ("result analysis", write_result_analysis_summary),
+    ):
+        try:
+            writer(path, result_data)
+        except Exception:
+            logger.exception(
+                "Completed result %s is durable, but the optional %s sidecar failed",
+                path.name,
+                label,
+            )
     return path
 
 
@@ -139,7 +252,7 @@ def save_failed(filename: str, error: str, config: dict | None = None) -> Path:
         "failed_at": datetime.now().isoformat(),
         "config": config,
     }
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    _atomic_write_json(path, data, indent=2)
     write_result_summary(path, data)
     return path
 

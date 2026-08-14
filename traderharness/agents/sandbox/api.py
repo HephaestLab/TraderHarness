@@ -15,6 +15,9 @@ from traderharness.tools._coerce import safe_int
 from traderharness.tools.analysis import (
     build_behavioral_cycle_features,
     build_market_overview,
+    build_narrative_market_overview,
+    build_narrative_sector_constituents,
+    build_narrative_sector_summary,
     build_screen_stocks,
     build_sector_constituents,
     build_sector_summary,
@@ -52,7 +55,17 @@ def _mask_df(ctx: ToolContext, df: pd.DataFrame, col: str = "date") -> pd.DataFr
     date_masker = getattr(ctx, "date_masker", None)
     out = date_masker.mask_df(df, col) if date_masker is not None else df
     entity_masker = getattr(ctx, "entity_masker", None)
-    return entity_masker.mask_df(out) if entity_masker is not None else out
+    if entity_masker is None:
+        return out
+    out = entity_masker.mask_df(out)
+    if getattr(ctx, "replay_mode", False) and not getattr(
+        ctx, "require_decision_card", False
+    ):
+        return out
+    for column in out.columns:
+        if pd.api.types.is_object_dtype(out[column]) or pd.api.types.is_string_dtype(out[column]):
+            out[column] = out[column].map(entity_masker.sanitize_agent_text)
+    return out
 
 
 def _unmask_code(ctx: ToolContext, code: str) -> str:
@@ -61,8 +74,17 @@ def _unmask_code(ctx: ToolContext, code: str) -> str:
 
 
 def _mask_obj(ctx: ToolContext, value):
+    date_masker = getattr(ctx, "date_masker", None)
+    if date_masker is not None:
+        value = date_masker.mask_obj(value)
     masker = getattr(ctx, "entity_masker", None)
-    return masker.mask_obj(value) if masker is not None else value
+    if masker is not None:
+        value = masker.mask_obj(value)
+        if not getattr(ctx, "replay_mode", False) or getattr(
+            ctx, "require_decision_card", False
+        ):
+            value = masker.sanitize_agent_obj(value)
+    return value
 
 
 def _require_tool(ctx: ToolContext, tool_name: str) -> None:
@@ -70,6 +92,19 @@ def _require_tool(ctx: ToolContext, tool_name: str) -> None:
     allowed = getattr(ctx, "allowed_tools", None)
     if allowed is not None and tool_name not in allowed:
         raise PermissionError(f"sandbox access requires allowed tool: {tool_name}")
+
+
+def _require_any_tool(ctx: ToolContext, *tool_names: str) -> str:
+    """Authorize a sandbox view through any equivalent Agent-facing tool."""
+    allowed = getattr(ctx, "allowed_tools", None)
+    if allowed is None:
+        return tool_names[0]
+    for name in tool_names:
+        if name in allowed:
+            return name
+    raise PermissionError(
+        "sandbox access requires one allowed tool: " + ", ".join(tool_names)
+    )
 
 
 class MarketAPI:
@@ -178,26 +213,43 @@ class MarketAPI:
 
     def get_market_overview(self) -> dict:
         """Full-market breadth and sector leaders (point-in-time)."""
-        _require_tool(self._ctx, "get_market_overview")
-        return _mask_obj(self._ctx, build_market_overview(self._ctx))
+        authorized = _require_any_tool(
+            self._ctx, "get_market_overview", "get_narrative_market_overview"
+        )
+        builder = (
+            build_narrative_market_overview
+            if authorized == "get_narrative_market_overview"
+            else build_market_overview
+        )
+        return _mask_obj(self._ctx, builder(self._ctx))
 
     def get_sector_summary(self, sector: str) -> dict:
-        """Sector average change and ranked constituents (point-in-time)."""
-        _require_tool(self._ctx, "get_sector_summary")
-        return _mask_obj(self._ctx, build_sector_summary(self._ctx, sector))
+        """Sector 1/5/20d strength, breadth, and ranked leaders (point-in-time)."""
+        authorized = _require_any_tool(
+            self._ctx, "get_sector_summary", "get_narrative_sector_summary"
+        )
+        builder = (
+            build_narrative_sector_summary
+            if authorized == "get_narrative_sector_summary"
+            else build_sector_summary
+        )
+        return _mask_obj(self._ctx, builder(self._ctx, sector))
 
     def get_sector_stocks(self, sector: str) -> pd.DataFrame:
-        """Sector constituents as a DataFrame: stock_code, close, change_pct."""
-        _require_tool(self._ctx, "get_sector_summary")
-        stocks = build_sector_constituents(self._ctx, sector)
+        """Sector constituents with 1/5/20d strength and volume evidence."""
+        authorized = _require_any_tool(
+            self._ctx, "get_sector_summary", "get_narrative_sector_summary"
+        )
+        builder = (
+            build_narrative_sector_constituents
+            if authorized == "get_narrative_sector_summary"
+            else build_sector_constituents
+        )
+        stocks = builder(self._ctx, sector)
         if isinstance(stocks, dict):
             return pd.DataFrame()
         rows = [
-            {
-                "stock_code": item["code"],
-                "close": item["close"],
-                "change_pct": item["change_pct"],
-            }
+            {"stock_code": item["code"], **{key: value for key, value in item.items() if key != "code"}}
             for item in stocks
         ]
         return _mask_df(self._ctx, pd.DataFrame(rows))

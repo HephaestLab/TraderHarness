@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../api";
@@ -170,6 +170,56 @@ describe("Results", () => {
     const exportLink = screen.getByRole("link", { name: /导出完整工件/ });
     expect(exportLink).toHaveAttribute("href", "/api/results/20260718_result.json");
     expect(exportLink).toHaveAttribute("download", "20260718_result.json");
+  });
+
+  it("waits on a running artifact and opens it automatically after persistence", async () => {
+    vi.useFakeTimers();
+    try {
+      mockedApi.results
+        .mockResolvedValueOnce([
+          {
+            file: "20260814_003616_result.json",
+            status: "running",
+            start_date: "2026-03-01",
+            end_date: "2026-08-01",
+            trading_days: 0,
+          },
+        ])
+        .mockResolvedValue([
+          {
+            file: "20260814_003616_result.json",
+            status: "done",
+            start_date: "2026-03-01",
+            end_date: "2026-08-01",
+            trading_days: 110,
+          },
+        ]);
+      mockedApi.resultAnalysis.mockResolvedValue(singleAgentAnalysis());
+
+      render(
+        <MemoryRouter initialEntries={["/results?file=20260814_003616_result.json"]}>
+          <Results />
+        </MemoryRouter>,
+      );
+
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(screen.getByRole("status", { name: "回测仍在运行" })).toBeVisible();
+      expect(mockedApi.resultAnalysis).not.toHaveBeenCalled();
+
+      await act(async () => {
+        vi.advanceTimersByTime(2_000);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(mockedApi.resultAnalysis).toHaveBeenCalledWith(
+        "20260814_003616_result.json",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("loads full decision evidence only after the decision tab is opened", async () => {

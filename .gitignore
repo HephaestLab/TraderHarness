@@ -31,6 +31,10 @@ assets/
 !docs/assets/**
 !pixel-office/public/assets/
 !pixel-office/public/assets/**
+!promo/assets/
+!promo/assets/**
+!traderharness/ui/static/assets/
+!traderharness/ui/static/assets/**
 workspaces/
 momentum-dragon/
 value_investor/
@@ -43,3 +47,21 @@ artifacts/
 docs/assets/demo-frames/
 release-build/
 awesome-prs/
+
+# Local research workspaces and external references
+_refs/
+behavioral-cycle/
+
+# Generated README browser previews
+README_preview.html
+README_en_preview.html
+
+# Promotion publishing traces and render intermediates. Keep source assets
+# and the final deliverable, but do not commit browser-session journals,
+# review frames, or superseded encodes.
+promo/domestic/req-*.json
+promo/domestic/snap*.json
+promo/replay_mismatch_dump.json
+promo/review/
+promo/out/*
+!promo/out/traderharness-promo.mp4

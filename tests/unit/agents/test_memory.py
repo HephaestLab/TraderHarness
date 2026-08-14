@@ -4,6 +4,7 @@ from datetime import date
 
 from traderharness.agents.memory import DailyMemory
 from traderharness.core.entity_masking import EntityMasker
+from traderharness.core.masking import DateMasker
 
 
 class TestDailyMemory:
@@ -63,6 +64,34 @@ class TestDailyMemory:
         assert masker.mask_code("600519") in text
         assert "贵州茅台" not in text
         assert "600519" not in text
+
+    def test_prompt_text_masks_dates_inside_runtime_state_and_external_aliases(self):
+        mem = DailyMemory(agent_id="test")
+        mem.flush_runtime_state(
+            date(2024, 3, 5),
+            {
+                "entry_date": "2024-03-04",
+                "note": "贵州茅台对手是中国平安",
+            },
+        )
+        masker = EntityMasker(
+            ["600519", "600000"],
+            names={"600519": "贵州茅台", "600000": "浦发银行"},
+            sanitize_aliases={"601318": ["中国平安"]},
+            seed=1,
+        )
+
+        text = mem.to_prompt_text(
+            before_date=date(2024, 3, 6),
+            date_masker=DateMasker(anchor=date(2024, 3, 6)),
+            entity_masker=masker,
+        )
+
+        assert "2024-03-04" not in text
+        assert "贵州茅台" not in text
+        assert "中国平安" not in text
+        assert "D-2" in text
+        assert "外部公司" in text
 
     def test_clear(self):
         mem = DailyMemory(agent_id="test")

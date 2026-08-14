@@ -30,10 +30,15 @@ class AgentCard:
     max_pre_iterations: int = 10
     max_window_iterations: int = 3
     require_structured_plan: bool = False
+    require_decision_card: bool = False
+    require_phase_completion: bool = False
     minimum_holding_days: int = 0
     research_interval_days: int = 0
     sandbox_pre_market_only: bool = False
     sandbox_max_calls_per_day: int = 0
+    watchlist_ttl_days: int = 0
+    max_active_memories: int = 0
+    max_daily_memories: int = 0
 
     def to_dict(self) -> dict:
         return {
@@ -52,19 +57,27 @@ class AgentCard:
             "max_pre_iterations": self.max_pre_iterations,
             "max_window_iterations": self.max_window_iterations,
             "require_structured_plan": self.require_structured_plan,
+            "require_decision_card": self.require_decision_card,
+            "require_phase_completion": self.require_phase_completion,
             "minimum_holding_days": self.minimum_holding_days,
             "research_interval_days": self.research_interval_days,
             "sandbox_pre_market_only": self.sandbox_pre_market_only,
             "sandbox_max_calls_per_day": self.sandbox_max_calls_per_day,
+            "watchlist_ttl_days": self.watchlist_ttl_days,
+            "max_active_memories": self.max_active_memories,
+            "max_daily_memories": self.max_daily_memories,
         }
 
     @classmethod
     def from_dict(cls, data: dict) -> AgentCard:
+        persona = str(data.get("persona", "你是一位经验丰富的主观交易员。"))
+        for original, replacement in (data.get("persona_replacements") or {}).items():
+            persona = persona.replace(str(original), str(replacement))
         return cls(
             id=data["id"],
             name=data["name"],
             description=str(data.get("description", "")),
-            persona=data.get("persona", "你是一位经验丰富的主观交易员。"),
+            persona=persona,
             strategy_tags=[str(tag) for tag in data.get("strategy_tags", [])],
             risk_profile=str(data.get("risk_profile", "balanced")),
             holding_period=str(data.get("holding_period", "3-10 trading days")),
@@ -76,10 +89,15 @@ class AgentCard:
             max_pre_iterations=int(data.get("max_pre_iterations", 10)),
             max_window_iterations=int(data.get("max_window_iterations", 3)),
             require_structured_plan=bool(data.get("require_structured_plan", False)),
+            require_decision_card=bool(data.get("require_decision_card", False)),
+            require_phase_completion=bool(data.get("require_phase_completion", False)),
             minimum_holding_days=max(0, int(data.get("minimum_holding_days", 0))),
             research_interval_days=max(0, int(data.get("research_interval_days", 0))),
             sandbox_pre_market_only=bool(data.get("sandbox_pre_market_only", False)),
             sandbox_max_calls_per_day=max(0, int(data.get("sandbox_max_calls_per_day", 0))),
+            watchlist_ttl_days=max(0, int(data.get("watchlist_ttl_days", 0))),
+            max_active_memories=max(0, int(data.get("max_active_memories", 0))),
+            max_daily_memories=max(0, int(data.get("max_daily_memories", 0))),
         )
 
 

@@ -69,6 +69,35 @@ class TestBehaviorMetrics:
         result = calculate_behavior(sample_trades, [], Decimal("1000000"))
         assert result.total_buy_count == 3
 
+    def test_empty_days_follow_position_state_not_equity_near_initial_cash(self):
+        curve = [
+            (date(2024, 1, 2), Decimal("1000000")),
+            (date(2024, 1, 3), Decimal("1000000")),
+            (date(2024, 1, 4), Decimal("1000000")),
+            (date(2024, 1, 5), Decimal("1000000")),
+        ]
+        trades = [
+            {
+                "action": "buy",
+                "stock_code": "600519",
+                "date": "2024-01-03",
+                "quantity": 100,
+                "amount": 1000,
+            },
+            {
+                "action": "sell",
+                "stock_code": "600519",
+                "date": "2024-01-05",
+                "quantity": 100,
+                "amount": 1000,
+            },
+        ]
+
+        result = calculate_behavior(trades, curve, Decimal("1000000"))
+
+        assert result.empty_days_pct == 50.0
+        assert result.avg_holding_days == 2.0
+
 
 class TestBehaviorMetricsBenchmark:
     def test_max_position_pct(self, sample_trades, sample_curve):

@@ -4,12 +4,17 @@ These exercise behavior that only became reachable once LLMClient started
 actually populating ``_finish_reason`` (see traderharness/agents/llm_client.py).
 """
 
+import json
 from datetime import date
 from types import SimpleNamespace
 
 import pytest
 
-from traderharness.agents.loop import AgentLoop, _serialize_tool_result
+from traderharness.agents.loop import (
+    AgentLoop,
+    _semantic_premarket_allowed_tools,
+    _serialize_tool_result,
+)
 from traderharness.tools.registry import ToolRegistry
 
 
@@ -76,6 +81,232 @@ class TestReasoningContentWithToolCalls:
         assert assistant_msg["reasoning_content"] == "先看K线再决定"
         assert assistant_msg["tool_calls"][0]["function"]["name"] == "get_kline"
 
+    @pytest.mark.asyncio
+    async def test_tool_call_excluded_from_current_stage_is_not_executed(self):
+        calls = []
+        tool_call = {
+            "id": "call_hidden",
+            "type": "function",
+            "function": {"name": "get_kline", "arguments": "{}"},
+        }
+        client = StubClient([{"content": "", "tool_calls": [tool_call]}])
+        registry = ToolRegistry()
+
+        async def handler(params, ctx):
+            calls.append(params)
+            return {"ok": True}
+
+        from traderharness.tools.registry import ToolDefinition
+
+        registry.register(
+            ToolDefinition(
+                name="get_kline",
+                description="d",
+                parameters={"type": "object", "properties": {}},
+                handler=handler,
+            )
+        )
+        loop = AgentLoop(client, registry, "system")
+        loop._context.add_message({"role": "user", "content": "brief"})
+
+        await loop._run_phase(_ctx(), max_iter=1, exclude_tools={"get_kline"})
+
+        assert calls == []
+        tool_message = next(
+            message for message in loop._context._messages if message.get("role") == "tool"
+        )
+        assert "unavailable" in tool_message["content"]
+
+    @pytest.mark.asyncio
+    async def test_retryable_decision_card_error_gets_one_place_order_only_retry(self):
+        attempts = []
+
+        async def handler(params, ctx):
+            attempts.append(params)
+            if len(attempts) == 1:
+                return {
+                    "success": False,
+                    "error": "decision_card contains misplaced fields",
+                    "error_code": "decision_card_unknown_fields",
+                    "retryable": True,
+                    "retry_kind": "decision_card_correction",
+                    "correction": {
+                        "instruction": "Move confirmation_level to order top level.",
+                        "invalid_fields": ["confirmation_level"],
+                    },
+                }
+            return {"success": True}
+
+        from traderharness.tools.registry import ToolDefinition
+
+        registry = ToolRegistry()
+        registry.register(
+            ToolDefinition(
+                name="place_order",
+                description="order",
+                parameters={"type": "object", "properties": {}},
+                handler=handler,
+            )
+        )
+
+        def order_call(call_id, corrected):
+            return {
+                "id": call_id,
+                "type": "function",
+                "function": {
+                    "name": "place_order",
+                    "arguments": '{"corrected": ' + str(corrected).lower() + "}",
+                },
+            }
+
+        client = StubClient(
+            [
+                {"content": "", "tool_calls": [order_call("first", False)]},
+                {"content": "", "tool_calls": [order_call("retry", True)]},
+            ]
+        )
+        loop = AgentLoop(client, registry, "system")
+        loop._context.add_message({"role": "user", "content": "trade"})
+        ctx = _ctx()
+        ctx.tool_call_cache = {}
+        ctx.agent_id = "repair-agent"
+
+        await loop._run_phase(ctx, max_iter=1, exclude_tools=set())
+
+        assert attempts == [{"corrected": False}, {"corrected": True}]
+        assert len(client.calls) == 2
+        assert {
+            tool["function"]["name"] for tool in client.calls[1]["tools"]
+        } == {"place_order"}
+        assert "受控纠错" in client.calls[1]["messages"][-1]["content"]
+        assert ctx.tool_call_cache["_decision_card_correction_retries"] == 1
+
+    @pytest.mark.asyncio
+    async def test_semantic_decision_card_rejection_does_not_trigger_retry(self):
+        attempts = []
+
+        async def handler(params, ctx):
+            attempts.append(params)
+            return {
+                "success": False,
+                "error": "candidate_rank=weaker_alternative; 较弱备选不能下单",
+                "error_code": "decision_card_semantic_rejection",
+                "retryable": False,
+                "correction": {
+                    "instruction": "保持原语义结论，本阶段不得自动改写为可交易。"
+                },
+            }
+
+        from traderharness.tools.registry import ToolDefinition
+
+        registry = ToolRegistry()
+        registry.register(
+            ToolDefinition(
+                name="place_order",
+                description="order",
+                parameters={"type": "object", "properties": {}},
+                handler=handler,
+            )
+        )
+        tool_call = {
+            "id": "semantic-rejection",
+            "type": "function",
+            "function": {"name": "place_order", "arguments": "{}"},
+        }
+        client = StubClient([{"content": "", "tool_calls": [tool_call]}])
+        loop = AgentLoop(client, registry, "system")
+        loop._context.add_message({"role": "user", "content": "trade"})
+        ctx = _ctx()
+        ctx.tool_call_cache = {}
+        ctx.agent_id = "repair-agent"
+
+        await loop._run_phase(ctx, max_iter=1, exclude_tools=set())
+
+        assert attempts == [{}]
+        assert len(client.calls) == 1
+        assert "_decision_card_correction_retries" not in ctx.tool_call_cache
+
+    @pytest.mark.asyncio
+    async def test_correction_retry_cannot_change_candidate_or_semantic_verdict(self):
+        attempts = []
+
+        async def handler(params, ctx):
+            attempts.append(params)
+            return {
+                "success": False,
+                "error": "unknown evidence id",
+                "error_code": "decision_card_unseen_evidence",
+                "retryable": True,
+                "retry_kind": "decision_card_correction",
+                "correction": {"instruction": "replace the evidence id only"},
+            }
+
+        from traderharness.tools.registry import ToolDefinition
+
+        registry = ToolRegistry()
+        registry.register(
+            ToolDefinition(
+                name="place_order",
+                description="order",
+                parameters={"type": "object", "properties": {}},
+                handler=handler,
+            )
+        )
+
+        def order_call(call_id, rank):
+            arguments = {
+                "action": "buy",
+                "stock_code": "600519",
+                "quantity": 100,
+                "decision_card": {
+                    "decision": "trade",
+                    "mode": "leader_attack",
+                    "candidate_rank": rank,
+                    "text_evidence_ids": ["news:1"],
+                },
+            }
+            return {
+                "id": call_id,
+                "type": "function",
+                "function": {
+                    "name": "place_order",
+                    "arguments": json.dumps(arguments),
+                },
+            }
+
+        client = StubClient(
+            [
+                {
+                    "content": "",
+                    "tool_calls": [order_call("first", "weaker_alternative")],
+                },
+                {
+                    "content": "",
+                    "tool_calls": [order_call("retry", "best_expression")],
+                },
+            ]
+        )
+        loop = AgentLoop(client, registry, "system")
+        loop._context.add_message({"role": "user", "content": "trade"})
+        ctx = _ctx()
+        ctx.tool_call_cache = {}
+        ctx.agent_id = "repair-agent"
+
+        await loop._run_phase(ctx, max_iter=1, exclude_tools=set())
+
+        assert len(attempts) == 1
+        tool_messages = [
+            json.loads(message["content"])
+            for message in loop._context._messages
+            if message.get("role") == "tool"
+        ]
+        assert tool_messages[-1]["error_code"] == (
+            "decision_card_correction_changed_semantics"
+        )
+        assert tool_messages[-1]["correction"][
+            "changed_decision_card_fields"
+        ] == ["candidate_rank"]
+
 
 class TestTruncatedOutputHandling:
     @pytest.mark.asyncio
@@ -91,6 +322,145 @@ class TestTruncatedOutputHandling:
 
         assert len(client.calls) == 1
         assert "Output truncated" in caplog.text
+
+
+class TestExplicitPhaseProtocol:
+    @staticmethod
+    def _call(call_id, name, arguments=None):
+        return {
+            "id": call_id,
+            "type": "function",
+            "function": {
+                "name": name,
+                "arguments": json.dumps(arguments or {}),
+            },
+        }
+
+    @pytest.mark.asyncio
+    async def test_phase_does_not_advance_until_agent_calls_completion_tool(self):
+        from traderharness.tools.control import COMPLETE_PHASE
+
+        client = StubClient(
+            [
+                {"content": "先观察，不调用工具"},
+                {
+                    "content": "",
+                    "tool_calls": [
+                        self._call(
+                            "done",
+                            "complete_phase",
+                            {"decision": "no_trade", "summary": "证据不足"},
+                        )
+                    ],
+                },
+            ]
+        )
+        registry = ToolRegistry()
+        registry.register(COMPLETE_PHASE)
+        loop = AgentLoop(client, registry, "system")
+        loop._context.add_message({"role": "user", "content": "open"})
+        ctx = _ctx()
+        ctx.current_phase = "open_window"
+        ctx._current_sub_window = "open_1"
+        ctx.require_phase_completion = True
+        ctx.tool_call_cache = {}
+        ctx.agent_id = "explicit-phase"
+
+        await loop._run_phase(ctx, max_iter=1, exclude_tools=set())
+
+        assert len(client.calls) == 2
+        assert (
+            ctx.tool_call_cache["_completed_phases"]["open_window:open_1"][
+                "decision"
+            ]
+            == "no_trade"
+        )
+        assert "市场时钟在此之前不会主动推进" in client.calls[0]["messages"][-1]["content"]
+
+    @pytest.mark.asyncio
+    async def test_missing_evidence_tool_stays_available_before_order_retry(self):
+        from traderharness.tools.control import COMPLETE_PHASE
+        from traderharness.tools.registry import ToolDefinition
+
+        order_attempts = 0
+
+        async def order_handler(params, ctx):
+            nonlocal order_attempts
+            order_attempts += 1
+            if order_attempts == 1:
+                return {
+                    "success": False,
+                    "error": "missing valuation",
+                    "error_code": "decision_card_missing_tool_evidence",
+                    "retryable": True,
+                    "retry_kind": "decision_card_correction",
+                    "correction": {
+                        "instruction": "query valuation then retry",
+                        "missing_tools": ["get_valuation"],
+                    },
+                }
+            return {"success": True}
+
+        async def valuation_handler(params, ctx):
+            return {"stock_code": "600519", "pe_ttm": 20.0}
+
+        registry = ToolRegistry()
+        registry.register(
+            ToolDefinition(
+                name="place_order",
+                description="order",
+                parameters={"type": "object", "properties": {}},
+                handler=order_handler,
+            )
+        )
+        registry.register(
+            ToolDefinition(
+                name="get_valuation",
+                description="valuation",
+                parameters={"type": "object", "properties": {}},
+                handler=valuation_handler,
+            )
+        )
+        registry.register(COMPLETE_PHASE)
+        client = StubClient(
+            [
+                {"content": "", "tool_calls": [self._call("order-1", "place_order")]},
+                {"content": "", "tool_calls": [self._call("valuation", "get_valuation")]},
+                {"content": "", "tool_calls": [self._call("order-2", "place_order")]},
+                {
+                    "content": "",
+                    "tool_calls": [
+                        self._call(
+                            "done",
+                            "complete_phase",
+                            {"decision": "trade_complete", "summary": "已成交"},
+                        )
+                    ],
+                },
+            ]
+        )
+        loop = AgentLoop(client, registry, "system")
+        loop._context.add_message({"role": "user", "content": "trade"})
+        ctx = _ctx()
+        ctx.current_phase = "open_window"
+        ctx._current_sub_window = "open_1"
+        ctx.require_phase_completion = True
+        ctx.tool_call_cache = {}
+        ctx.agent_id = "repair-agent"
+
+        await loop._run_phase(ctx, max_iter=1, exclude_tools=set())
+
+        second_surface = {
+            tool["function"]["name"] for tool in client.calls[1]["tools"]
+        }
+        third_surface = {
+            tool["function"]["name"] for tool in client.calls[2]["tools"]
+        }
+        assert {"get_valuation", "place_order", "complete_phase"} <= second_surface
+        assert "get_valuation" not in third_surface
+        assert {"place_order", "complete_phase"} <= third_surface
+        assert order_attempts == 2
+        assert len(client.calls) == 4
 
 
 class TestPhaseChangeEvents:
@@ -167,12 +537,38 @@ class TestPhaseChangeEvents:
 
         await loop.run_day(ctx.current_date, ctx)
 
+        first_request_text = json.dumps(client.calls[0]["messages"], ensure_ascii=False)
+        assert "剩余" not in first_request_text
+        assert "1/1" not in first_request_text
+        assert "研究日" in first_request_text
+
         premarket_names = {tool["function"]["name"] for tool in client.calls[0]["tools"]}
         assert "execute_code" in premarket_names
+        assert "finish_day" not in premarket_names
         for call in client.calls[1:5]:
             window_names = {tool["function"]["name"] for tool in call["tools"]}
             assert "execute_code" not in window_names
+        for call in client.calls[1:4]:
+            assert "finish_day" not in {
+                tool["function"]["name"] for tool in call["tools"]
+            }
+        assert "finish_day" in {
+            tool["function"]["name"] for tool in client.calls[4]["tools"]
+        }
         assert ctx.full_market_research_allowed is True
+
+
+def test_semantic_turn_names_only_the_tools_exposed_in_that_request():
+    ctx = _ctx()
+    ctx.full_market_research_allowed = True
+    allowed = _semantic_premarket_allowed_tools(ctx, 0)
+
+    from traderharness.agents.loop import _available_tools_instruction
+
+    instruction = _available_tools_instruction(allowed)
+
+    assert "get_narrative_news" in instruction
+    assert "get_kline" not in instruction
 
 
 class TestSerializeToolResult:
@@ -181,6 +577,311 @@ class TestSerializeToolResult:
             {"revenue": float("nan"), "eps": float("inf"), "ok": 1.5}
         )
         assert text == '{"revenue": null, "eps": null, "ok": 1.5}'
+
+
+def test_semantic_premarket_stages_constrain_research_workflow_not_verdict():
+    ctx = _ctx()
+    ctx.full_market_research_allowed = True
+
+    stages = [_semantic_premarket_allowed_tools(ctx, index) for index in range(5)]
+
+    assert "get_narrative_news" in stages[0]
+    assert "get_narrative_sector_summary" in stages[1]
+    assert stages[2] & {"execute_code"}
+    assert "get_business_segments" in stages[3]
+    assert "get_valuation" in stages[3]
+    assert "get_announcement_evidence" in stages[3]
+    assert "get_kline" not in stages[3]
+    assert "get_stock_price" not in stages[3]
+    assert "add_watchlist" in stages[4]
+    assert "execute_code" not in stages[3]
+    assert "place_order" not in set().union(*stages)
+
+
+@pytest.mark.asyncio
+async def test_semantic_stage_retries_after_an_unavailable_tool_call():
+    from traderharness.tools.registry import ToolDefinition
+
+    executed = []
+
+    async def handler(params, ctx):
+        executed.append(params["name"])
+        return {"ok": True}
+
+    registry = ToolRegistry()
+    for name in (
+        "get_kline",
+        "get_narrative_news",
+        "get_narrative_market_overview",
+        "get_narrative_sector_summary",
+    ):
+        registry.register(
+            ToolDefinition(
+                name=name,
+                description=name,
+                parameters={
+                    "type": "object",
+                    "properties": {"name": {"type": "string", "default": name}},
+                },
+                handler=handler,
+            )
+        )
+
+    def call(call_id, name):
+        return {
+            "id": call_id,
+            "type": "function",
+            "function": {
+                "name": name,
+                "arguments": '{"name": "' + name + '"}',
+            },
+        }
+
+    client = StubClient(
+        [
+            {
+                "content": "",
+                "tool_calls": [
+                    call("bad-1", "get_kline"),
+                    call("bad-2", "get_kline"),
+                    call("bad-3", "get_kline"),
+                    call("bad-4", "get_kline"),
+                ],
+            },
+            {
+                "content": "",
+                "tool_calls": [
+                    call("news", "get_narrative_news"),
+                    call("market", "get_narrative_market_overview"),
+                ],
+            },
+            {
+                "content": "",
+                "tool_calls": [call("sector", "get_narrative_sector_summary")],
+            },
+        ]
+    )
+    loop = AgentLoop(client, registry, "system")
+    loop._context.add_message({"role": "user", "content": "brief"})
+    ctx = _ctx()
+    ctx.require_decision_card = True
+    ctx.full_market_research_allowed = True
+
+    await loop._run_phase(ctx, max_iter=3, exclude_tools=set())
+
+    schemas = [
+        {tool["function"]["name"] for tool in request["tools"]}
+        for request in client.calls
+    ]
+    assert "get_narrative_news" in schemas[0]
+    assert "get_narrative_news" in schemas[1]
+    assert "get_narrative_sector_summary" in schemas[2]
+    assert executed == [
+        "get_narrative_news",
+        "get_narrative_market_overview",
+        "get_narrative_sector_summary",
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("second_attempt_succeeds", [True, False])
+async def test_semantic_stage_allows_one_traceback_driven_sandbox_correction(
+    second_attempt_succeeds,
+):
+    from traderharness.tools.registry import ToolDefinition
+
+    registry = ToolRegistry()
+
+    async def ok_handler(params, ctx):
+        return {"ok": True}
+
+    sandbox_attempts = 0
+
+    async def correcting_sandbox_handler(params, ctx):
+        nonlocal sandbox_attempts
+        sandbox_attempts += 1
+        ctx.tool_call_cache["_sandbox_call_count"] = sandbox_attempts
+        if sandbox_attempts == 1:
+            ctx.tool_call_cache["_sandbox_last_error"] = True
+            return {"stdout": "partial table", "error": "KeyError: chg_5d"}
+        ctx.tool_call_cache["_sandbox_last_error"] = not second_attempt_succeeds
+        if second_attempt_succeeds:
+            return {"stdout": "corrected evidence table"}
+        return {"error": "KeyError: still_broken"}
+
+    for name in (
+        "get_narrative_news",
+        "get_narrative_market_overview",
+        "get_narrative_sector_summary",
+        "get_stock_info",
+        "get_business_segments",
+        "get_valuation",
+        "add_watchlist",
+        "get_kline",
+    ):
+        registry.register(
+            ToolDefinition(
+                name=name,
+                description=name,
+                parameters={"type": "object", "properties": {}},
+                handler=ok_handler,
+            )
+        )
+    registry.register(
+        ToolDefinition(
+            name="execute_code",
+            description="execute",
+            parameters={"type": "object", "properties": {}},
+            handler=correcting_sandbox_handler,
+        )
+    )
+
+    def call(call_id, name):
+        return {
+            "id": call_id,
+            "type": "function",
+            "function": {"name": name, "arguments": "{}"},
+        }
+
+    client = StubClient(
+        [
+            {
+                "content": "",
+                "tool_calls": [
+                    call("news", "get_narrative_news"),
+                    call("market", "get_narrative_market_overview"),
+                ],
+            },
+            {
+                "content": "",
+                "tool_calls": [call("sector", "get_narrative_sector_summary")],
+            },
+            {"content": "", "tool_calls": [call("code-1", "execute_code")]},
+            {"content": "", "tool_calls": [call("code-2", "execute_code")]},
+            {"content": "", "tool_calls": [call("stock", "get_stock_info")]},
+            {
+                "content": "",
+                "tool_calls": [
+                    call("business", "get_business_segments"),
+                    call("valuation", "get_valuation"),
+                ],
+            },
+            {"content": "", "tool_calls": [call("review", "get_kline")]},
+            {"content": "", "tool_calls": [call("watch", "add_watchlist")]},
+        ]
+    )
+    loop = AgentLoop(client, registry, "system")
+    loop._context.add_message({"role": "user", "content": "brief"})
+    ctx = _ctx()
+    ctx.require_decision_card = True
+    ctx.full_market_research_allowed = True
+    ctx.sandbox_max_calls_per_day = 2
+    ctx.tool_call_cache = {}
+
+    await loop._run_phase(ctx, max_iter=8, exclude_tools=set())
+
+    fourth_schema = {
+        tool["function"]["name"] for tool in client.calls[3]["tools"]
+    }
+    fifth_schema = {
+        tool["function"]["name"] for tool in client.calls[4]["tools"]
+    }
+    assert "execute_code" in fourth_schema
+    assert "get_stock_info" not in fourth_schema
+    assert "get_stock_info" in fifth_schema
+    sixth_schema = {
+        tool["function"]["name"] for tool in client.calls[5]["tools"]
+    }
+    seventh_schema = {
+        tool["function"]["name"] for tool in client.calls[6]["tools"]
+    }
+    eighth_schema = {
+        tool["function"]["name"] for tool in client.calls[7]["tools"]
+    }
+    assert "get_stock_info" not in sixth_schema
+    assert {"get_business_segments", "get_valuation"} <= sixth_schema
+    assert "Still missing required tools" in client.calls[5]["messages"][-1]["content"]
+    assert "add_watchlist" in seventh_schema
+    assert "get_kline" in seventh_schema
+    assert "get_kline" not in eighth_schema
+    assert "add_watchlist" in eighth_schema
+    assert sandbox_attempts == 2
+    correction_prompt = client.calls[3]["messages"][-1]["content"]
+    assert "controlled code correction" in correction_prompt
+    assert "one final execute_code attempt" in correction_prompt
+    sandbox_message = next(
+        message
+        for message in loop._context._messages
+        if message.get("role") == "tool" and message.get("tool_call_id") == "code-1"
+    )
+    assert "KeyError: chg_5d" in sandbox_message["content"]
+
+
+@pytest.mark.asyncio
+async def test_nonresearch_day_skips_duplicate_candidate_deep_dive():
+    from traderharness.tools.registry import ToolDefinition
+
+    registry = ToolRegistry()
+
+    async def handler(params, ctx):
+        return {"ok": True}
+
+    for name in (
+        "get_narrative_news",
+        "get_narrative_market_overview",
+        "get_narrative_sector_summary",
+        "get_stock_info",
+        "add_watchlist",
+    ):
+        registry.register(
+            ToolDefinition(
+                name=name,
+                description=name,
+                parameters={"type": "object", "properties": {}},
+                handler=handler,
+            )
+        )
+
+    def call(call_id, name):
+        return {
+            "id": call_id,
+            "type": "function",
+            "function": {"name": name, "arguments": "{}"},
+        }
+
+    client = StubClient(
+        [
+            {
+                "content": "",
+                "tool_calls": [
+                    call("news", "get_narrative_news"),
+                    call("market", "get_narrative_market_overview"),
+                ],
+            },
+            {
+                "content": "",
+                "tool_calls": [call("sector", "get_narrative_sector_summary")],
+            },
+            {"content": "", "tool_calls": [call("stock", "get_stock_info")]},
+            {"content": "", "tool_calls": [call("watch", "add_watchlist")]},
+        ]
+    )
+    loop = AgentLoop(client, registry, "system")
+    loop._context.add_message({"role": "user", "content": "brief"})
+    ctx = _ctx()
+    ctx.require_decision_card = True
+    ctx.full_market_research_allowed = False
+
+    await loop._run_phase(ctx, max_iter=7, exclude_tools=set())
+
+    assert len(client.calls) == 4
+    assert "get_stock_info" in {
+        tool["function"]["name"] for tool in client.calls[2]["tools"]
+    }
+    assert "add_watchlist" in {
+        tool["function"]["name"] for tool in client.calls[3]["tools"]
+    }
+    assert "Monitoring step 3/4" in client.calls[2]["messages"][-1]["content"]
 
 
 class _MarkingEntityMasker:
@@ -213,6 +914,70 @@ class _PlayerClient:
 
 
 class TestReplaySkipsResponseSanitization:
+    @pytest.mark.asyncio
+    async def test_replay_keeps_decision_card_schema_for_agent_that_requires_it(self):
+        from traderharness.tools.registry import ToolDefinition
+
+        client = _PlayerClient({"content": "done"})
+        registry = ToolRegistry()
+        registry.register(
+            ToolDefinition(
+                name="place_order",
+                description="order",
+                parameters={
+                    "type": "object",
+                    "properties": {"decision_card": {"type": "object"}},
+                },
+                handler=lambda params, ctx: None,
+            )
+        )
+        loop = AgentLoop(client, registry, "system")
+        loop._context.add_message({"role": "user", "content": "trade"})
+        ctx = _ctx()
+        ctx.current_phase = "open_window"
+        ctx.require_decision_card = True
+
+        await loop._run_phase(ctx, max_iter=1, exclude_tools=set())
+
+        place_order = next(
+            tool
+            for tool in client.calls[0]["tools"]
+            if tool["function"]["name"] == "place_order"
+        )
+        assert "decision_card" in place_order["function"]["parameters"]["properties"]
+
+    @pytest.mark.asyncio
+    async def test_legacy_replay_still_removes_optional_decision_card_schema(self):
+        from traderharness.tools.registry import ToolDefinition
+
+        client = _PlayerClient({"content": "done"})
+        registry = ToolRegistry()
+        registry.register(
+            ToolDefinition(
+                name="place_order",
+                description="order",
+                parameters={
+                    "type": "object",
+                    "properties": {"decision_card": {"type": "object"}},
+                },
+                handler=lambda params, ctx: None,
+            )
+        )
+        loop = AgentLoop(client, registry, "system")
+        loop._context.add_message({"role": "user", "content": "trade"})
+        ctx = _ctx()
+        ctx.current_phase = "open_window"
+        ctx.require_decision_card = False
+
+        await loop._run_phase(ctx, max_iter=1, exclude_tools=set())
+
+        place_order = next(
+            tool
+            for tool in client.calls[0]["tools"]
+            if tool["function"]["name"] == "place_order"
+        )
+        assert "decision_card" not in place_order["function"]["parameters"]["properties"]
+
     @pytest.mark.asyncio
     async def test_replay_does_not_re_sanitize_cassette_output(self):
         tool_call = {

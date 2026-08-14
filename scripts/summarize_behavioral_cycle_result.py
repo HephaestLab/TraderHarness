@@ -80,6 +80,96 @@ def summarize(path: Path, agent_id: str | None = None) -> dict[str, Any]:
         and "get_behavioral_features" in str(step["data"].get("args", {}).get("code", ""))
     ]
     order_steps = [step for step in tool_steps if step["data"]["name"] == "place_order"]
+    decision_card_retry_steps = [
+        step for step in steps if step.get("type") == "decision_card_retry"
+    ]
+    sandbox_retry_steps = [
+        step for step in steps if step.get("type") == "sandbox_retry"
+    ]
+    order_error_codes = Counter(
+        str(step["data"]["result"]["error_code"])
+        for step in order_steps
+        if isinstance(step["data"].get("result"), dict)
+        and step["data"]["result"].get("error_code")
+    )
+    successful_buy_steps = [
+        step
+        for step in order_steps
+        if step["data"].get("args", {}).get("action") == "buy"
+        and isinstance(step["data"].get("result"), dict)
+        and step["data"]["result"].get("success") is True
+    ]
+    narrative_contract_tokens = {
+        "mode": "MODE=",
+        "theme": "THEME=",
+        "text_evidence": "TEXT_EVIDENCE=",
+        "sector_evidence": "SECTOR_EVIDENCE=",
+        "leader_evidence": "LEADER_EVIDENCE=",
+        "counter_evidence": "COUNTER_EVIDENCE=",
+        "invalidation": "INVALIDATION=",
+    }
+    buy_hypotheses = [
+        str(step["data"].get("args", {}).get("behavior_hypothesis", ""))
+        for step in successful_buy_steps
+    ]
+    decision_cards = [
+        step["data"].get("args", {}).get("decision_card")
+        for step in successful_buy_steps
+    ]
+    decision_cards = [card for card in decision_cards if isinstance(card, dict)]
+    legacy_mode_counts = Counter()
+    for hypothesis in buy_hypotheses:
+        for mode in ("leader_attack", "high_low_rotation"):
+            if f"MODE={mode}" in hypothesis:
+                legacy_mode_counts[mode] += 1
+                break
+        else:
+            legacy_mode_counts["missing_or_invalid"] += 1
+    legacy_narrative_contract_coverage = {
+        field: {
+            "count": sum(token in hypothesis for hypothesis in buy_hypotheses),
+            "pct": round(
+                100 * sum(token in hypothesis for hypothesis in buy_hypotheses)
+                / len(buy_hypotheses),
+                1,
+            )
+            if buy_hypotheses
+            else 0.0,
+        }
+        for field, token in narrative_contract_tokens.items()
+    }
+    decision_card_fields = (
+        "mode",
+        "theme",
+        "text_evidence_ids",
+        "business_fit",
+        "sector_state",
+        "sector_confirmation",
+        "candidate_role",
+        "leadership_comparison",
+        "best_expression_reason",
+        "candidate_rank",
+        "stronger_candidate_status",
+        "execution_compromise",
+        "counter_evidence",
+        "invalidation",
+    )
+    decision_card_coverage = {
+        field: {
+            "count": sum(bool(card.get(field)) for card in decision_cards),
+            "pct": round(
+                100 * sum(bool(card.get(field)) for card in decision_cards)
+                / len(decision_cards),
+                1,
+            )
+            if decision_cards
+            else 0.0,
+        }
+        for field in decision_card_fields
+    }
+    mode_counts = Counter(
+        str(card.get("mode", "missing_or_invalid")) for card in decision_cards
+    )
     order_groups: defaultdict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     for step in order_steps:
         args = step["data"].get("args", {})
@@ -302,7 +392,41 @@ def summarize(path: Path, agent_id: str | None = None) -> dict[str, Any]:
             "tool_errors": dict(tool_errors.most_common()),
             "behavioral_feature_calls": len(feature_steps),
             "behavioral_feature_dates": sorted({str(step.get("date")) for step in feature_steps}),
+            "decision_card_retry_events": len(decision_card_retry_steps),
+            "decision_card_retry_dates": sorted(
+                {str(step.get("date")) for step in decision_card_retry_steps}
+            ),
+            "sandbox_retry_events": len(sandbox_retry_steps),
+            "sandbox_retry_dates": sorted(
+                {str(step.get("date")) for step in sandbox_retry_steps}
+            ),
+            "place_order_error_codes": dict(order_error_codes.most_common()),
             "duplicate_order_attempt_groups": duplicate_order_groups,
+        },
+        "narrative_strategy": {
+            "text_tool_calls": {
+                name: tool_counts.get(name, 0)
+                for name in (
+                    "get_narrative_news",
+                    "get_announcement_evidence",
+                    "get_narrative_sector_summary",
+                )
+            },
+            "successful_buy_orders": len(successful_buy_steps),
+            "mode_counts": dict(mode_counts),
+            "decision_card_coverage": decision_card_coverage,
+            "legacy_hypothesis_tag_coverage": legacy_narrative_contract_coverage,
+            "legacy_mode_counts": dict(legacy_mode_counts),
+            "decision_card_count": len(decision_cards),
+            "decision_card_modes": dict(
+                Counter(str(card.get("mode", "missing")) for card in decision_cards)
+            ),
+            "decision_card_roles": dict(
+                Counter(str(card.get("candidate_role", "missing")) for card in decision_cards)
+            ),
+            "decision_card_sector_states": dict(
+                Counter(str(card.get("sector_state", "missing")) for card in decision_cards)
+            ),
         },
         "execution": {
             "buy_count": sum(trade["action"] == "buy" for trade in trades),
@@ -338,8 +462,10 @@ def summarize(path: Path, agent_id: str | None = None) -> dict[str, Any]:
             )
             if total_closed_quantity
             else None,
-            "top_realized_pnl_by_canonical_code": top_realized[:10],
-            "bottom_realized_pnl_by_canonical_code": top_realized[-10:],
+            # Persisted masked results contain pseudocodes. Never claim these
+            # values are canonical identities unless a revealer was supplied.
+            "top_realized_pnl_by_visible_code": top_realized[:10],
+            "bottom_realized_pnl_by_visible_code": top_realized[-10:],
             "realized_pnl_by_month": {
                 month: round(float(pnl), 2) for month, pnl in sorted(pnl_by_month.items())
             },

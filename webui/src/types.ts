@@ -87,6 +87,7 @@ export interface ResultSummary {
   agents?: ComparisonAgentSummary[];
   best_agent_id?: string;
   best_return?: number;
+  error?: string;
 }
 
 export interface Trade {

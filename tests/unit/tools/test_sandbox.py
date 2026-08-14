@@ -82,14 +82,29 @@ class TestExecuteCodeBasic:
         ctx.sandbox_max_calls_per_day = 2
 
         failed = await handle_execute_code({"code": "raise RuntimeError('retry')"}, ctx)
-        first = await handle_execute_code({"code": "result = 1"}, ctx)
-        second = await handle_execute_code({"code": "result = 2"}, ctx)
-        third = await handle_execute_code({"code": "result = 3"}, ctx)
+        corrected = await handle_execute_code({"code": "result = 1"}, ctx)
+        blocked = await handle_execute_code({"code": "result = 2"}, ctx)
 
         assert "RuntimeError" in failed["error"]
-        assert first["result"] == 1
-        assert second["result"] == 2
-        assert "daily limit reached" in third["error"]
+        assert corrected["result"] == 1
+        assert "daily limit reached" in blocked["error"]
+        assert ctx.tool_call_cache["_sandbox_call_count"] == 2
+        assert ctx.tool_call_cache["_sandbox_last_error"] is False
+
+    @pytest.mark.asyncio
+    async def test_two_failed_attempts_exhaust_the_daily_call_limit(self):
+        ctx = _make_ctx()
+        ctx.sandbox_max_calls_per_day = 2
+
+        first = await handle_execute_code({"code": "raise KeyError('first')"}, ctx)
+        second = await handle_execute_code({"code": "raise KeyError('second')"}, ctx)
+        blocked = await handle_execute_code({"code": "result = 3"}, ctx)
+
+        assert "KeyError" in first["error"]
+        assert "KeyError" in second["error"]
+        assert "daily limit reached" in blocked["error"]
+        assert ctx.tool_call_cache["_sandbox_call_count"] == 2
+        assert ctx.tool_call_cache["_sandbox_last_error"] is True
 
 
 class TestExecuteCodeWithAPI:

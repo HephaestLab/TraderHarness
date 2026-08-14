@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>TraderHarness Promo v5</title>
+<style>
+  html, body { margin:0; height:100%; background:#000; overflow:hidden;
+    font-family: system-ui, "PingFang SC", "Microsoft YaHei", sans-serif; }
+  #stage { position:fixed; inset:0; perspective:1400px; perspective-origin:50% 46%; }
+  .rig { position:absolute; left:50%; top:46%; transform:translate(-50%,-50%);
+    transform-style:preserve-3d; }
+  .slab { position:relative; transform-style:preserve-3d; }
+  .slab img.main { display:block; width:100%; border-radius:12px; position:relative; z-index:2; }
+  .slab img.bloom { position:absolute; left:-3%; top:-3%; width:106%; height:106%; z-index:1;
+    filter: blur(42px) saturate(1.15) brightness(1.05); }
+  .slab .refl { position:absolute; top:100%; left:0; width:100%; height:36%; overflow:hidden; z-index:1;
+    -webkit-mask-image: linear-gradient(to bottom, rgba(0,0,0,.55), transparent 78%);
+    mask-image: linear-gradient(to bottom, rgba(0,0,0,.55), transparent 78%); }
+  .slab .refl img { width:100%; transform:scaleY(-1); filter: blur(2px) brightness(.75); }
+  .cap { position:fixed; left:0; right:0; text-align:center; color:rgba(255,255,255,.92);
+    font-weight:500; letter-spacing:.12em; opacity:0; z-index:30; pointer-events:none;
+    text-shadow: 0 2px 24px rgba(0,0,0,.9), 0 0 60px rgba(0,0,0,.7); }
+  .panel { position:relative; border-radius:14px; background:rgba(255,255,255,.028);
+    border:1px solid rgba(255,255,255,.16); }
+  .pglow { position:absolute; inset:-8%; border-radius:26px; z-index:-1;
+    background: radial-gradient(ellipse at center, rgba(43,217,124,.14), transparent 70%);
+    filter: blur(30px); }
+  .mono { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; }
+  #sweep { position:fixed; top:-25%; left:0; width:46%; height:150%; z-index:42; opacity:0;
+    pointer-events:none;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,.09) 42%,
+      rgba(255,255,255,.15) 50%, rgba(255,255,255,.09) 58%, transparent); }
+  #vig { position:fixed; inset:0; z-index:44; pointer-events:none;
+    background: radial-gradient(ellipse at 50% 46%, transparent 52%, rgba(0,0,0,.5) 100%); }
+  #grain { position:fixed; inset:-256px; z-index:46; pointer-events:none;
+    background-image: url("assets/img/grain.png"); background-repeat: repeat; }
+  .dust { position:fixed; z-index:20; border-radius:50%; pointer-events:none; }
+  .scene { position:fixed; inset:0; z-index:10; display:none; }
+  .fppanel { position:absolute; width:560px; height:220px; }
+  .fppanel svg { display:block; width:100%; height:100%; }
+  .fplabel { position:absolute; top:14px; left:18px; font-size:20px; letter-spacing:.14em;
+    color:rgba(255,255,255,.4); }
+  .fppath { fill:none; stroke:rgba(255,255,255,.85); stroke-width:2;
+    filter: drop-shadow(0 0 6px rgba(43,217,124,.55)); }
+  .maskrow { position:absolute; left:70px; right:70px; height:70px; font-size:34px;
+    display:flex; align-items:center; letter-spacing:.06em; white-space:nowrap; }
+  .maskband { position:absolute; top:6%; bottom:6%; width:90px; opacity:0;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,.30) 45%,
+      rgba(43,217,124,.5) 55%, transparent);
+    filter: blur(6px); }
+  #ordercard { position:absolute; width:360px; height:190px; border-radius:12px;
+    background:rgba(10,14,12,.92); border:1px solid rgba(255,255,255,.28);
+    padding:22px 26px; box-sizing:border-box; }
+  #ordercard .orow { font-size:24px; color:rgba(255,255,255,.85); margin:10px 0;
+    letter-spacing:.05em; white-space:nowrap; }
+  #stamp { position:absolute; left:50%; bottom:14px; transform:translateX(-50%);
+    font-size:24px; letter-spacing:.1em; color:#2BD97C; white-space:nowrap;
+    border:1.5px solid rgba(43,217,124,.85); border-radius:8px; padding:6px 14px;
+    opacity:0; background:rgba(43,217,124,.08); }
+  #gate { position:absolute; width:300px; height:380px; }
+  #gate .frame { position:absolute; inset:0; border-radius:10px;
+    border-left:3px solid rgba(43,217,124,.8); border-right:3px solid rgba(43,217,124,.8);
+    border-top:3px solid rgba(43,217,124,.8); border-bottom:none; }
+  #gate .glabel { position:absolute; top:-46px; left:50%; transform:translateX(-50%);
+    font-size:26px; color:rgba(43,217,124,.9); letter-spacing:.08em; white-space:nowrap; }
+  .cline { position:absolute; left:0; right:0; text-align:center; font-size:36px;
+    color:rgba(255,255,255,.85); font-weight:500; letter-spacing:.1em; opacity:0; }
+  .flow { position:absolute; height:1px; width:420px; opacity:0;
+    background: linear-gradient(90deg, transparent, rgba(43,217,124,.7), rgba(255,255,255,.9), transparent); }
+  #cassette { position:absolute; left:50%; top:50%; width:760px; height:320px;
+    transform: translate(-50%,-50%); border-radius:18px;
+    background: rgba(255,255,255,.028); border: 1px solid rgba(255,255,255,.22); }
+  #white { position:fixed; inset:0; background:#fff; z-index:100; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <!-- hero slab: S0 hook + S2 brand -->
+  <div class="rig" id="heroRig">
+    <div class="slab" id="heroSlab" style="width:840px">
+      <img class="bloom" src="assets/img/live-control-room.png" alt="">
+      <img class="main" id="heroMain" src="assets/img/live-control-room.png" alt="">
+      <div class="refl"><img src="assets/img/live-control-room.png" alt=""></div>
+    </div>
+  </div>
+
+  <!-- S1 shot 1: leakage timeline -->
+  <div class="scene" id="s1a">
+    <div class="rig" style="top:44%">
+      <div class="panel" id="tlpanel" style="width:1300px;height:300px">
+        <div class="pglow"></div>
+        <svg id="tlsvg" viewBox="0 0 1300 300" width="1300" height="300"></svg>
+      </div>
+    </div>
+    <div class="cap" id="tlw0" style="top:72%;font-size:46px;left:-320px">日期</div>
+    <div class="cap" id="tlw1" style="top:72%;font-size:46px">公司</div>
+    <div class="cap" id="tlw2" style="top:72%;font-size:46px;left:360px">走势本身</div>
+  </div>
+
+  <!-- S1 shot 2: fingerprint drift -->
+  <div class="scene" id="s1b">
+    <div class="rig" style="top:44%">
+      <div style="position:relative;width:1240px;height:240px">
+        <div class="panel fppanel" style="left:0;top:0"><div class="pglow"></div>
+          <div class="fplabel mono">RUN A</div>
+          <svg viewBox="0 0 560 220"><path class="fppath" id="fpA0"/></svg></div>
+        <div class="panel fppanel" id="fpB0p" style="right:0;top:0"><div class="pglow"></div>
+          <div class="fplabel mono">RUN B</div>
+          <svg viewBox="0 0 560 220"><path class="fppath" id="fpB0"/></svg></div>
+      </div>
+    </div>
+    <div class="cap" id="capNoRepro" style="top:74%;font-size:56px">无法复现</div>
+  </div>
+
+  <!-- S3 shot 1: mask sweep -->
+  <div class="scene" id="s3a">
+    <div class="rig" style="top:44%">
+      <div class="panel" id="maskpanel" style="width:1150px;height:320px;overflow:hidden">
+        <div class="pglow"></div>
+        <div id="maskRaw" style="position:absolute;inset:0"></div>
+        <div id="maskNew" style="position:absolute;inset:0"></div>
+        <div class="maskband" id="maskband"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- S3 shot 2: the only gate -->
+  <div class="scene" id="s3b">
+    <div class="rig" style="top:46%">
+      <div class="panel" style="width:1100px;height:520px">
+        <div class="pglow"></div>
+        <div id="gate" style="left:580px;top:70px">
+          <div class="glabel mono">place_order</div>
+          <div class="frame"></div>
+        </div>
+        <div id="ordercard">
+          <div class="orow mono">SELL · ASSET_032</div>
+          <div class="orow mono">price 9.62 · 20000</div>
+          <div id="stamp" class="mono">FILLED · 真实价格</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- S3 shot 3: fingerprint merge -->
+  <div class="scene" id="s3c">
+    <div class="rig" style="top:44%">
+      <div style="position:relative;width:1240px;height:240px">
+        <div class="panel fppanel" id="fpA1p" style="left:0;top:0"><div class="pglow"></div>
+          <div class="fplabel mono">RUN A</div>
+          <svg viewBox="0 0 560 220"><path class="fppath" id="fpA1"/></svg></div>
+        <div class="panel fppanel" id="fpB1p" style="right:0;top:0"><div class="pglow"></div>
+          <div class="fplabel mono">RUN B</div>
+          <svg viewBox="0 0 560 220"><path class="fppath" id="fpB1"/></svg></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- S4: cassette -->
+  <div class="scene" id="s4">
+    <div class="flow" id="flow0"></div><div class="flow" id="flow1"></div>
+    <div class="flow" id="flow2"></div><div class="flow" id="flow3"></div>
+    <div class="flow" id="flow4"></div><div class="flow" id="flow5"></div>
+    <div id="cassette">
+      <div class="pglow"></div>
+      <div class="cline" id="cl0" style="top:92px">全保真轨迹</div>
+      <div class="cline" id="cl1" style="top:190px">指纹回放 · 一键导出</div>
+    </div>
+  </div>
+
+  <!-- S5 CTA -->
+  <div class="scene" id="s5">
+    <div class="cap" id="s5title" style="top:34%;font-size:120px;letter-spacing:.04em">TraderHarness</div>
+    <div class="cap" id="s5tag"   style="top:55%;font-size:44px">让每一次回测，值得被信任。</div>
+    <div class="cap" id="s5links" style="top:66%;font-size:22px;letter-spacing:.06em;color:rgba(255,255,255,.45)">github.com/HephaestLab/TraderHarness&nbsp;&nbsp;·&nbsp;&nbsp;pip install traderharness</div>
+  </div>
+
+  <!-- captions -->
+  <div class="cap" id="cap0" style="top:76%;font-size:54px">给 Agent 做回测，<span id="cap0b">至今没有规范。</span></div>
+  <div class="cap" id="brand" style="top:70%;font-size:84px">TraderHarness</div>
+  <div class="cap" id="brandsub" style="top:82%;font-size:24px;letter-spacing:.14em;color:rgba(255,255,255,.6)">抗污染回测环境 · 训练数据合成器</div>
+  <div class="cap" id="mcap" style="top:84%;font-size:52px"></div>
+
+  <div id="sweep"></div>
+  <div id="vig"></div>
+  <div id="grain"></div>
+  <div id="white"></div>
+</div>
+
+<script>
+"use strict";
+/* ============ TOKENS ============ */
+const TOKENS = {
+  GLOW: "43,217,124",          // product green #2BD97C (only glow color)
+  RIM_BASE: 0.55, RIM_FLICKER: 0.18,
+  BLOOM_OPACITY: 0.5,
+  REFL_OPACITY: 0.15,
+  PERSPECTIVE: 1400,
+  GRAIN_OPACITY: 0.03,
+  DUST_N: 16,
+  SWEEP_DUR: 0.6,
+};
+
+/* ============ timeline (durations.json, v5) ============ */
+const DUR = [3.768, 11.880, 7.080, 9.624, 6.672, 5.328];
+const GAP = 0.12, FREEZE = 3.0;
+const S = [0];
+for (let i = 1; i < 6; i++) S.push(S[i - 1] + DUR[i - 1] + GAP);
+const TOTAL = S[5] + DUR[5] + FREEZE;                    // 47.952
+const S1MID = S[1] + 6.3;                                // pain shot 1 -> shot 2
+const W3 = DUR[3] / 3;                                   // proof window length
+const SWEEPS = [0.15, S[1], S1MID, S[2], S[3], S[3] + W3, S[3] + 2 * W3, S[4], S[5]];
+
+/* ============ helpers ============ */
+const clamp01 = v => Math.max(0, Math.min(1, v));
+const lerp = (a, b, p) => a + (b - a) * p;
+function ease(x) {
+  x = clamp01(x);
+  const x1 = .16, y1 = .66, x2 = .28, y2 = 1;
+  const A = (a1, a2) => 1 - 3 * a2 + 3 * a1;
+  const B = (a1, a2) => 3 * a2 - 6 * a1;
+  const C = a1 => 3 * a1;
+  const calc = (t, a1, a2) => ((A(a1, a2) * t + B(a1, a2)) * t + C(a1)) * t;
+  let t = x;
+  for (let i = 0; i < 5; i++) {
+    const err = calc(t, x1, x2) - x;
+    const der = (3 * A(x1, x2) * t + 2 * B(x1, x2)) * t + C(x1);
+    if (Math.abs(err) < 1e-5 || Math.abs(der) < 1e-6) break;
+    t -= err / der;
+  }
+  return calc(clamp01(t), y1, y2);
+}
+const e01 = x => ease(clamp01(x));
+const $ = id => document.getElementById(id);
+const G = TOKENS.GLOW;
+
+/* ============ dust + grain ============ */
+const dust = [];
+for (let i = 0; i < TOKENS.DUST_N; i++) {
+  const d = document.createElement("div");
+  d.className = "dust";
+  const sz = 2 + (i * 7 % 3);
+  d.style.width = d.style.height = sz + "px";
+  d.style.background = i % 4 === 0 ? `rgba(${G},.5)` : "rgba(255,255,255,.55)";
+  d.style.filter = `blur(${1 + (i % 3)}px)`;
+  document.getElementById("stage").appendChild(d);
+  dust.push({ el: d, x0: (i * 137.5) % 1920, y0: (i * 289.3) % 1080,
+    sp: 0.12 + (i % 5) * 0.05, ph: i * 1.7, amp: 26 + (i % 4) * 14,
+    op: 0.10 + (i % 4) * 0.05 });
+}
+const GRAIN_OFF = [[0,0],[37,91],[128,41],[73,167],[201,88],[19,213],[156,130],[88,24]];
+
+/* ============ fingerprint waveform (deterministic) ============ */
+function wavePath(w, h, seed) {
+  const comp = [[3, 0.50], [7, 0.30], [13, 0.20]];
+  let d = "";
+  for (let x = 0; x <= w; x += 7) {
+    let y = 0;
+    for (let i = 0; i < 3; i++)
+      y += comp[i][1] * Math.sin(x / w * Math.PI * 2 * comp[i][0] + seed * (i + 1) * 1.31);
+    y = h / 2 + y * h * 0.30;
+    d += (x === 0 ? "M" : "L") + x.toFixed(1) + "," + y.toFixed(1);
+  }
+  return d;
+}
+const WAVE = wavePath(560, 220, 2.7);
+for (const id of ["fpA0", "fpB0", "fpA1", "fpB1"]) $(id).setAttribute("d", WAVE);
+
+/* ============ S1a timeline svg (built once, animated per frame) ============ */
+const tlsvg = $("tlsvg");
+const SVGNS = "http://www.w3.org/2000/svg";
+const DIVX = 500;                       // divider between AGENT zone and test zone
+function el(n, attrs) {
+  const e = document.createElementNS(SVGNS, n);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  return e;
+}
+tlsvg.appendChild(el("line", { x1: 60, y1: 150, x2: 1240, y2: 150,
+  stroke: "rgba(255,255,255,.28)", "stroke-width": 1.5 }));
+tlsvg.appendChild(el("line", { x1: DIVX, y1: 108, x2: DIVX, y2: 192,
+  stroke: `rgba(${G},.6)`, "stroke-width": 1.5, "stroke-dasharray": "5 6" }));
+const labA = el("text", { x: 92, y: 142, fill: "rgba(255,255,255,.55)",
+  "font-size": 26, "letter-spacing": 4 });
+labA.textContent = "AGENT";
+tlsvg.appendChild(labA);
+const labT = el("text", { x: 1080, y: 142, fill: "rgba(255,255,255,.30)",
+  "font-size": 22, "letter-spacing": 3 });
+labT.textContent = "被测区间";
+tlsvg.appendChild(labT);
+/* ambient dots + 3 word dots that backflow from future into the AGENT zone */
+const TLDOTS = [];
+for (let i = 0; i < 5; i++) {
+  const c = el("circle", { r: 5, fill: `rgba(${G},.75)`, cy: 150,
+    style: `filter:drop-shadow(0 0 6px rgba(${G},.8))` });
+  tlsvg.appendChild(c);
+  TLDOTS.push({ el: c, x0: 620 + i * 130, sp: 22 + (i % 3) * 8, word: -1 });
+}
+const WORD_BEAT = [1.6, 2.7, 3.8];
+for (let k = 0; k < 3; k++) {
+  const c = el("circle", { r: 8, fill: "#fff", cy: 150,
+    style: `filter:drop-shadow(0 0 10px rgba(${G},.9))` });
+  tlsvg.appendChild(c);
+  TLDOTS.push({ el: c, x0: 0, sp: 70, word: k });
+}
+
+/* ============ S3a mask rows (built once) ============ */
+const RAW = ["2024/03/05 · 公司-600608", "2024/03/06 · 公司-000063", "2024/03/07 · 公司-300750"];
+const MSK = ["DAY_0417 · ASSET_032", "DAY_0418 · ASSET_107", "DAY_0419 · ASSET_256"];
+for (let r = 0; r < 3; r++) {
+  const a = document.createElement("div");
+  a.className = "maskrow mono";
+  a.style.top = (46 + r * 82) + "px";
+  a.style.color = "rgba(255,255,255,.34)";
+  a.textContent = RAW[r];
+  $("maskRaw").appendChild(a);
+  const b = document.createElement("div");
+  b.className = "maskrow mono";
+  b.style.top = (46 + r * 82) + "px";
+  b.style.color = `rgba(${G},.95)`;
+  b.style.textShadow = `0 0 18px rgba(${G},.45)`;
+  b.textContent = MSK[r];
+  $("maskNew").appendChild(b);
+}
+
+/* ============ handles ============ */
+const heroRig = $("heroRig"), heroMain = $("heroMain");
+const heroRefl = document.querySelector("#heroSlab .refl");
+const heroBloom = document.querySelector("#heroSlab .bloom");
+const scenes = { s1a: $("s1a"), s1b: $("s1b"), s3a: $("s3a"), s3b: $("s3b"),
+  s3c: $("s3c"), s4: $("s4"), s5: $("s5") };
+const sweep = $("sweep"), grain = $("grain"), white = $("white");
+const cap0 = $("cap0"), cap0b = $("cap0b"), brand = $("brand"), brandsub = $("brandsub");
+const mcap = $("mcap"), capNoRepro = $("capNoRepro");
+const tlw = [$("tlw0"), $("tlw1"), $("tlw2")];
+const maskNew = $("maskNew"), maskRaw = $("maskRaw"), maskband = $("maskband");
+const ordercard = $("ordercard"), gate = $("gate"), stamp = $("stamp");
+const clines = [$("cl0"), $("cl1")];
+const flows = [$("flow0"), $("flow1"), $("flow2"), $("flow3"), $("flow4"), $("flow5")];
+const s5title = $("s5title"), s5tag = $("s5tag"), s5links = $("s5links");
+
+function rimShadow(a) {
+  return `0 0 0 1px rgba(${G},${a}), 0 0 26px rgba(${G},${a * 0.4}), 0 34px 90px rgba(0,0,0,.85)`;
+}
+function showOnly(names) {
+  for (const k in scenes) scenes[k].style.display = names.includes(k) ? "block" : "none";
+}
+
+/* ============ frame ============ */
+function frame(t) {
+  const gi = Math.floor(t * 12.5) % 8;
+  grain.style.transform = `translate(${GRAIN_OFF[gi][0]}px,${GRAIN_OFF[gi][1]}px)`;
+  grain.style.opacity = TOKENS.GRAIN_OPACITY;
+  for (const d of dust) {
+    const x = d.x0 + Math.sin(t * d.sp + d.ph) * d.amp + t * 3;
+    const y = d.y0 + Math.cos(t * d.sp * 0.8 + d.ph) * d.amp * 0.6;
+    d.el.style.transform = `translate(${x % 1960}px,${y % 1120}px)`;
+    d.el.style.opacity = d.op * (0.6 + 0.4 * Math.sin(t * 0.5 + d.ph));
+  }
+  let swOn = false;
+  for (const ts of SWEEPS) {
+    const p = (t - ts) / TOKENS.SWEEP_DUR;
+    if (p >= 0 && p <= 1) {
+      sweep.style.opacity = Math.sin(p * Math.PI) * 0.9;
+      sweep.style.transform = `translateX(${lerp(-700, 2500, e01(p))}px) rotate(18deg)`;
+      swOn = true;
+      break;
+    }
+  }
+  if (!swOn) sweep.style.opacity = 0;
+
+  /* ---------- hero slab: S0 hook / S2 brand ---------- */
+  const heroOn = t < S[1] + 0.4 || (t >= S[2] - 0.05 && t < S[3] + 0.45);
+  if (heroOn) {
+    heroRig.style.display = "block";
+    let ry, rx, sc, op = 1, br = 1;
+    if (t < S[1]) {
+      const l = t, p = e01(l / DUR[0]);
+      ry = lerp(-8, -4, p); rx = lerp(5, 3.5, p); sc = lerp(1.00, 1.04, p);
+      op = e01(l / 0.7); br = lerp(0.35, 1, e01(l / 1.3));
+      op *= 1 - e01((t - S[1]) / 0.35);
+    } else {
+      const l = t - S[2], p = e01(l / DUR[2]);
+      ry = lerp(-3, 0, e01(l / 2.2)); rx = lerp(2.5, 0, e01(l / 2.2));
+      sc = lerp(1.05, 1.16, p);
+      op = e01(l / 0.4) * (1 - e01((t - S[3]) / 0.35));
+    }
+    heroRig.style.opacity = op;
+    heroRig.style.transform =
+      `translate(-50%,-50%) rotateX(${rx}deg) rotateY(${ry}deg) scale(${sc})`;
+    heroMain.style.filter = `brightness(${br})`;
+    const rimA = TOKENS.RIM_BASE + TOKENS.RIM_FLICKER * Math.sin(t * 0.9);
+    heroMain.style.boxShadow = rimShadow(rimA);
+    heroBloom.style.opacity = TOKENS.BLOOM_OPACITY * op * br;
+    heroRefl.style.opacity = TOKENS.REFL_OPACITY * e01(t / 2);
+  } else heroRig.style.display = "none";
+
+  /* S0 caption: second half delayed 0.25s emphasis */
+  if (t < S[1] + 0.3) {
+    const a1 = e01((t - 0.9) / 0.7) * (1 - e01((t - (S[1] - 0.1)) / 0.3));
+    const a2 = e01((t - 1.15) / 0.7) * (1 - e01((t - (S[1] - 0.1)) / 0.3));
+    cap0.style.opacity = a1;
+    cap0.style.transform = `translateY(${28 * (1 - e01((t - 0.9) / 0.7))}px)`;
+    cap0b.style.opacity = a2;
+    cap0b.style.display = "inline-block";
+    cap0b.style.transform = `scale(${lerp(1.06, 1, e01((t - 1.15) / 0.7))})`;
+  } else cap0.style.opacity = 0;
+
+  /* ---------- S1 pain ---------- */
+  if (t >= S[1] - 0.05 && t < S1MID) {           // shot 1: backflow timeline
+    showOnly(["s1a"]);
+    const l = t - S[1];
+    scenes.s1a.style.opacity = e01(l / 0.4) * (1 - e01((t - (S1MID - 0.2)) / 0.3));
+    for (const d of TLDOTS) {
+      let x;
+      if (d.word < 0) x = d.x0 - d.sp * l;
+      else x = 560 - d.sp * (l - WORD_BEAT[d.word]);
+      d.el.setAttribute("cx", x);
+      const inside = x < DIVX;
+      d.el.setAttribute("fill", d.word < 0
+        ? (inside ? `rgba(${G},.95)` : `rgba(${G},.55)`)
+        : (inside ? "#fff" : `rgba(${G},.85)`));
+      d.el.style.opacity = d.word < 0 ? 1 : e01((l - WORD_BEAT[d.word]) / 0.3);
+    }
+    for (let k = 0; k < 3; k++) {
+      const a = e01((l - WORD_BEAT[k] - 0.35) / 0.5);
+      tlw[k].style.opacity = a;
+      tlw[k].style.transform = `translateY(${20 * (1 - a)}px)`;
+    }
+    capNoRepro.style.opacity = 0;
+  } else if (t >= S1MID && t < S[2] + 0.3) {     // shot 2: fingerprint drift
+    showOnly(["s1b"]);
+    const l = t - S1MID;
+    for (let k = 0; k < 3; k++) tlw[k].style.opacity = 0;
+    const breath = 1 - e01((t - (S[2] - 0.42)) / 0.42);   // 0.4s black breath
+    scenes.s1b.style.opacity = e01(l / 0.4) * breath;
+    const dx = 52 * e01(l / 4.6), dy = 22 * e01(l / 4.6);
+    $("fpB0").setAttribute("transform", `translate(${dx},${dy})`);
+    $("fpB0p").style.transform = `translate(${dx * 0.3}px,${dy * 0.3}px)`;
+    const ca = e01((l - 3.0) / 0.6) * breath;
+    capNoRepro.style.opacity = ca;
+    capNoRepro.style.transform = `translateY(${22 * (1 - e01((l - 3.0) / 0.6))}px)`;
+  }
+
+  /* ---------- S2 brand ---------- */
+  if (t >= S[2] - 0.05 && t < S[3] + 0.3) {
+    const l = t - S[2];
+    const ain = e01((l - 0.7) / 0.9);
+    brand.style.opacity = ain * (1 - e01((l - (DUR[2] - 0.4)) / 0.4));
+    brand.style.letterSpacing = lerp(0.3, 0.04, e01((l - 0.7) / 2.2)) + "em";
+    brand.style.transform = `translateY(${44 * (1 - ain)}px)`;
+    brandsub.style.opacity = e01((l - 2.6) / 0.8) * (1 - e01((l - (DUR[2] - 0.4)) / 0.4));
+  } else { brand.style.opacity = 0; brandsub.style.opacity = 0; }
+
+  /* ---------- S3 proof trio ---------- */
+  if (t >= S[3] - 0.05 && t < S[4] + 0.4) {
+    const l = t - S[3];
+    const w = Math.min(2, Math.floor(l / W3));
+    const lw = l - w * W3;
+    const fadeAll = 1 - e01((t - S[4]) / 0.35);
+    if (w === 0) {                                  // mask sweep
+      showOnly(["s3a"]);
+      scenes.s3a.style.opacity = e01(lw / 0.35) * fadeAll;
+      const p = e01((lw - 0.35) / 1.7);
+      maskNew.style.clipPath = `inset(0 ${(1 - p) * 100}% 0 0)`;
+      maskRaw.style.clipPath = `inset(0 0 0 ${p * 100}%)`;
+      maskband.style.opacity = p > 0 && p < 1 ? Math.sin(p * Math.PI) * 0.95 + 0.05 : 0;
+      maskband.style.left = `calc(${lerp(2, 96, p)}% - 45px)`;
+    } else if (w === 1) {                           // the only gate
+      showOnly(["s3b"]);
+      scenes.s3b.style.opacity = e01(lw / 0.35) * fadeAll;
+      const p = e01((lw - 0.2) / 1.3);
+      ordercard.style.left = lerp(60, 550, p) + "px";
+      ordercard.style.top = "165px";
+      ordercard.style.opacity = e01(lw / 0.4);
+      const glow = e01((p - 0.85) / 0.15);
+      gate.firstElementChild.nextElementSibling.style.boxShadow =
+        `0 0 ${30 * glow}px rgba(${G},${0.55 * glow})`;
+      const sa = e01((lw - 1.75) / 0.4);
+      stamp.style.opacity = sa;
+      stamp.style.transform = `translateX(-50%) scale(${lerp(1.5, 1, sa)})`;
+    } else {                                        // fingerprint merge
+      showOnly(["s3c"]);
+      scenes.s3c.style.opacity = e01(lw / 0.35) * fadeAll;
+      const dx = 52 * (1 - e01(lw / 1.1)), dy = 22 * (1 - e01(lw / 1.1));
+      $("fpB1").setAttribute("transform", `translate(${dx},${dy})`);
+      const mp = e01((lw - 1.5) / 0.9);             // merge phase
+      const bp = $("fpB1p"), ap = $("fpA1p");
+      bp.style.opacity = 1 - mp;
+      bp.style.transform = `translateX(${-mp * 340}px)`;
+      ap.style.transform = `translateX(${mp * 340}px) scale(${1 + mp * 0.04})`;
+      ap.style.boxShadow = `0 0 ${40 * mp}px rgba(${G},${0.35 * mp})`;
+      $("fpA1").style.stroke = mp > 0.5 ? `rgba(${G},.95)` : "rgba(255,255,255,.85)";
+    }
+    /* proof captions */
+    const CAPS = ["认不出历史", "唯一入口", "同样的结果"];
+    const ca = e01((lw - 0.7) / 0.5) * fadeAll;
+    if (mcap.textContent !== CAPS[w]) mcap.textContent = CAPS[w];
+    mcap.style.opacity = ca;
+    mcap.style.transform = `translateY(${22 * (1 - e01((lw - 0.7) / 0.5))}px)`;
+  } else if (t >= S[1] - 0.05 && t < S[3]) { /* keep mcap off outside S3 */ }
+
+  /* ---------- S4 cassette ---------- */
+  if (t >= S[4] - 0.05 && t < S[5] + 0.4) {
+    showOnly(["s4"]);
+    const l = t - S[4];
+    scenes.s4.style.opacity = 1 - e01((t - S[5]) / 0.35);
+    for (let k = 0; k < flows.length; k++) {
+      const f = flows[k];
+      const side = k % 2 === 0 ? -1 : 1;
+      const lane = 330 + k * 86;
+      const cyc = (l * 0.5 + k * 0.37) % 1.6;
+      const p = clamp01(cyc / 1.1);
+      const x = side < 0 ? lerp(-460, 720, p) : lerp(2380, 1200, p);
+      f.style.top = lane + "px";
+      f.style.transform = `translateX(${x}px)`;
+      f.style.opacity = Math.sin(p * Math.PI) * 0.7;
+    }
+    const cin = e01(l / 0.8);
+    const cassette = $("cassette");
+    cassette.style.opacity = cin;
+    cassette.style.transform = `translate(-50%,-50%) scale(${lerp(0.96, 1.0, cin)})`;
+    cassette.style.boxShadow =
+      `0 0 0 1px rgba(${G},${0.4 * cin}), 0 0 60px rgba(${G},${0.18 * cin}), 0 30px 80px rgba(0,0,0,.8)`;
+    const LT = [1.2, 3.2];
+    for (let k = 0; k < 2; k++) {
+      const a = e01((l - LT[k]) / 0.7);
+      clines[k].style.opacity = a * 0.9;
+      clines[k].style.transform = `translateY(${18 * (1 - a)}px)`;
+    }
+  }
+
+  /* ---------- S5 CTA ---------- */
+  if (t >= S[5] - 0.05) {
+    showOnly(["s5"]);
+    const l = t - S[5];
+    scenes.s5.style.opacity = e01(l / 0.4);
+    const a0 = e01((l - 0.6) / 1.0);
+    s5title.style.opacity = a0;
+    s5title.style.transform = `translateY(${36 * (1 - a0)}px)`;
+    const a1 = e01((l - 2.0) / 0.9);
+    s5tag.style.opacity = a1 * 0.95;
+    s5tag.style.transform = `translateY(${26 * (1 - a1)}px)`;
+    s5links.style.opacity = e01((l - 3.2) / 0.8);
+  }
+
+  /* scene cleanup when idle */
+  if (t < S[1] - 0.05) showOnly([]);
+  else if (t >= S[2] - 0.05 && t < S[3] - 0.05) showOnly([]);
+}
+
+/* ============ run / seek / gate ============ */
+function render(t) { frame(Math.max(0, Math.min(t, TOTAL))); }
+
+const imgs = Array.from(document.images);
+Promise.all(imgs.map(im => im.complete ? 1 : new Promise(r => { im.onload = im.onerror = r; })))
+  .then(() => {
+    const q = new URLSearchParams(location.search);
+    if (q.has("seek")) {
+      white.style.display = "none";
+      render(parseFloat(q.get("seek")) || 0);
+      window.__READY = true;
+      return;
+    }
+    render(0);
+    window.__READY = true;
+  });
+
+window.__START = () => {
+  white.style.transition = "opacity .08s";
+  white.style.opacity = 0;
+  setTimeout(() => { white.style.display = "none"; }, 120);
+  const t0 = performance.now();
+  const loop = () => {
+    const t = (performance.now() - t0) / 1000;
+    window.__T = t;
+    if (t >= TOTAL) { render(TOTAL); window.__DONE = true; return; }
+    render(t);
+    requestAnimationFrame(loop);
+  };
+  loop();
+};
+</script>
+</body>
+</html>

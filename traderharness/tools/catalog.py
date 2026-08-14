@@ -34,6 +34,14 @@ TOOL_CATALOG: tuple[dict[str, Any], ...] = (
         "required": False,
     },
     {
+        "name": "get_narrative_market_overview",
+        "label": "叙事市场宽度",
+        "description": "比较行业1/5/20日强度、扩散和高低切候选。",
+        "category": "market",
+        "required": False,
+        "opt_in_only": True,
+    },
+    {
         "name": "screen_stocks",
         "label": "条件选股",
         "description": "根据价格、动量等条件筛选当前可见股票池。",
@@ -53,6 +61,14 @@ TOOL_CATALOG: tuple[dict[str, Any], ...] = (
         "description": "比较各行业在当前时间点的强弱与成分股。",
         "category": "market",
         "required": False,
+    },
+    {
+        "name": "get_narrative_sector_summary",
+        "label": "叙事行业概览",
+        "description": "比较行业多周期强弱、扩散和板块内龙头地位。",
+        "category": "market",
+        "required": False,
+        "opt_in_only": True,
     },
     {
         "name": "get_fundamentals",
@@ -83,11 +99,27 @@ TOOL_CATALOG: tuple[dict[str, Any], ...] = (
         "required": False,
     },
     {
+        "name": "get_announcement_evidence",
+        "label": "公告证据",
+        "description": "读取带证据编号与点时时间的公司公告。",
+        "category": "information",
+        "required": False,
+        "opt_in_only": True,
+    },
+    {
         "name": "get_news",
         "label": "市场新闻",
         "description": "搜索当前可见的政策与市场新闻。",
         "category": "information",
         "required": False,
+    },
+    {
+        "name": "get_narrative_news",
+        "label": "叙事文本证据",
+        "description": "读取带证据编号、点时时间、标签与关联股票的新闻。",
+        "category": "information",
+        "required": False,
+        "opt_in_only": True,
     },
     {
         "name": "get_portfolio",
@@ -174,6 +206,14 @@ TOOL_CATALOG: tuple[dict[str, Any], ...] = (
         "required": False,
     },
     {
+        "name": "complete_phase",
+        "label": "结束当前阶段",
+        "description": "显式提交当前阶段结论；成功后市场时钟才推进。",
+        "category": "execution",
+        "required": False,
+        "opt_in_only": True,
+    },
+    {
         "name": "finish_day",
         "label": "结束交易日",
         "description": "提交每日总结并推进市场时钟。",
@@ -188,7 +228,11 @@ CORE_TOOL_NAMES = frozenset(item["name"] for item in TOOL_CATALOG if item["requi
 
 def normalize_allowed_tools(tools: list[str] | tuple[str, ...] | None) -> list[str]:
     """Validate a card allowlist and restore the protected execution core."""
-    requested = ALL_TOOL_NAMES if tools is None else {str(name) for name in tools}
+    requested = (
+        {item["name"] for item in TOOL_CATALOG if not item.get("opt_in_only")}
+        if tools is None
+        else {str(name) for name in tools}
+    )
     unknown = requested - ALL_TOOL_NAMES
     if unknown:
         raise ValueError(f"Unknown Agent tools: {', '.join(sorted(unknown))}")

@@ -28,6 +28,237 @@ if TYPE_CHECKING:
 
 MAX_TOOL_RESULT_CHARS = 3000
 
+_CORRECTION_LOCKED_ORDER_FIELDS = ("action", "stock_code", "quantity")
+_CORRECTION_LOCKED_CARD_FIELDS = (
+    "decision",
+    "mode",
+    "entry_setup",
+    "theme",
+    "sector_state",
+    "candidate_role",
+    "candidate_rank",
+    "stronger_candidate_status",
+    "execution_compromise",
+    "market_stage",
+    "extension_assessment",
+)
+
+
+def _validate_decision_card_correction(
+    original: dict | None, corrected: dict
+) -> dict | None:
+    """Prevent a format/evidence retry from becoming a new trading decision."""
+    if not isinstance(original, dict):
+        return None
+    changed_order_fields = [
+        field
+        for field in _CORRECTION_LOCKED_ORDER_FIELDS
+        if field in original and corrected.get(field) != original.get(field)
+    ]
+    original_card = original.get("decision_card")
+    corrected_card = corrected.get("decision_card")
+    changed_card_fields = []
+    if isinstance(original_card, dict) and isinstance(corrected_card, dict):
+        changed_card_fields = [
+            field
+            for field in _CORRECTION_LOCKED_CARD_FIELDS
+            if field in original_card
+            and corrected_card.get(field) != original_card.get(field)
+        ]
+    elif isinstance(original_card, dict):
+        changed_card_fields = ["decision_card"]
+    if not changed_order_fields and not changed_card_fields:
+        return None
+    return {
+        "success": False,
+        "error": (
+            "受控纠错重试改变了原候选或决策卡语义，已拒绝进入撮合"
+        ),
+        "error_code": "decision_card_correction_changed_semantics",
+        "retryable": False,
+        "correction": {
+            "instruction": "保持原语义结论，等待新证据后在后续正常窗口重新决策。",
+            "changed_order_fields": changed_order_fields,
+            "changed_decision_card_fields": changed_card_fields,
+        },
+    }
+
+_SEMANTIC_STATE_TOOLS = frozenset(
+    {
+        "get_portfolio",
+        "get_position",
+        "get_watchlist",
+        "list_conditional_orders",
+        "search_memory",
+        "get_memory",
+    }
+)
+_SEMANTIC_CANDIDATE_TOOLS = frozenset(
+    {
+        "get_stock_info",
+        "get_business_segments",
+        "get_valuation",
+        "get_announcement_evidence",
+        "get_kline",
+        "get_stock_price",
+    }
+)
+_SEMANTIC_CANDIDATE_RESEARCH_TOOLS = frozenset(
+    {
+        "get_stock_info",
+        "get_business_segments",
+        "get_valuation",
+        "get_announcement_evidence",
+    }
+)
+_SEMANTIC_PREMARKET_STAGE_REQUIREMENTS = (
+    frozenset({"get_narrative_news", "get_narrative_market_overview"}),
+    frozenset({"get_narrative_sector_summary"}),
+    frozenset({"execute_code"}),
+    frozenset(
+        {
+            "get_stock_info",
+            "get_business_segments",
+            "get_valuation",
+        }
+    ),
+    frozenset({"add_watchlist", "remember"}),
+)
+_SEMANTIC_PREMARKET_STAGE_INSTRUCTIONS = (
+    "Research step 1/5: identify the market causal narrative. Call both "
+    "get_narrative_news and get_narrative_market_overview; do not research stocks yet.",
+    "Research step 2/5: test at most two sector hypotheses. Use "
+    "get_narrative_sector_summary; do not run Python or research stocks yet.",
+    "Research step 3/5: use execute_code once to organize point-in-time market-wide "
+    "price/volume evidence. It must produce evidence, not a buy/sell verdict.",
+    "Research step 4/5: verify at most two candidate companies. You must call "
+    "get_stock_info, get_business_segments, and get_valuation; use "
+    "get_announcement_evidence only when a recent company-specific catalyst or "
+    "invalidation needs verification. Do not repeat market-wide, sector, K-line, "
+    "or current-price research.",
+    "Research step 5/5: make the semantic verdict. Add only qualified candidates to "
+    "the watchlist and/or remember durable conclusions. You may use get_kline and/or "
+    "get_stock_price for one final review of the shortlisted candidates; after a "
+    "successful review those tools are removed, so the next turn must register the "
+    "verdict or explicitly abstain. Do not repeat earlier research.",
+)
+
+
+def _semantic_premarket_stage_instruction(
+    ctx: ToolContext,
+    stage_index: int,
+    completed_tools: set[str] | frozenset[str] = frozenset(),
+) -> str:
+    if getattr(ctx, "full_market_research_allowed", None) is False:
+        if stage_index == 2:
+            return (
+                "Monitoring step 3/4: do not run Python. Review only current positions "
+                "and watchlist candidates with the supplied company, valuation, news, "
+                "and price tools. Keep the candidate set small."
+            )
+        if stage_index == 4:
+            return (
+                "Monitoring step 4/4: update the watchlist or durable memory only when "
+                "the evidence changed, then finish pre-market research."
+            )
+    if stage_index == 2:
+        tool_cache = getattr(ctx, "tool_call_cache", {})
+        sandbox_limit = max(0, int(getattr(ctx, "sandbox_max_calls_per_day", 0)))
+        sandbox_calls = int(tool_cache.get("_sandbox_call_count", 0))
+        if (
+            tool_cache.get("_sandbox_last_error") is True
+            and sandbox_limit > sandbox_calls
+        ):
+            return (
+                "Research step 3/5 controlled code correction: the previous "
+                "execute_code attempt failed. Read its traceback, preserve the same "
+                "evidence objective, and use this one final execute_code attempt only "
+                "to fix the failing code. Use documented columns and produce a compact "
+                "point-in-time evidence table; do not start a new analysis. If this "
+                "attempt also fails, stop code research and continue without sandbox "
+                "evidence."
+            )
+    instruction = _SEMANTIC_PREMARKET_STAGE_INSTRUCTIONS[stage_index]
+    if stage_index == 3:
+        requirements = _SEMANTIC_PREMARKET_STAGE_REQUIREMENTS[stage_index]
+        completed = requirements & completed_tools
+        missing = requirements - completed_tools
+        if completed and missing:
+            instruction += (
+                " Completed required tools: "
+                + ", ".join(sorted(completed))
+                + ". Still missing required tools: "
+                + ", ".join(sorted(missing))
+                + ". In this turn call every still-missing tool; do not repeat a "
+                "completed tool and do not request K-line or current-price tools."
+            )
+    return instruction
+
+
+def _semantic_premarket_allowed_tools(ctx: ToolContext, iteration_index: int) -> frozenset[str]:
+    """Five-step evidence workflow; it constrains research, never the verdict."""
+    stages = (
+        {"get_narrative_news", "get_narrative_market_overview"},
+        {"get_narrative_sector_summary", "get_narrative_news"},
+        {"execute_code"}
+        if getattr(ctx, "full_market_research_allowed", None) is not False
+        else set(_SEMANTIC_CANDIDATE_TOOLS),
+        set(_SEMANTIC_CANDIDATE_RESEARCH_TOOLS),
+        {
+            "add_watchlist",
+            "remove_watchlist",
+            "remember",
+            "search_memory",
+            "get_memory",
+            "get_kline",
+            "get_stock_price",
+        },
+    )
+    stage = stages[min(max(0, iteration_index), len(stages) - 1)]
+    return frozenset(stage) | _SEMANTIC_STATE_TOOLS
+
+
+def _available_tools_instruction(available_tool_names) -> str:
+    """Name the exact callable surface for this turn to prevent stale tool calls."""
+    names = ", ".join(sorted(set(available_tool_names))) or "none"
+    return (
+        "Current-turn available tools (the complete list): "
+        f"{names}. Do not call any tool not in this list."
+    )
+
+
+def _phase_protocol_instruction(ctx: ToolContext, available_tool_names) -> str:
+    """Describe the current clock state and its exact callable surface."""
+    phase = ctx.current_phase
+    sub_window = getattr(ctx, "_current_sub_window", None)
+    if phase == "pre_market":
+        duty = (
+            "盘前阶段：只研究和维护观察清单，禁止下单。先建立主题—板块—公司—价格阶段证据链；"
+            "低位启动、趋势启动和龙头回踩都是可进入路径，不得把等待回踩设为唯一答案。"
+            "研究、纠错和观察清单登记全部完成后调用 complete_phase。"
+        )
+    elif phase == "close_window" and sub_window == "close_2":
+        duty = (
+            "最后收盘阶段：可以检查证据、下单或主动放弃。先完成所有工具纠错；"
+            "若持仓主题、板块扩散或龙头地位已被资金否定或资金迁往更强方向，应执行退出。"
+            "全部操作完成后调用 finish_day；本阶段没有 complete_phase。"
+        )
+    else:
+        label = {
+            "open_1": "开盘前半窗口",
+            "open_2": "开盘后半窗口",
+            "close_1": "尾盘前半窗口",
+        }.get(sub_window, phase)
+        duty = (
+            f"{label}：可以核验当前可见行情、管理条件单并交易。"
+            "若龙头在低位启动、趋势确认或健康回踩中得到全方位证据支持，可以试仓骑乘趋势；"
+            "不要求先回踩。完成本窗口的研究、交易及纠错后调用 complete_phase，"
+            "市场时钟在此之前不会主动推进。"
+        )
+    return "【当前阶段执行协议】" + duty + "\n" + _available_tools_instruction(
+        available_tool_names
+    )
+
 
 def _json_safe(value):
     """Replace NaN/Inf floats so tool fingerprints stay stable across runs."""
@@ -109,6 +340,7 @@ class AgentLoop:
         if self.memory:
             memory_text = self.memory.to_prompt_text(
                 before_date=current_date,
+                date_masker=getattr(ctx, "date_masker", None),
                 entity_masker=getattr(ctx, "entity_masker", None),
             )
             if memory_text:
@@ -133,10 +365,17 @@ class AgentLoop:
         remaining_info = ""
         if self.remaining_trading_days is not None and self.total_trading_days is not None:
             day_num = self.total_trading_days - self.remaining_trading_days
-            remaining_info = (
-                f"\n回测进度: 第{day_num}天/{self.total_trading_days}天"
-                f"（剩余{self.remaining_trading_days}个交易日）"
+            legacy_replay_horizon = (
+                getattr(self.llm_client, "_player", None) is not None
+                and not getattr(ctx, "require_decision_card", False)
             )
+            if legacy_replay_horizon:
+                # Preserve old cassette fingerprints only. New live/recorded
+                # runs never reveal the artificial end of the backtest.
+                remaining_info = (
+                    f"\n回测进度: 第{day_num}天/{self.total_trading_days}天"
+                    f"（剩余{self.remaining_trading_days}个交易日）"
+                )
             interval = max(0, int(getattr(ctx, "research_interval_days", 0)))
             if interval:
                 research_day = (day_num - 1) % interval == 0
@@ -152,11 +391,22 @@ class AgentLoop:
                 f"现在是盘前分析阶段，你可以使用工具研究市场，但不能下单。",
             }
         )
-        await self._run_phase(ctx, max_iter=self.max_pre_iterations, exclude_tools={"place_order"})
+        # Legacy cassettes fingerprinted the older schema where finish_day was
+        # visible in every phase. Preserve that exact surface during replay;
+        # live/new recordings expose it only in the final close phase.
+        replaying = getattr(self.llm_client, "_player", None) is not None
+        legacy_replaying = replaying and not getattr(ctx, "require_decision_card", False)
+        early_finish_exclude = set() if legacy_replaying else {"finish_day"}
+        await self._run_phase(
+            ctx,
+            max_iter=self.max_pre_iterations,
+            exclude_tools={"place_order"} | early_finish_exclude,
+        )
 
         window_exclude_tools = (
             {"execute_code"} if getattr(ctx, "sandbox_pre_market_only", False) else set()
         )
+        non_final_window_exclude_tools = window_exclude_tools | early_finish_exclude
 
         # === Phase 2: 开盘窗口 (分两轮推进) ===
         self._flush_memory_state(ctx)
@@ -197,7 +447,7 @@ class AgentLoop:
         await self._run_phase(
             ctx,
             max_iter=self.max_window_iterations,
-            exclude_tools=window_exclude_tools,
+            exclude_tools=non_final_window_exclude_tools,
         )
 
         # Round 2: 9:50-10:00 (后3根bar)
@@ -218,7 +468,7 @@ class AgentLoop:
         await self._run_phase(
             ctx,
             max_iter=self.max_window_iterations,
-            exclude_tools=window_exclude_tools,
+            exclude_tools=non_final_window_exclude_tools,
         )
 
         # Compress open window phase before close
@@ -259,7 +509,7 @@ class AgentLoop:
         await self._run_phase(
             ctx,
             max_iter=self.max_window_iterations,
-            exclude_tools=window_exclude_tools,
+            exclude_tools=non_final_window_exclude_tools,
         )
 
         # Round 2: 14:50-15:00 (后3根bar)
@@ -326,13 +576,17 @@ class AgentLoop:
         conditions = []
         if ctx._bus is not None and hasattr(ctx._bus, "list_conditional_orders"):
             conditions = ctx._bus.list_conditional_orders(status="active")
-        self.memory.flush_runtime_state(
-            ctx.current_date,
-            {
-                "position_plans": plans,
-                "active_conditional_orders": conditions,
-            },
-        )
+        visible_state = {
+            "position_plans": plans,
+            "active_conditional_orders": conditions,
+        }
+        date_masker = getattr(ctx, "date_masker", None)
+        entity_masker = getattr(ctx, "entity_masker", None)
+        if date_masker is not None:
+            visible_state = date_masker.mask_obj(visible_state)
+        if entity_masker is not None:
+            visible_state = entity_masker.sanitize_agent_obj(visible_state)
+        self.memory.flush_runtime_state(ctx.current_date, visible_state)
 
     def _process_conditional_orders(self, ctx: ToolContext, window: str) -> None:
         bus = ctx._bus
@@ -378,8 +632,17 @@ class AgentLoop:
         exclude_tools: set[str],
     ) -> None:
         """单阶段的 tool-use loop。"""
-        tools_schema = self.registry.get_openai_tools_schema(exclude=exclude_tools)
         consecutive_errors = 0
+        semantic_stage_index = 0
+        semantic_stage_successes: set[str] = set()
+        correction_retry_pending = False
+        correction_retry_arguments: dict | None = None
+        correction_required_tools: set[str] = set()
+        phase_protocol = bool(getattr(ctx, "require_phase_completion", False))
+        # The configured iteration count is the normal reasoning budget. A
+        # protocol Agent gets bounded extension turns so a read, a repair, and
+        # the explicit completion call cannot be cut off by the market clock.
+        iteration_limit = max_iter + (8 if phase_protocol else 1)
 
         if self.committee is not None:
             sub_window = getattr(ctx, "_current_sub_window", None)
@@ -417,7 +680,12 @@ class AgentLoop:
                     },
                 )
 
-        for _ in range(max_iter):
+        for iteration_index in range(iteration_limit):
+            is_correction_retry = correction_retry_pending
+            if not phase_protocol:
+                correction_retry_pending = False
+            if iteration_index >= max_iter and not is_correction_retry and not phase_protocol:
+                return
             if self._budget and self._budget.is_exhausted:
                 logger.warning("Token budget exhausted, stopping phase")
                 return
@@ -426,7 +694,132 @@ class AgentLoop:
                 self._flush_memory_state(ctx)
                 await self._context.compress()
 
+            dynamic_exclude = set(exclude_tools)
+            tool_cache = getattr(ctx, "tool_call_cache", {})
+            if not phase_protocol:
+                dynamic_exclude.add("complete_phase")
+            elif ctx.current_phase == "close_window" and getattr(
+                ctx, "_current_sub_window", None
+            ) == "close_2":
+                dynamic_exclude.add("complete_phase")
+            if phase_protocol and ctx.current_phase == "pre_market":
+                dynamic_exclude.add("manage_conditional_order")
+                if getattr(ctx, "full_market_research_allowed", None) is False:
+                    dynamic_exclude.add("execute_code")
+            semantic_premarket = (
+                ctx.current_phase == "pre_market"
+                and getattr(ctx, "require_decision_card", False)
+                and not phase_protocol
+            )
+            if semantic_premarket:
+                allowed_for_stage = _semantic_premarket_allowed_tools(
+                    ctx, semantic_stage_index
+                )
+                if semantic_stage_index in {3, 4}:
+                    # Once a dossier surface succeeds, remove it from subsequent
+                    # schemas so the model must finish the missing company evidence
+                    # instead of repeatedly querying the same type of fact.
+                    allowed_for_stage -= semantic_stage_successes
+                all_names = {
+                    schema["function"]["name"]
+                    for schema in self.registry.get_openai_tools_schema()
+                }
+                dynamic_exclude.update(all_names - allowed_for_stage)
+            if is_correction_retry:
+                all_names = {
+                    schema["function"]["name"]
+                    for schema in self.registry.get_openai_tools_schema()
+                }
+                correction_surface = {"place_order"} | correction_required_tools
+                if phase_protocol:
+                    correction_surface.add("complete_phase")
+                    if ctx.current_phase == "close_window" and getattr(
+                        ctx, "_current_sub_window", None
+                    ) == "close_2":
+                        correction_surface.discard("complete_phase")
+                        correction_surface.add("finish_day")
+                dynamic_exclude.update(all_names - correction_surface)
+            sandbox_limit = max(0, int(getattr(ctx, "sandbox_max_calls_per_day", 0)))
+            if sandbox_limit and int(tool_cache.get("_sandbox_call_count", 0)) >= sandbox_limit:
+                dynamic_exclude.add("execute_code")
+            if (
+                not phase_protocol
+                and len(tool_cache.get("_narrative_sector_summary_cache", {})) >= 2
+            ):
+                dynamic_exclude.add("get_narrative_sector_summary")
+            if not phase_protocol and "_narrative_market_overview_payload" in tool_cache:
+                dynamic_exclude.add("get_narrative_market_overview")
+            if not phase_protocol and int(tool_cache.get("_narrative_news_calls", 0)) >= 2:
+                dynamic_exclude.add("get_narrative_news")
+            tools_schema = self.registry.get_openai_tools_schema(exclude=dynamic_exclude)
+            if (
+                getattr(self.llm_client, "_player", None) is not None
+                and not getattr(ctx, "require_decision_card", False)
+            ):
+                # The bundled v2 demo cassette predates the optional semantic
+                # decision_card property. Runtime validation is disabled for
+                # that legacy Agent, so reproduce its exact function schema.
+                tools_schema = copy.deepcopy(tools_schema)
+                for schema in tools_schema:
+                    function = schema.get("function", {})
+                    if function.get("name") != "place_order":
+                        continue
+                    properties = function.get("parameters", {}).get("properties", {})
+                    properties.pop("decision_card", None)
+            available_tool_names = {
+                schema["function"]["name"] for schema in tools_schema
+            }
+
             request_messages = self._context.get_api_messages()
+            if phase_protocol:
+                request_messages = [
+                    *request_messages,
+                    {
+                        "role": "system",
+                        "content": _phase_protocol_instruction(
+                            ctx, available_tool_names
+                        ),
+                    },
+                ]
+            if semantic_premarket:
+                request_messages = [
+                    *request_messages,
+                    {
+                        "role": "system",
+                        "content": (
+                            _semantic_premarket_stage_instruction(
+                                ctx, semantic_stage_index, semantic_stage_successes
+                            )
+                            + "\n\n"
+                            + _available_tools_instruction(available_tool_names)
+                        ),
+                    },
+                ]
+            if is_correction_retry:
+                missing_instruction = ""
+                if correction_required_tools:
+                    missing_instruction = (
+                        " 当前仍缺少同一候选的成功工具证据："
+                        + ", ".join(sorted(correction_required_tools))
+                        + "。先调用这些工具；可在同一响应中于读取后重交 place_order。"
+                    )
+                request_messages = [
+                    *request_messages,
+                    {
+                        "role": "system",
+                        "content": (
+                            "【受控纠错重试】上一次 place_order 未进入撮合。"
+                            "严格按照紧邻的 tool 错误中 correction 指令，"
+                            "只修正字段层级、缺失字段、数据类型或证据ID。"
+                            "不得改变 decision、mode、sector_state、candidate_role、"
+                            "candidate_rank、stronger_candidate_status、"
+                            "execution_compromise 或 extension_assessment 等语义结论。"
+                            + missing_instruction
+                            + "证据齐全后重新提交同一候选的 place_order；"
+                            "若新行情使原结论失效，则主动调用阶段结束工具并明确放弃。"
+                        ),
+                    },
+                ]
             response = await self.llm_client.chat(
                 messages=request_messages,
                 tools=tools_schema,
@@ -536,30 +929,30 @@ class AgentLoop:
                 finish_reason = response.get("_finish_reason", "")
                 if finish_reason == "length" and not response.get("content"):
                     logger.warning("Output truncated, skipping retry (empty content)")
+                if phase_protocol:
+                    self._context.add_message(
+                        {
+                            "role": "user",
+                            "content": (
+                                "当前阶段尚未由工具显式结束。请完成尚未完成的工具纠错，"
+                                "然后调用 complete_phase；若是最后收盘阶段则调用 finish_day。"
+                            ),
+                        }
+                    )
+                    continue
                 break
 
             should_finish = False
+            correction_retry_requested = False
+            correction_order_calls = 0
+            iteration_had_error = False
+            iteration_had_success = False
             # Partition: the historical read-then-write message order is part of
             # the replay fingerprint. Keep that ordering, but execute each batch
             # serially (concurrent gather previously raced on shared frames).
-            read_only_tools = {
-                "get_kline",
-                "get_stock_price",
-                "get_stock_info",
-                "get_market_overview",
-                "get_sector_summary",
-                "get_portfolio",
-                "get_position",
-                "get_fundamentals",
-                "get_business_segments",
-                "get_valuation",
-                "get_announcements",
-                "get_news",
-                "get_watchlist",
-                "list_conditional_orders",
-                "search_memory",
-                "get_memory",
-            }
+            # Import lazily to avoid a module cycle while keeping tool access
+            # semantics in one auditable catalog.
+            from traderharness.agents.tool_agent import READ_ONLY_TOOL_NAMES
 
             parsed_calls = []
             for tc in response["tool_calls"]:
@@ -576,24 +969,141 @@ class AgentLoop:
                             ),
                         }
                     )
-                    consecutive_errors += 1
+                    iteration_had_error = True
+                    continue
+                if tool_name not in available_tool_names:
+                    if getattr(ctx, "require_decision_card", False):
+                        result = {
+                            "success": False,
+                            "error": (
+                                f"Tool '{tool_name}' is unavailable in the current "
+                                "phase or research stage. "
+                                + _available_tools_instruction(available_tool_names)
+                            ),
+                            "error_code": "tool_unavailable_in_phase",
+                            "retryable": True,
+                            "available_tools": sorted(available_tool_names),
+                            "correction": {
+                                "instruction": (
+                                    "Use one of available_tools in this same phase, then "
+                                    "retry the intended action before completing the phase."
+                                ),
+                                "phase": ctx.current_phase,
+                                "sub_window": getattr(ctx, "_current_sub_window", None),
+                            },
+                        }
+                    else:
+                        # Preserve the legacy tool-result fingerprint used by
+                        # bundled demo cassettes.
+                        result = {
+                            "error": (
+                                f"Tool '{tool_name}' is unavailable in the current "
+                                "phase or research stage. Use only the supplied tool schemas."
+                            )
+                        }
+                    self._emit(
+                        "tool_call",
+                        date=ctx.current_date,
+                        agent_id=getattr(ctx, "agent_id", ""),
+                        tool=tool_name,
+                        args=arguments,
+                        success=False,
+                    )
+                    if self.trajectory:
+                        self.trajectory.record_step(
+                            ctx.current_date,
+                            "tool_call",
+                            {
+                                "id": tc["id"],
+                                "name": tool_name,
+                                "args": arguments,
+                                "result": result,
+                                "phase": ctx.current_phase,
+                                "sub_window": getattr(
+                                    ctx, "_current_sub_window", None
+                                ),
+                            },
+                        )
+                    self._context.add_message(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tc["id"],
+                            "content": json.dumps(result, ensure_ascii=False),
+                        }
+                    )
+                    iteration_had_error = True
                     continue
                 parsed_calls.append((tc, tool_name, arguments))
 
             read_batch = [
-                (tc, name, args) for tc, name, args in parsed_calls if name in read_only_tools
+                (tc, name, args)
+                for tc, name, args in parsed_calls
+                if name in READ_ONLY_TOOL_NAMES
             ]
             write_batch = [
-                (tc, name, args) for tc, name, args in parsed_calls if name not in read_only_tools
+                (tc, name, args)
+                for tc, name, args in parsed_calls
+                if name not in READ_ONLY_TOOL_NAMES
             ]
 
             async def _run_tool(tc, tool_name, arguments, *, read_only: bool) -> None:
-                nonlocal consecutive_errors, should_finish
+                nonlocal should_finish, iteration_had_error, iteration_had_success
+                nonlocal correction_retry_requested, correction_retry_arguments
+                nonlocal correction_order_calls, correction_retry_pending
                 if tool_name == "finish_day":
                     should_finish = True
                     ctx.tool_call_cache["finish_day_summary"] = arguments.get("summary", "")
+                elif tool_name == "complete_phase":
+                    should_finish = True
+                    sub_window = getattr(ctx, "_current_sub_window", None)
+                    phase_key = f"{ctx.current_phase}:{sub_window or ctx.current_phase}"
+                    ctx.tool_call_cache.setdefault("_completed_phases", {})[
+                        phase_key
+                    ] = copy.deepcopy(arguments)
 
-                result = await self.registry.execute(tool_name, arguments, ctx)
+                correction_guard = None
+                if is_correction_retry and tool_name == "place_order":
+                    correction_order_calls += 1
+                    if correction_order_calls > 1:
+                        correction_guard = {
+                            "success": False,
+                            "error": "受控纠错窗口只允许一次 place_order",
+                            "error_code": "decision_card_correction_retry_limit",
+                            "retryable": False,
+                        }
+                    else:
+                        correction_guard = _validate_decision_card_correction(
+                            correction_retry_arguments, arguments
+                        )
+                result = correction_guard or await self.registry.execute(
+                    tool_name, arguments, ctx
+                )
+                correction_count = int(
+                    tool_cache.get("_decision_card_correction_retries", 0)
+                )
+                if (
+                    tool_name == "place_order"
+                    and result.get("retryable") is True
+                    and result.get("retry_kind") == "decision_card_correction"
+                    and (not is_correction_retry or phase_protocol)
+                    and correction_count < (6 if phase_protocol else 2)
+                ):
+                    correction_retry_requested = True
+                    if correction_retry_arguments is None:
+                        correction_retry_arguments = copy.deepcopy(arguments)
+                    correction = result.get("correction") or {}
+                    correction_required_tools.update(
+                        str(name)
+                        for name in correction.get("missing_tools", [])
+                        if self.registry.get_tool(str(name)) is not None
+                    )
+                if (
+                    phase_protocol
+                    and is_correction_retry
+                    and tool_name in correction_required_tools
+                    and "error" not in result
+                ):
+                    correction_required_tools.discard(tool_name)
                 self._emit(
                     "tool_call",
                     date=ctx.current_date,
@@ -630,18 +1140,154 @@ class AgentLoop:
                         "content": content,
                     }
                 )
+                sandbox_attempts_exhausted = (
+                    tool_name == "execute_code"
+                    and "error" in result
+                    and (
+                        sandbox_limit <= 0
+                        or int(tool_cache.get("_sandbox_call_count", 0))
+                        >= sandbox_limit
+                    )
+                )
+                usable_stage_evidence = (
+                    "error" not in result or sandbox_attempts_exhausted
+                )
+                if semantic_premarket and usable_stage_evidence:
+                    semantic_stage_successes.add(tool_name)
+                if (
+                    semantic_premarket
+                    and tool_name == "execute_code"
+                    and "error" in result
+                    and sandbox_limit
+                    and int(tool_cache.get("_sandbox_call_count", 0)) < sandbox_limit
+                ):
+                    retry_count = int(tool_cache.get("_sandbox_retry_count", 0)) + 1
+                    tool_cache["_sandbox_retry_count"] = retry_count
+                    self._emit(
+                        "sandbox_retry",
+                        date=ctx.current_date,
+                        agent_id=getattr(ctx, "agent_id", ""),
+                        phase=ctx.current_phase,
+                        retry_count=retry_count,
+                    )
+                    if self.trajectory:
+                        self.trajectory.record_step(
+                            ctx.current_date,
+                            "sandbox_retry",
+                            {
+                                "phase": ctx.current_phase,
+                                "sub_window": getattr(
+                                    ctx, "_current_sub_window", None
+                                ),
+                                "retry_count": retry_count,
+                                "scope": "traceback_code_correction_only",
+                            },
+                        )
                 if "error" in result:
-                    consecutive_errors += 1
+                    iteration_had_error = True
                 else:
-                    consecutive_errors = 0
+                    iteration_had_success = True
 
             for tc, name, args in read_batch:
                 await _run_tool(tc, name, args, read_only=True)
             for tc, name, args in write_batch:
                 await _run_tool(tc, name, args, read_only=False)
 
-            if should_finish or consecutive_errors >= 3:
+            # "Consecutive errors" means consecutive LLM/tool rounds, not the
+            # number of parallel calls in one response. A batch of four invalid
+            # calls is one failed correction opportunity, not four failed turns.
+            if iteration_had_success:
+                consecutive_errors = 0
+            elif iteration_had_error:
+                consecutive_errors += 1
+
+            if correction_retry_requested:
+                retry_count = int(
+                    tool_cache.get("_decision_card_correction_retries", 0)
+                ) + 1
+                tool_cache["_decision_card_correction_retries"] = retry_count
+                correction_retry_pending = True
+                self._emit(
+                    "decision_card_retry",
+                    date=ctx.current_date,
+                    agent_id=getattr(ctx, "agent_id", ""),
+                    phase=ctx.current_phase,
+                    retry_count=retry_count,
+                )
+                if self.trajectory:
+                    self.trajectory.record_step(
+                        ctx.current_date,
+                        "decision_card_retry",
+                        {
+                            "phase": ctx.current_phase,
+                            "sub_window": getattr(ctx, "_current_sub_window", None),
+                            "retry_count": retry_count,
+                            "scope": "format_and_evidence_only",
+                        },
+                    )
+                continue
+
+            if should_finish:
+                correction_retry_pending = False
+                correction_required_tools.clear()
                 return
+
+            if phase_protocol and is_correction_retry:
+                # Reading missing evidence is part of the same correction
+                # transaction. Keep this clock phase open until the corrected
+                # order is submitted, or the Agent explicitly abandons it.
+                if correction_order_calls == 0:
+                    correction_retry_pending = True
+                    continue
+                correction_retry_pending = False
+                correction_retry_arguments = None
+                correction_required_tools.clear()
+
+            if semantic_premarket:
+                requirements = _SEMANTIC_PREMARKET_STAGE_REQUIREMENTS[
+                    semantic_stage_index
+                ]
+                if (
+                    semantic_stage_index == 2
+                    and getattr(ctx, "full_market_research_allowed", None) is False
+                ):
+                    requirements = frozenset(_SEMANTIC_CANDIDATE_TOOLS)
+                stage_complete = requirements <= semantic_stage_successes
+                if semantic_stage_index in {2, 4}:
+                    stage_complete = bool(requirements & semantic_stage_successes)
+                if stage_complete:
+                    if semantic_stage_index == len(
+                        _SEMANTIC_PREMARKET_STAGE_REQUIREMENTS
+                    ) - 1:
+                        return
+                    if (
+                        semantic_stage_index == 2
+                        and getattr(ctx, "full_market_research_allowed", None) is False
+                    ):
+                        semantic_stage_index = 4
+                    else:
+                        semantic_stage_index += 1
+                    semantic_stage_successes.clear()
+
+            if should_finish or (consecutive_errors >= 3 and not phase_protocol):
+                return
+
+        if phase_protocol:
+            logger.warning(
+                "Phase completion extension exhausted: phase=%s sub_window=%s",
+                ctx.current_phase,
+                getattr(ctx, "_current_sub_window", None),
+            )
+            if self.trajectory:
+                self.trajectory.record_step(
+                    ctx.current_date,
+                    "phase_forced_complete",
+                    {
+                        "phase": ctx.current_phase,
+                        "sub_window": getattr(ctx, "_current_sub_window", None),
+                        "reason": "completion_extension_exhausted",
+                    },
+                )
 
     async def _ensure_finish(self, ctx: ToolContext) -> str:
         """确保 Agent 调用了 finish_day。"""

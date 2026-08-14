@@ -243,7 +243,6 @@ export function LiveRun() {
   );
 
   const latest = events.at(-1);
-  const status = run?.status ?? "loading";
 
   async function startDemo() {
     setDemoBusy(true);

@@ -1,0 +1,14 @@
+</p>
+<h2>附带产物：它还是一个训练数据合成器</h2>
+<p>因为每一次模型调用都被全保真记录（完整消息、工具 schema、推理内容、每次工具调用的参数），每次回测同时就是一次数据生产：</p>
+<pre><code class="language-bash">traderharness audit result.json replay.jsonl      # 泄漏审计
+traderharness export sft result.json --output training.jsonl   # 轨迹导出
+</code></pre>
+<p>导出的是 OpenAI 风格的轨迹 JSONL，由遮罩和泄漏检查把关——可以直接用于 SFT/RL 的专项训练数据。我们已经把一套 5 年 A 股全市场数据（日线 + 5 分钟线 + 公告 + 新闻 + 基本面 + 估值 + 分红 + 沪深300）打包发在 Hugging Face 上。</p>
+<h2>60 秒上手</h2>
+<pre><code class="language-bash">pip install &quot;traderharness[llm,data,ui]&quot;
+traderharness data download --full
+traderharness demo        # 无需 API Key，流式回放一段遮罩轨迹
+</code></pre>
+<p>本地研究控制台（FastAPI + React）里有个像素风办公室：每个 Agent 是一个小人，盘前查资料、盘中下单、尾盘复盘全程直播——回测第一次变成可以围观的现场。</p>
+<p>

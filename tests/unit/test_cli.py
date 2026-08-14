@@ -89,10 +89,14 @@ def test_run_propagates_all_agent_card_execution_controls(monkeypatch, tmp_path)
 
     assert result.exit_code == 1
     assert captured["require_structured_plan"] is True
-    assert captured["minimum_holding_days"] == 5
+    assert captured["require_decision_card"] is True
+    assert captured["minimum_holding_days"] == 0
     assert captured["research_interval_days"] == 5
     assert captured["sandbox_pre_market_only"] is True
     assert captured["sandbox_max_calls_per_day"] == 2
+    assert captured["watchlist_ttl_days"] == 10
+    assert captured["max_active_memories"] == 24
+    assert captured["max_daily_memories"] == 2
 
 
 def test_run_exposes_entity_masking_controls():

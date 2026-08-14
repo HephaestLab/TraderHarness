@@ -238,3 +238,19 @@ def test_entity_mask_on_sector_summary():
     pseudo = ctx.entity_masker.mask_code(A)
     assert summary["top_gainers"][0]["code"] == pseudo
     assert A not in str(summary)
+
+
+@patch("traderharness.tools.analysis.get_stock_industry", side_effect=_industries)
+def test_narrative_allowlist_authorizes_equivalent_sandbox_market_methods(_mock):
+    ctx = _ctx()
+    ctx.allowed_tools = frozenset(
+        {"get_narrative_market_overview", "get_narrative_sector_summary"}
+    )
+    api = MarketAPI(ctx)
+
+    overview = api.get_market_overview()
+    stocks = api.get_sector_stocks("白酒")
+
+    assert "up_count" in overview
+    assert not stocks.empty
+    assert {"change_1d_pct", "change_5d_pct", "change_20d_pct"} <= set(stocks.columns)

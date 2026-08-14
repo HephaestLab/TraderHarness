@@ -28,6 +28,9 @@ class TestAgentCard:
         assert card.research_interval_days == 0
         assert card.sandbox_pre_market_only is False
         assert card.sandbox_max_calls_per_day == 0
+        assert card.watchlist_ttl_days == 0
+        assert card.max_active_memories == 0
+        assert card.max_daily_memories == 0
 
     def test_create_full(self):
         card = AgentCard(
@@ -45,6 +48,9 @@ class TestAgentCard:
             research_interval_days=5,
             sandbox_pre_market_only=True,
             sandbox_max_calls_per_day=2,
+            watchlist_ttl_days=10,
+            max_active_memories=24,
+            max_daily_memories=2,
         )
         assert card.persona == "追涨杀跌，快进快出。"
         assert card.max_positions == 6
@@ -55,6 +61,9 @@ class TestAgentCard:
         assert card.research_interval_days == 5
         assert card.sandbox_pre_market_only is True
         assert card.sandbox_max_calls_per_day == 2
+        assert card.watchlist_ttl_days == 10
+        assert card.max_active_memories == 24
+        assert card.max_daily_memories == 2
 
     def test_to_dict_roundtrip(self):
         card = AgentCard(
@@ -220,7 +229,7 @@ def test_builtin_registry_uses_current_deepseek_v4_models():
         assert card.model in {"deepseek-v4-pro", "deepseek-v4-flash"}, (
             f"{card_id} still uses {card.model}"
         )
-    assert cards["behavioral-cycle"].model == "deepseek-v4-flash"
+    assert cards["behavioral-cycle"].model == "deepseek-v4-pro"
 
 
 def test_builtin_registry_contains_distinct_production_strategies():

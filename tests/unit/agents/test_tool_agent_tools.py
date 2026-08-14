@@ -6,7 +6,7 @@ read_file/write_file/list_files/run_python; market overview registered.
 
 from decimal import Decimal
 
-from traderharness.agents.tool_agent import ToolAgent
+from traderharness.agents.tool_agent import READ_ONLY_TOOL_NAMES, ToolAgent
 
 EXPECTED_TOOLS = {
     # market data
@@ -55,6 +55,15 @@ def test_no_legacy_tools(tmp_path):
     agent = _make_agent(tmp_path)
     for name in LEGACY_TOOLS:
         assert name not in agent._registry, f"legacy tool {name} still registered"
+
+
+def test_narrative_evidence_tools_are_read_only():
+    assert {
+        "get_narrative_market_overview",
+        "get_narrative_sector_summary",
+        "get_announcement_evidence",
+        "get_narrative_news",
+    } <= READ_ONLY_TOOL_NAMES
 
 
 def test_system_prompt_mentions_current_tools_only(tmp_path):

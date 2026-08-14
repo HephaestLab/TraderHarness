@@ -43,7 +43,7 @@ class TrajectoryCollector:
         self._live_file = Path(live_file) if live_file else None
         if self._live_file:
             self._live_file.parent.mkdir(parents=True, exist_ok=True)
-            self._live_file.write_text("[]", encoding="utf-8")
+            self._live_file.write_text("", encoding="utf-8")
 
     def start_day(self, trade_date: date, observation: dict) -> None:
         self._current_step = 0
@@ -64,22 +64,16 @@ class TrajectoryCollector:
     def _flush_live(self, trade_date: date, step_type: str, data: dict) -> None:
         if not self._live_file:
             return
-        try:
-            existing = json.loads(self._live_file.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, FileNotFoundError):
-            existing = []
-        existing.append(
-            {
-                "date": str(trade_date),
-                "step": self._current_step - 1,
-                "type": step_type,
-                "data": data,
-            }
-        )
-        self._live_file.write_text(
-            json.dumps(existing, ensure_ascii=False, default=str),
-            encoding="utf-8",
-        )
+        record = {
+            "date": str(trade_date),
+            "step": self._current_step - 1,
+            "type": step_type,
+            "data": data,
+        }
+        # JSONL keeps live writes O(1). Rewriting the complete trajectory on
+        # every step made long LLM runs progressively slower and froze the UI.
+        with self._live_file.open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
 
     def end_day(self, actions: list[dict], reward: float, done: bool = False) -> None:
         if self._day_records:

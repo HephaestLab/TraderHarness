@@ -16,7 +16,22 @@ async def handle_add_watchlist(params: dict, ctx: ToolContext) -> dict:
         ctx._watchlist = {}
     watchlist = ctx.tool_call_cache.setdefault("watchlist", {})
     watchlist[code] = reason
-    return {"success": True, "stock_code": code, "reason": reason, "total_watching": len(watchlist)}
+    ttl = max(0, int(getattr(ctx, "watchlist_ttl_days", 0)))
+    meta = ctx.tool_call_cache.setdefault("_watchlist_meta", {})
+    meta[code] = {
+        "reason": reason,
+        "refreshed_day_index": int(ctx.day_index),
+        "expires_day_index": int(ctx.day_index) + ttl if ttl else None,
+    }
+    result = {
+        "success": True,
+        "stock_code": code,
+        "reason": reason,
+        "total_watching": len(watchlist),
+    }
+    if ttl:
+        result["expires_in_trading_days"] = ttl
+    return result
 
 
 async def handle_remove_watchlist(params: dict, ctx: ToolContext) -> dict:
@@ -25,6 +40,7 @@ async def handle_remove_watchlist(params: dict, ctx: ToolContext) -> dict:
     watchlist = ctx.tool_call_cache.get("watchlist", {})
     if code in watchlist:
         del watchlist[code]
+        ctx.tool_call_cache.get("_watchlist_meta", {}).pop(code, None)
         return {"success": True, "removed": code}
     return {"error": f"{code} 不在自选股列表中"}
 
@@ -36,8 +52,12 @@ async def handle_get_watchlist(params: dict, ctx: ToolContext) -> dict:
         return {"watchlist": [], "count": 0}
 
     items = []
+    meta = ctx.tool_call_cache.get("_watchlist_meta", {})
     for code, reason in watchlist.items():
         info = {"stock_code": code, "reason": reason}
+        expires = meta.get(code, {}).get("expires_day_index")
+        if expires is not None:
+            info["expires_in_trading_days"] = max(0, int(expires) - int(ctx.day_index))
         df = ctx.preloaded_daily.get(code)
         if df is not None and not df.empty:
             filtered = df[df["date"] < ctx.current_date]

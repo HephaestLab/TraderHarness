@@ -46,6 +46,7 @@ function securityLabel(stockCode?: string, stockName?: string) {
 type SortMode = "latest" | "return" | "days";
 
 const MAX_COMPARE = 4;
+const RESULT_REFRESH_MS = 2_000;
 
 /** Recency key for result artifacts: YYYYMMDD_HHMMSS prefix, else full filename. */
 export function resultArtifactRecencyKey(file: string): string {
@@ -91,6 +92,7 @@ function ConfirmDialog({
 export function Results() {
   const [params, setParams] = useSearchParams();
   const [items, setItems] = useState<ResultSummary[]>([]);
+  const [itemsLoaded, setItemsLoaded] = useState(false);
   const [analysis, setAnalysis] = useState<ResultAnalysis | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -108,12 +110,55 @@ export function Results() {
   const requestKeyRef = useRef("");
 
   useEffect(() => {
-    api.results().then(setItems).catch((reason: Error) => setError(reason.message));
+    let stopped = false;
+    let refreshTimer: number | undefined;
+    const refresh = () => {
+      api.results()
+        .then((nextItems) => {
+          if (stopped) return;
+          setItems(nextItems);
+          setItemsLoaded(true);
+        })
+        .catch((reason: Error) => {
+          if (stopped) return;
+          setItemsLoaded(true);
+          setError(reason.message);
+        })
+        .finally(() => {
+          if (!stopped) refreshTimer = window.setTimeout(refresh, RESULT_REFRESH_MS);
+        });
+    };
+    refresh();
+    return () => {
+      stopped = true;
+      if (refreshTimer) window.clearTimeout(refreshTimer);
+    };
   }, []);
+  const selectedItem = file ? items.find((item) => item.file === file) : undefined;
+  const selectedStatus = selectedItem?.status;
+  const selectedError = selectedItem?.error;
   useEffect(() => {
     if (!file) {
       setAnalysis(null);
       requestKeyRef.current = "";
+      return;
+    }
+    if (!itemsLoaded) {
+      setLoading(true);
+      return;
+    }
+    if (selectedStatus === "running") {
+      requestKeyRef.current = `${file}:running`;
+      setAnalysis(null);
+      setLoading(false);
+      setError("");
+      return;
+    }
+    if (selectedStatus === "failed") {
+      requestKeyRef.current = `${file}:failed`;
+      setAnalysis(null);
+      setLoading(false);
+      setError(selectedError ? `回测失败：${selectedError}` : "回测失败，结果工件未完成。");
       return;
     }
     const requestKey = `${file}:${revealEntities ? "original" : "masked"}`;
@@ -143,7 +188,7 @@ export function Results() {
     return () => {
       cancelled = true;
     };
-  }, [file, revealEntities]);
+  }, [file, revealEntities, itemsLoaded, selectedStatus, selectedError]);
 
   async function loadFullEvidence() {
     if (!file || !analysis || analysis.detail !== "summary" || evidenceLoading) return;
@@ -264,6 +309,13 @@ export function Results() {
         }
       />
       {error ? <ErrorNotice message={error} /> : null}
+      {mode === "detail" && selectedStatus === "running" ? (
+        <div className="panel" role="status" aria-label="回测仍在运行">
+          <span className="eyebrow">正在落盘</span>
+          <h2>回测仍在运行</h2>
+          <p>此页面会自动检查状态；主工件和分析摘要完成后将直接打开，无需刷新或手工处理。</p>
+        </div>
+      ) : null}
       {mode === "compare" ? (
         <ResultCompare files={compareFiles ?? []} onBack={() => setCompareFiles(null)} />
       ) : null}

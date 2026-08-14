@@ -1,5 +1,6 @@
 """Tests for TrajectoryCollector."""
 
+import json
 from datetime import date
 
 from traderharness.trajectory.collector import TrajectoryCollector
@@ -46,3 +47,15 @@ class TestTrajectoryCollector:
         paths = tc.export_parquet(tmp_path)
         assert paths["day"].exists()
         assert paths["step"].exists()
+
+    def test_live_trajectory_is_append_only_jsonl(self, tmp_path):
+        live = tmp_path / "run_live.jsonl"
+        tc = TrajectoryCollector("test_agent", live_file=live)
+        tc.start_day(date(2024, 3, 4), {})
+        tc.record_step(date(2024, 3, 4), "tool_call", {"name": "first"})
+        first_size = live.stat().st_size
+        tc.record_step(date(2024, 3, 4), "tool_call", {"name": "second"})
+
+        lines = [json.loads(line) for line in live.read_text(encoding="utf-8").splitlines()]
+        assert [line["data"]["name"] for line in lines] == ["first", "second"]
+        assert live.stat().st_size > first_size

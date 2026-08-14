@@ -35,9 +35,14 @@ def request_fingerprint(messages: list[dict], tools: list[dict] | None) -> str:
 class ReplayRecorder:
     """Records all LLM inputs/outputs for deterministic replay."""
 
-    def __init__(self, prompt_contract_version: str | None = None) -> None:
+    def __init__(
+        self,
+        prompt_contract_version: str | None = None,
+        entity_mask_style: str = "permutation",
+    ) -> None:
         self._entries: list[dict] = []
         self.prompt_contract_version = prompt_contract_version
+        self.entity_mask_style = entity_mask_style
 
     def record(self, trade_date: date, step: int, entry_type: str, data: dict) -> None:
         self._entries.append(
@@ -77,6 +82,7 @@ class ReplayRecorder:
                     "type": "meta",
                     "schema_version": 1,
                     "prompt_contract_version": self.prompt_contract_version,
+                    "entity_mask_style": self.entity_mask_style,
                 }
                 f.write(json.dumps(meta, ensure_ascii=False) + "\n")
             for entry in self._entries:
@@ -98,6 +104,7 @@ class ReplayPlayer:
         self._entries: list[dict] = []
         self._index: int = 0
         self.prompt_contract_version: str | None = None
+        self.entity_mask_style: str = "permutation"
         self._load(path)
 
     def next_response(
@@ -164,5 +171,8 @@ class ReplayPlayer:
                         version = entry.get("prompt_contract_version")
                         if isinstance(version, str):
                             self.prompt_contract_version = version
+                        style = entry.get("entity_mask_style")
+                        if style in {"permutation", "opaque"}:
+                            self.entity_mask_style = style
                     elif entry.get("type") == "llm_call":
                         self._entries.append(entry)

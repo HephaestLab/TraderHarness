@@ -53,6 +53,25 @@ def test_reverse_mapping_round_trip():
         assert masker.unmask_code(masker.mask_code(real)) == real
 
 
+def test_opaque_mapping_is_deterministic_reversible_and_not_a_real_code():
+    first = EntityMasker(CODES, names=NAMES, seed=42, style="opaque")
+    second = EntityMasker(CODES, names=NAMES, seed=42, style="opaque")
+
+    assert first.real_to_masked == second.real_to_masked
+    for real, masked in first.real_to_masked.items():
+        assert not masked.isdigit()
+        assert masked.startswith(("SHM-", "GEM-", "STAR-", "BSE-", "SZM-"))
+        assert first.unmask_code(masked) == real
+
+
+def test_opaque_mapping_keeps_board_metadata_without_code_prefix_leakage():
+    masker = EntityMasker(CODES, names=NAMES, seed=7, style="opaque")
+
+    assert masker.mask_code("600519").startswith("SHM-")
+    assert masker.mask_code("300750").startswith("GEM-")
+    assert masker.mask_code("688981").startswith("STAR-")
+
+
 def test_unknown_codes_are_unchanged():
     masker = _masker()
     assert masker.mask_code("999999") == "999999"
@@ -189,3 +208,22 @@ def test_disabled_masker_is_a_noop():
     assert masker.unmask_code("600519") == "600519"
     assert masker.mask_text("贵州茅台600519") == "贵州茅台600519"
     assert masker.mask_df(frame) is frame
+
+
+def test_opaque_masker_recovers_a_unique_dropped_board_prefix():
+    masker = EntityMasker(["600519"], seed=7, style="opaque")
+    alias = masker.mask_code("600519")
+    suffix = alias.split("-", 1)[1]
+
+    assert masker.masked_code_candidates(suffix) == [alias]
+    assert masker.unmask_code(suffix) == "600519"
+
+
+def test_opaque_masker_reports_all_candidates_for_ambiguous_suffix():
+    masker = EntityMasker(["600519", "000001"], seed=7, style="opaque")
+    # Each board owns token 000001, so a model that drops the prefix must be
+    # shown both aliases rather than silently routed to the wrong security.
+    candidates = masker.masked_code_candidates("000001")
+
+    assert len(candidates) == 2
+    assert masker.unmask_code("000001") == "000001"

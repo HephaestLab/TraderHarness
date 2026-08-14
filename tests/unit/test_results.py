@@ -27,6 +27,9 @@ def test_save_complete_writes_a_stamp_validated_summary_sidecar(tmp_path, monkey
     sidecar = results.result_summary_path(path)
     assert sidecar.is_file()
     assert sidecar.name == "20260810_120000_result.json.summary.json"
+    analysis_sidecar = results.result_analysis_summary_path(path)
+    assert analysis_sidecar.is_file()
+    assert results.read_result_analysis_summary(path)["analysis"]["detail"] == "summary"
     assert results.read_result_summary(path) == {
         "file": path.name,
         "status": "done",
@@ -66,3 +69,36 @@ def test_valid_sidecar_avoids_reading_the_large_result(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "read_text", guarded_read_text)
 
     assert results.ensure_result_summary(path)["metrics"]["total_return_pct"] == 3.5
+
+
+def test_completed_artifact_survives_optional_analysis_sidecar_failure(
+    tmp_path, monkeypatch
+):
+    """UI materialization must never downgrade an already durable backtest."""
+    monkeypatch.setattr(results, "RESULTS_DIR", tmp_path)
+
+    def fail_analysis(*args, **kwargs):
+        raise OSError(22, "analysis sidecar unavailable")
+
+    monkeypatch.setattr(results, "write_result_analysis_summary", fail_analysis)
+
+    path = results.save_complete("20260810_120000_result.json", _document())
+
+    document = json.loads(path.read_text(encoding="utf-8"))
+    assert document["status"] == "done"
+    assert results.read_result_summary(path)["status"] == "done"
+    assert not results.result_analysis_summary_path(path).exists()
+
+
+def test_failed_summary_exposes_error_without_opening_full_artifact(tmp_path, monkeypatch):
+    monkeypatch.setattr(results, "RESULTS_DIR", tmp_path)
+
+    path = results.save_failed(
+        "20260810_120000_result.json",
+        "ReplayMismatchError: request diverged",
+        {"start_date": "2026-03-02", "end_date": "2026-08-01"},
+    )
+
+    summary = results.read_result_summary(path)
+    assert summary["status"] == "failed"
+    assert summary["error"] == "ReplayMismatchError: request diverged"

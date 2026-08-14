@@ -14,6 +14,7 @@ Usage from Streamlit:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import threading
 from dataclasses import dataclass
 from datetime import date
@@ -34,6 +35,7 @@ class RunConfig:
     mask_dates: bool = True
     mask_entities: bool = True
     entity_mask_seed: int = 0
+    entity_mask_style: str = "opaque"
     replay_path: Path | None = None
 
 
@@ -105,10 +107,12 @@ class BacktestRunner:
                 self._feed.push("run_end", trading_days=0)
 
     async def _async_run(self) -> EngineResult:
+        entity_mask_style = self._resolved_entity_mask_style()
         engine_config = EngineConfig(
             initial_cash=Decimal(str(self._config.initial_cash)),
             mask_entities=self._config.mask_entities,
             entity_mask_seed=self._config.entity_mask_seed,
+            entity_mask_style=entity_mask_style,
             cancel_check=self._cancel_event.is_set,
         )
         engine = BacktestEngine(config=engine_config, event_bus=self._feed.event_bus)
@@ -216,10 +220,15 @@ class BacktestRunner:
                 max_pre_iterations=cfg.get("max_pre_iterations", 10),
                 max_window_iterations=cfg.get("max_window_iterations", 3),
                 require_structured_plan=cfg.get("require_structured_plan", False),
+                require_decision_card=cfg.get("require_decision_card", False),
+                require_phase_completion=cfg.get("require_phase_completion", False),
                 minimum_holding_days=cfg.get("minimum_holding_days", 0),
                 research_interval_days=cfg.get("research_interval_days", 0),
                 sandbox_pre_market_only=cfg.get("sandbox_pre_market_only", False),
                 sandbox_max_calls_per_day=cfg.get("sandbox_max_calls_per_day", 0),
+                watchlist_ttl_days=cfg.get("watchlist_ttl_days", 0),
+                max_active_memories=cfg.get("max_active_memories", 0),
+                max_daily_memories=cfg.get("max_daily_memories", 0),
                 allowed_tools=cfg.get("allowed_tools"),
                 event_bus=self._feed.event_bus,
                 mask_dates=self._config.mask_dates,
@@ -230,7 +239,7 @@ class BacktestRunner:
         return agents
 
     def _persisted_config(self) -> dict[str, Any]:
-        return {
+        config = {
             "start_date": str(self._config.start_date),
             "end_date": str(self._config.end_date),
             "initial_cash": self._config.initial_cash,
@@ -238,5 +247,29 @@ class BacktestRunner:
             "mask_dates": self._config.mask_dates,
             "mask_entities": self._config.mask_entities,
             "entity_mask_seed": self._config.entity_mask_seed,
+            "entity_mask_style": self._resolved_entity_mask_style(),
             "replay": self._config.replay_path is not None,
         }
+        path = self._config.replay_path
+        if path is not None:
+            artifact = path / "manifest.json" if path.is_dir() else path
+            config["provenance"] = {
+                "mode": "replay",
+                "artifact": artifact.name,
+                "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
+            }
+        else:
+            config["provenance"] = {"mode": "live"}
+        return config
+
+    def _resolved_entity_mask_style(self) -> str:
+        path = self._config.replay_path
+        if path is None:
+            return self._config.entity_mask_style
+        if path.is_dir():
+            from traderharness.trajectory.bundle import ReplayBundleManifest
+
+            return ReplayBundleManifest.load(path).entity_mask_style
+        from traderharness.trajectory.replay import ReplayPlayer
+
+        return ReplayPlayer(path).entity_mask_style

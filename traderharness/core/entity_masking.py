@@ -29,10 +29,18 @@ class EntityMasker:
         sanitize_aliases: Mapping[str, Iterable[str]] | None = None,
         seed: int | str = 0,
         enabled: bool = True,
+        style: str = "permutation",
     ) -> None:
         self.enabled = enabled
+        if style not in {"permutation", "opaque"}:
+            raise ValueError("entity mask style must be 'permutation' or 'opaque'")
+        self.style = style
         normalized = sorted({str(code).zfill(6) for code in codes})
-        self._real_to_masked = self._build_mapping(normalized, seed)
+        self._real_to_masked = (
+            self._build_opaque_mapping(normalized, seed)
+            if style == "opaque"
+            else self._build_mapping(normalized, seed)
+        )
         self._masked_to_real = {masked: real for real, masked in self._real_to_masked.items()}
 
         self._names = {str(code).zfill(6): str(name) for code, name in (names or {}).items()}
@@ -60,12 +68,16 @@ class EntityMasker:
             else None
         )
         self._template_re = re.compile(r"\{\{C(\d{6})\}\}")
-        self._neutral_re = re.compile(r"公司-(\d{6})")
+        self._neutral_re = re.compile(r"公司-([A-Z]+-[A-Z0-9]+|\d{6})")
         masked_code_patterns = sorted(
             (re.escape(c) for c in self._masked_to_real), key=len, reverse=True
         )
         self._masked_code_re = (
-            re.compile(r"(?<!\d)(?:" + "|".join(masked_code_patterns) + r")(?!\d)")
+            re.compile(
+                r"(?<![A-Za-z0-9-])(?:"
+                + "|".join(masked_code_patterns)
+                + r")(?![A-Za-z0-9-])"
+            )
             if masked_code_patterns
             else None
         )
@@ -124,6 +136,31 @@ class EntityMasker:
             mapping.update(zip(members, rotated, strict=True))
         return mapping
 
+    @classmethod
+    def _build_opaque_mapping(cls, codes: list[str], seed: int | str) -> dict[str, str]:
+        """Build reversible aliases that cannot be mistaken for real stock codes."""
+        prefixes = {
+            "sh_main": "SHM",
+            "sz_main": "SZM",
+            "sz_chinext": "GEM",
+            "sh_star": "STAR",
+            "bse": "BSE",
+        }
+        groups: dict[str, list[str]] = defaultdict(list)
+        for code in codes:
+            groups[cls.board_key(code)].append(code)
+
+        mapping: dict[str, str] = {}
+        for board, members in sorted(groups.items()):
+            members.sort()
+            rng = random.Random(f"{seed}:{board}:opaque")
+            tokens = list(range(1, len(members) + 1))
+            rng.shuffle(tokens)
+            prefix = prefixes[board]
+            for code, token in zip(members, tokens, strict=True):
+                mapping[code] = f"{prefix}-{token:06d}"
+        return mapping
+
     @property
     def real_to_masked(self) -> dict[str, str]:
         return dict(self._real_to_masked)
@@ -142,7 +179,23 @@ class EntityMasker:
         if not self.enabled or code is None:
             return code
         text = str(code).zfill(6)
+        if self.style == "opaque" and re.fullmatch(r"\d{6}", text):
+            candidates = self.masked_code_candidates(text)
+            if len(candidates) == 1:
+                return self._masked_to_real[candidates[0]]
         return self._masked_to_real.get(text, code)
+
+    def masked_code_candidates(self, code: Any) -> list[str]:
+        """Return full opaque aliases matching a model-supplied numeric suffix."""
+        if not self.enabled or self.style != "opaque" or code is None:
+            return []
+        text = str(code).strip()
+        if not re.fullmatch(r"\d{1,6}", text):
+            return []
+        suffix = text.zfill(6)
+        return sorted(
+            masked for masked in self._masked_to_real if masked.endswith("-" + suffix)
+        )
 
     def mask_name(self, real_code: str) -> str:
         """Return a neutral label tied to the run-scoped masked code."""
@@ -158,8 +211,18 @@ class EntityMasker:
                 lambda match: self.mask_name(self._sanitize_alias_to_code[match.group(0)]),
                 text,
             )
-        return self._template_re.sub(
+        text = self._template_re.sub(
             lambda match: self.mask_name(match.group(1)),
+            text,
+        )
+        # Legacy egress represented an alias outside the loaded universe as
+        # 公司-<canonical code>. Keep mask_name replay-compatible, then remove
+        # that residual identity only on the live sanitization pass. A valid
+        # in-universe neutral label always contains a code in _masked_to_real.
+        return self._neutral_re.sub(
+            lambda match: (
+                match.group(0) if match.group(1) in self._masked_to_real else "外部公司"
+            ),
             text,
         )
 

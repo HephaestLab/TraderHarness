@@ -120,6 +120,29 @@ async def test_registry_unmasks_arguments_and_masks_nested_result():
 
 
 @pytest.mark.asyncio
+async def test_replay_reexecutes_and_sanitizes_fresh_tool_egress():
+    ctx = _context()
+    ctx.replay_mode = True
+    ctx.require_decision_card = True
+    pseudo = ctx.entity_masker.mask_code(REAL)
+
+    async def handler(params, _ctx):
+        return {
+            "stock_code": params["stock_code"],
+            "title": "贵州茅台年度报告",
+            "content": "茅台的公告正文",
+        }
+
+    registry = ToolRegistry()
+    registry.register(ToolDefinition("probe", "", {}, handler))
+    result = await registry.execute("probe", {"stock_code": pseudo}, ctx)
+
+    assert result["stock_code"] == pseudo
+    assert "贵州茅台" not in str(result)
+    assert "茅台" not in str(result)
+
+
+@pytest.mark.asyncio
 async def test_execute_code_does_not_double_mask_sandbox_entity_egress(tmp_path):
     """A sandbox pseudocode must round-trip into ordinary market tools."""
     ctx = _context()

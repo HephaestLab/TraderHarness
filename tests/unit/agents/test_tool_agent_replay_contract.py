@@ -9,6 +9,8 @@ from decimal import Decimal
 
 from traderharness.agents.tool_agent import (
     CONTRACT_VERSION,
+    CURRENT_DECISION_CARD_EXECUTION_CONTRACT,
+    DECISION_CARD_EXECUTION_CONTRACT,
     DECISION_RECORDING_CONTRACT,
     LEGACY_CONTRACT_VERSION,
     ToolAgent,
@@ -92,7 +94,7 @@ class TestToolAgentContractWiring:
         text, version = resolve_decision_contract(
             _StubReplayingLLM(), prompt_contract_version="v2"
         )
-        assert version == CONTRACT_VERSION
+        assert version == "v2"
         assert text == DECISION_RECORDING_CONTRACT
         agent = _make_agent(
             tmp_path,
@@ -100,3 +102,36 @@ class TestToolAgentContractWiring:
             prompt_contract_version="v2",
         )
         assert "决策记录要求" in agent._system_prompt
+        assert "决策卡执行合同" not in agent._system_prompt
+
+    def test_current_decision_card_agent_gets_execution_appendix(self, tmp_path):
+        agent = _make_agent(
+            tmp_path,
+            _StubLLM(),
+            require_decision_card=True,
+            sandbox_pre_market_only=True,
+            sandbox_max_calls_per_day=2,
+        )
+
+        assert CURRENT_DECISION_CARD_EXECUTION_CONTRACT in agent._system_prompt
+        assert "best_expression_reason" in agent._system_prompt
+        assert "text_evidence_ids 只能精确复制" in agent._system_prompt
+        assert "place_order 顶层字段" in agent._system_prompt
+        assert "回测进度和剩余天数只用于识别研究日" in agent._system_prompt
+        assert "正常只调用一次" in agent._system_prompt
+        assert "只有第一次返回 error 时" in agent._system_prompt
+        assert "第一次成功不得再调用" in agent._system_prompt
+        assert "第二次仍失败就停止代码研究" in agent._system_prompt
+        assert "不存在 change_5_pct" in agent._system_prompt
+        assert "market.get_all_daily(days=20)" in agent._system_prompt
+
+    def test_v3_replay_keeps_the_previous_execution_appendix(self, tmp_path):
+        agent = _make_agent(
+            tmp_path,
+            _StubReplayingLLM(),
+            require_decision_card=True,
+            prompt_contract_version="v3",
+        )
+
+        assert DECISION_CARD_EXECUTION_CONTRACT in agent._system_prompt
+        assert CURRENT_DECISION_CARD_EXECUTION_CONTRACT not in agent._system_prompt

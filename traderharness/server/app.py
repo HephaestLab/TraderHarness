@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import os
 from datetime import date, timedelta
@@ -34,7 +35,14 @@ from traderharness.result_analysis import (
     MarketDatasetBarSource,
     build_result_analysis,
 )
-from traderharness.results import ensure_result_summary, result_summary_path
+from traderharness.results import (
+    compact_result_analysis,
+    ensure_result_summary,
+    read_result_analysis_summary,
+    result_analysis_summary_path,
+    result_summary_path,
+    write_result_analysis_summary,
+)
 from traderharness.tools.catalog import normalize_allowed_tools, tool_catalog_payload
 
 
@@ -134,30 +142,7 @@ def _result_summary(path: Path) -> dict[str, Any]:
 
 
 def _compact_result_analysis(analysis: dict[str, Any]) -> dict[str, Any]:
-    """Keep the useful first screen while deferring bulky trajectory evidence."""
-    for agent in analysis.get("agents", {}).values():
-        decisions = agent.get("decisions") or []
-        tools = agent.get("tools") or []
-        for review in agent.get("trade_reviews") or []:
-            review["decisions"] = [
-                decisions[index]
-                for index in review.get("decision_indices") or []
-                if isinstance(index, int) and 0 <= index < len(decisions)
-            ]
-            order_index = review.get("order_tool_index")
-            review["order_tool"] = (
-                tools[order_index]
-                if isinstance(order_index, int) and 0 <= order_index < len(tools)
-                else None
-            )
-        agent["days"] = []
-        agent["decisions"] = []
-        agent["tools"] = []
-        # Charts needed by trade review are already copied into each review.
-        # The per-security trajectory dossier is only used by full evidence.
-        agent["securities"] = {}
-    analysis["detail"] = "summary"
-    return analysis
+    return compact_result_analysis(analysis)
 
 
 def _evaluation_bar_provider(data_root: Path) -> MarketDatasetBarSource | None:
@@ -209,6 +194,7 @@ def _build_result_entity_revealer(document: dict[str, Any], data_root: Path):
         codes,
         names=names,
         seed=config.get("entity_mask_seed", 0),
+        style=config.get("entity_mask_style", "permutation"),
     )
 
 
@@ -258,6 +244,7 @@ def create_app(
     analysis_cache: dict[
         tuple[str, bool, str], tuple[tuple[int, int], dict[str, Any]]
     ] = {}
+    entity_revealer_cache: dict[str, tuple[tuple[int, int], Any]] = {}
     analysis_cache_max_entries = 4
 
     def _file_stamp(path: Path) -> tuple[int, int]:
@@ -449,19 +436,37 @@ def create_app(
         cached = analysis_cache.get(cache_key)
         if cached is not None and cached[0] == stamp:
             return cached[1]
-        document = json.loads(path.read_text(encoding="utf-8"))
-        evaluation_bars = _evaluation_bar_provider(data_root)
+        summary_payload = (
+            read_result_analysis_summary(path) if detail == "summary" else None
+        )
+        if summary_payload is not None:
+            document = summary_payload.get("document") or {}
+            analysis = copy.deepcopy(summary_payload["analysis"])
+        else:
+            document = json.loads(path.read_text(encoding="utf-8"))
         # Persisted masked trades carry pseudocodes. Evaluation-only chart
         # backfill must query the canonical code, otherwise the masked page
         # silently displays a different company's price history.
-        revealer = _build_result_entity_revealer(document, data_root)
-        if evaluation_bars is not None and revealer is not None:
-            canonical_evaluation_bars = evaluation_bars
+        # A precomputed masked summary is already self-contained. Rebuilding
+        # the full-universe entity permutation here used to add seconds to
+        # every first page load even though no entity was being revealed.
+        revealer = None
+        if reveal_entities or summary_payload is None:
+            cached_revealer = entity_revealer_cache.get(filename)
+            if cached_revealer is not None and cached_revealer[0] == stamp:
+                revealer = cached_revealer[1]
+            else:
+                revealer = _build_result_entity_revealer(document, data_root)
+                entity_revealer_cache[filename] = (stamp, revealer)
+        if summary_payload is None:
+            evaluation_bars = _evaluation_bar_provider(data_root)
+            if evaluation_bars is not None and revealer is not None:
+                canonical_evaluation_bars = evaluation_bars
 
-            def evaluation_bars(code: str, trade_date: str) -> list[dict[str, Any]]:
-                return canonical_evaluation_bars(revealer.unmask_code(code), trade_date)
+                def evaluation_bars(code: str, trade_date: str) -> list[dict[str, Any]]:
+                    return canonical_evaluation_bars(revealer.unmask_code(code), trade_date)
 
-        analysis = build_result_analysis(document, evaluation_bars=evaluation_bars)
+            analysis = build_result_analysis(document, evaluation_bars=evaluation_bars)
         reveal_available = bool(
             (document.get("config") or {}).get("mask_entities")
             and (data_root / "daily.parquet").is_file()
@@ -479,6 +484,10 @@ def create_app(
             }
         if detail == "summary":
             analysis = _compact_result_analysis(analysis)
+            if summary_payload is None and not reveal_entities:
+                # Legacy artifacts pay the parse cost once; subsequent page
+                # loads use the stamp-validated compact sidecar.
+                write_result_analysis_summary(path, document, copy.deepcopy(analysis))
         else:
             analysis["detail"] = "full"
         analysis_cache[cache_key] = (stamp, analysis)
@@ -506,9 +515,13 @@ def create_app(
         sidecar = result_summary_path(path)
         if sidecar.is_file():
             sidecar.unlink()
+        analysis_sidecar = result_analysis_summary_path(path)
+        if analysis_sidecar.is_file():
+            analysis_sidecar.unlink()
         # Both caches key on the bare filename (path.name), so drop any stale
         # entries alongside the artifact itself.
         summary_cache.pop(filename, None)
+        entity_revealer_cache.pop(filename, None)
         for cache_key in [key for key in analysis_cache if key[0] == filename]:
             analysis_cache.pop(cache_key, None)
         return Response(status_code=204)

@@ -164,6 +164,25 @@ class DailyMemory:
     def audit_events(self) -> list[dict]:
         return copy.deepcopy(self._events)
 
+    def active_records(
+        self,
+        *,
+        before_date: date | None = None,
+        source: str | None = None,
+    ) -> list[dict]:
+        """Return active structured records for deterministic governance checks."""
+        cutoff = before_date.isoformat() if before_date else None
+        records = []
+        for record in self._records.values():
+            if self._status_at(record, cutoff) != "active":
+                continue
+            if cutoff and record.get("date", "") >= cutoff:
+                continue
+            if source is not None and record.get("source") != source:
+                continue
+            records.append(copy.deepcopy(record))
+        return sorted(records, key=lambda item: item["memory_id"])
+
     def flush_runtime_state(self, observed_on: date, state: dict[str, Any]) -> dict | None:
         """Persist hard environment state before conversation compaction.
 
@@ -203,6 +222,7 @@ class DailyMemory:
         self,
         before_date: date | None = None,
         max_tokens: int = 8000,
+        date_masker=None,
         entity_masker=None,
     ) -> str:
         """Render compact core memory plus recent episodic journals.
@@ -254,7 +274,12 @@ class DailyMemory:
             if entries:
                 compact.append(f"- 共 {len(entries)} 个交易日日志；最近一日：{entries[-1]['summary'][:160]}")
             text = "\n".join(compact)
-        return entity_masker.mask_text(text) if entity_masker is not None else text
+        if date_masker is not None:
+            text = date_masker.mask_text(text)
+        if entity_masker is not None:
+            text = entity_masker.mask_text(text)
+            text = entity_masker.sanitize_agent_text(text)
+        return text
 
     def clear(self) -> None:
         self._entries = []

@@ -193,8 +193,12 @@ async def handle_execute_code(params: dict, ctx: ToolContext) -> dict:
     if not response:
         response["stdout"] = "(no output)"
 
-    if error_msg is None:
-        ctx.tool_call_cache["_sandbox_call_count"] = calls + 1
+    # Count executed attempts, not only successful programs.  Otherwise an LLM
+    # can retry failing code indefinitely without consuming the configured
+    # daily budget.  The loop uses the last-error marker to expose one bounded
+    # traceback-driven correction when the Agent card grants a second attempt.
+    ctx.tool_call_cache["_sandbox_call_count"] = calls + 1
+    ctx.tool_call_cache["_sandbox_last_error"] = error_msg is not None
 
     return response
 

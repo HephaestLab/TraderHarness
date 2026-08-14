@@ -17,6 +17,8 @@ from traderharness.agents.memory import DailyMemory
 from traderharness.core.events import EventBus
 from traderharness.tools.analysis import (
     GET_MARKET_OVERVIEW,
+    GET_NARRATIVE_MARKET_OVERVIEW,
+    GET_NARRATIVE_SECTOR_SUMMARY,
     GET_SECTOR_SUMMARY,
     SCREEN_BEHAVIORAL_CYCLE,
     SCREEN_STOCKS,
@@ -27,11 +29,16 @@ from traderharness.tools.conditional_orders import (
     LIST_CONDITIONAL_ORDERS,
     MANAGE_CONDITIONAL_ORDER,
 )
-from traderharness.tools.control import FINISH_DAY
+from traderharness.tools.control import COMPLETE_PHASE, FINISH_DAY
 from traderharness.tools.fundamentals import GET_FUNDAMENTALS
 from traderharness.tools.market import GET_KLINE, GET_STOCK_INFO, GET_STOCK_PRICE
 from traderharness.tools.memory import GET_MEMORY, REMEMBER, SEARCH_MEMORY
-from traderharness.tools.news import GET_ANNOUNCEMENTS, GET_NEWS
+from traderharness.tools.news import (
+    GET_ANNOUNCEMENT_EVIDENCE,
+    GET_ANNOUNCEMENTS,
+    GET_NARRATIVE_NEWS,
+    GET_NEWS,
+)
 from traderharness.tools.portfolio import GET_PORTFOLIO, GET_POSITION
 from traderharness.tools.registry import ToolContext, ToolRegistry
 from traderharness.tools.sandbox import EXECUTE_CODE
@@ -49,9 +56,11 @@ TOOL_DEFINITIONS = (
     GET_STOCK_PRICE,
     GET_STOCK_INFO,
     GET_MARKET_OVERVIEW,
+    GET_NARRATIVE_MARKET_OVERVIEW,
     SCREEN_STOCKS,
     SCREEN_BEHAVIORAL_CYCLE,
     GET_SECTOR_SUMMARY,
+    GET_NARRATIVE_SECTOR_SUMMARY,
     GET_PORTFOLIO,
     GET_POSITION,
     PLACE_ORDER,
@@ -59,7 +68,9 @@ TOOL_DEFINITIONS = (
     LIST_CONDITIONAL_ORDERS,
     GET_FUNDAMENTALS,
     GET_ANNOUNCEMENTS,
+    GET_ANNOUNCEMENT_EVIDENCE,
     GET_NEWS,
+    GET_NARRATIVE_NEWS,
     ADD_WATCHLIST,
     REMOVE_WATCHLIST,
     GET_WATCHLIST,
@@ -69,7 +80,33 @@ TOOL_DEFINITIONS = (
     EXECUTE_CODE,
     GET_BUSINESS_SEGMENTS,
     GET_VALUATION,
+    COMPLETE_PHASE,
     FINISH_DAY,
+)
+
+READ_ONLY_TOOL_NAMES = frozenset(
+    {
+        "get_kline",
+        "get_stock_price",
+        "get_stock_info",
+        "get_market_overview",
+        "get_narrative_market_overview",
+        "get_sector_summary",
+        "get_narrative_sector_summary",
+        "get_portfolio",
+        "get_position",
+        "get_fundamentals",
+        "get_business_segments",
+        "get_valuation",
+        "get_announcements",
+        "get_announcement_evidence",
+        "get_news",
+        "get_narrative_news",
+        "get_watchlist",
+        "list_conditional_orders",
+        "search_memory",
+        "get_memory",
+    }
 )
 
 DECISION_RECORDING_CONTRACT = """
@@ -81,13 +118,66 @@ reasoning 参数必须明确包含：交易信号、使用的数据或事件证�
 不得只写“趋势较好”“看涨”或“止损”等无法复盘的短句。
 """
 
+DECISION_CARD_EXECUTION_CONTRACT = """
+
+## 决策卡执行合同
+
+新建仓只有在你的语义结论确实为可交易时才调用 place_order；放弃时不要提交
+decision=abstain 的订单。decision_card 必须一次包含：decision、mode、theme、theme_logic、
+text_evidence_ids、business_fit、business_fit_basis、sector_state、sector_confirmation、candidate_role、
+leadership_comparison、best_expression_reason、candidate_rank、stronger_candidate_status、
+execution_compromise、capacity_liquidity、price_volume_confirmation、market_stage、
+extension_assessment、counter_evidence、why_now、abstention_case 和 invalidation。
+
+text_evidence_ids 只能精确复制文本工具返回的 evidence_id，例如 news:2399118 或
+announcement:600519:7；不得追加标题、解释、日期或自创前缀。
+business_fit_basis 只能是 direct_segments、industry_proxy 或 announcement；主营工具未返回
+明确分部名称时不得使用 direct_segments，也不得虚构具体产品。confirmation_level、
+original_structural_stop、exit_condition 和 expected_holding_days 是 place_order 顶层字段，
+不得放进 decision_card。每个窗口最多为一只候选提交一个订单。
+
+字段层级、类型或证据 ID 错误时，环境会明确返回 correction 并只开放一次
+place_order 纠错重试；只修正同一候选的结构和证据表达。板块未确认、存在更强候选、
+较弱替代、过度延伸或 abstain 是不可纠错的语义否决，不得为了通过校验改写结论。
+
+回测进度和剩余天数只用于识别研究日，不是入场、退出或降低仓位的市场证据。
+finish_day 控制在 500 个汉字内，只记录模式、主题、证据变化、反证、持仓计划和次日动作；
+无实质变化时不要重复写入长期记忆。
+"""
+
+CURRENT_DECISION_CARD_EXECUTION_CONTRACT = """
+
+## 决策卡与阶段执行合同
+
+新建仓只有在你的语义结论确实可交易时才调用 place_order。决策卡除原有字段外必须提交
+entry_setup，用 low_base_ignition、trend_continuation 或 leader_pullback 明确本次入场类型。
+完整决策卡字段为 decision、mode、entry_setup、theme、theme_logic、text_evidence_ids、
+business_fit、business_fit_basis、sector_state、sector_confirmation、candidate_role、
+leadership_comparison、best_expression_reason、candidate_rank、stronger_candidate_status、
+execution_compromise、capacity_liquidity、price_volume_confirmation、market_stage、
+extension_assessment、counter_evidence、why_now、abstention_case 和 invalidation。
+leader_attack 可以在龙头低位启动、趋势持续确认或龙头健康回踩时进入；不得把回踩当作唯一买点。
+high_low_rotation 用于新方向从低位开始重新定价。managed_extension 表示趋势较强但仍有明确承接、
+失效位和可接受跳空风险，可以交易；overextended 或 unclear 仍不可交易。
+
+text_evidence_ids 只能精确复制文本工具返回的 evidence_id。confirmation_level、
+original_structural_stop、exit_condition 和 expected_holding_days 是 place_order 顶层字段，
+不得放进 decision_card。字段、类型或证据错误时，环境会在 correction 中返回可执行的
+missing_tools；先补齐同一候选证据，再重交原语义订单。纠错未结束前当前市场阶段不会推进。
+
+除最后收盘阶段外，每个阶段完成研究、交易或主动放弃后必须调用 complete_phase；最后收盘阶段
+调用 finish_day。仅输出文字不会结束阶段。系统消息会逐阶段给出职责和完整工具清单，严禁调用
+清单外工具。回测进度和剩余天数只用于识别研究日，不是市场证据。
+"""
+
 # Current contract version: DECISION_RECORDING_CONTRACT is injected into the
 # system prompt. Cassettes/bundles recorded under this version include the
 # contract text in every recorded prompt fingerprint.
-CONTRACT_VERSION = "v2"
+CONTRACT_VERSION = "v4"
 # Legacy version: no contract text was injected (pre-dates this feature, or a
 # manifest/replay source explicitly says the recorded prompt lacked it).
 LEGACY_CONTRACT_VERSION = "v1"
+_DECISION_RECORDING_CONTRACT_VERSIONS = frozenset({"v2", "v3", CONTRACT_VERSION})
 
 
 def resolve_decision_contract(
@@ -104,17 +194,18 @@ def resolve_decision_contract(
     Resolution order:
     1. If `prompt_contract_version` is given (typically read from a Replay
        Bundle manifest during replay, or explicitly set when recording), it
-       is authoritative: `CONTRACT_VERSION` injects, anything else suppresses.
-       This lets replay reproduce exactly whatever prompt was recorded,
-       regardless of the current code's live-vs-replay state.
+       is authoritative: v2 and the current version inject the base decision
+       recording contract; v1 suppresses it. Only the current version adds
+       the decision-card execution appendix. This lets replay reproduce the
+       prompt contract that was actually recorded.
     2. Otherwise, fall back to the legacy heuristic: a replay player without
        manifest context means an old (pre-contract) v1 cassette, so the
        contract is suppressed to keep the request fingerprint stable; a live
        client (no player) injects the current contract.
     """
     if prompt_contract_version is not None:
-        if prompt_contract_version == CONTRACT_VERSION:
-            return DECISION_RECORDING_CONTRACT, CONTRACT_VERSION
+        if prompt_contract_version in _DECISION_RECORDING_CONTRACT_VERSIONS:
+            return DECISION_RECORDING_CONTRACT, prompt_contract_version
         return "\n", LEGACY_CONTRACT_VERSION
     if getattr(llm_client, "_player", None) is not None:
         return "\n", LEGACY_CONTRACT_VERSION
@@ -280,10 +371,15 @@ class ToolAgent:
             max_pre_iterations=card.max_pre_iterations,
             max_window_iterations=card.max_window_iterations,
             require_structured_plan=card.require_structured_plan,
+            require_decision_card=card.require_decision_card,
+            require_phase_completion=card.require_phase_completion,
             minimum_holding_days=card.minimum_holding_days,
             research_interval_days=card.research_interval_days,
             sandbox_pre_market_only=card.sandbox_pre_market_only,
             sandbox_max_calls_per_day=card.sandbox_max_calls_per_day,
+            watchlist_ttl_days=card.watchlist_ttl_days,
+            max_active_memories=card.max_active_memories,
+            max_daily_memories=card.max_daily_memories,
             allowed_tools=card.allowed_tools,
         )
 
@@ -299,10 +395,15 @@ class ToolAgent:
         max_pre_iterations: int = 10,
         max_window_iterations: int = 3,
         require_structured_plan: bool = False,
+        require_decision_card: bool = False,
+        require_phase_completion: bool = False,
         minimum_holding_days: int = 0,
         research_interval_days: int = 0,
         sandbox_pre_market_only: bool = False,
         sandbox_max_calls_per_day: int = 0,
+        watchlist_ttl_days: int = 0,
+        max_active_memories: int = 0,
+        max_daily_memories: int = 0,
         allowed_tools: list[str] | None = None,
         memory_dir: str | None = None,
         workspace_root: str | None = None,
@@ -321,12 +422,21 @@ class ToolAgent:
         self.max_positions = max_positions
         self.max_position_pct = max_position_pct
         self.require_structured_plan = require_structured_plan
+        self.require_decision_card = require_decision_card
+        self.require_phase_completion = require_phase_completion
         self.minimum_holding_days = max(0, int(minimum_holding_days))
         self.research_interval_days = max(0, int(research_interval_days))
         self.sandbox_pre_market_only = bool(sandbox_pre_market_only)
         self.sandbox_max_calls_per_day = max(0, int(sandbox_max_calls_per_day))
+        self.watchlist_ttl_days = max(0, int(watchlist_ttl_days))
+        self.max_active_memories = max(0, int(max_active_memories))
+        self.max_daily_memories = max(0, int(max_daily_memories))
         self.mask_dates = mask_dates
         self.allowed_tools = normalize_allowed_tools(allowed_tools)
+        if self.require_phase_completion and "complete_phase" not in self.allowed_tools:
+            raise ValueError(
+                "require_phase_completion=True requires complete_phase in allowed_tools"
+            )
         self.workspace_root = workspace_root or agent_id
 
         contract_text, self.prompt_contract_version = resolve_decision_contract(
@@ -341,6 +451,29 @@ class ToolAgent:
             decision_recording_contract=contract_text,
             allowed_tool_names=", ".join(self.allowed_tools),
         )
+        if self.require_decision_card:
+            governance_rules = []
+            if self.watchlist_ttl_days > 0:
+                governance_rules.append(
+                    f"Watchlist entries expire after {self.watchlist_ttl_days} trading days unless refreshed."
+                )
+            if self.max_daily_memories > 0:
+                governance_rules.append(
+                    f"At most {self.max_daily_memories} Agent memory writes are accepted per day."
+                )
+            if self.max_active_memories > 0:
+                governance_rules.append(
+                    f"At most {self.max_active_memories} Agent memories may remain active; replace stale "
+                    "records instead of accumulating duplicates."
+                )
+            self._system_prompt += (
+                "\n\n## Environment-enforced card policy\n"
+                f"minimum_holding_days={self.minimum_holding_days}. "
+                "There is no subjective minimum-holding lock when this value is 0; "
+                "exit immediately when the frozen invalidation or risk logic is met."
+            )
+            if governance_rules:
+                self._system_prompt += " " + " ".join(governance_rules)
         if not compact_prompt:
             import re
 
@@ -370,13 +503,40 @@ class ToolAgent:
                 self._system_prompt = re.sub(r"\n\*\*news\*\*：.*?。\n", "\n", self._system_prompt)
 
         if self.sandbox_pre_market_only:
+            sandbox_calls = max(0, self.sandbox_max_calls_per_day)
+            if sandbox_calls == 1:
+                sandbox_instruction = (
+                    "研究日盘前最多调用一次，在同一段代码内整理相对强弱、"
+                    "成交容量和量价证据并复核最终候选；不得再请求第二次。"
+                )
+            elif sandbox_calls == 2:
+                sandbox_instruction = (
+                    "正常只调用一次来整理相对强弱、成交容量和量价证据。"
+                    "只有第一次返回 error 时，才可读取 traceback 后调用第二次，"
+                    "并且只能修正同一分析目标的失败代码；第一次成功不得再调用。"
+                    "第二次仍失败就停止代码研究，继续使用普通工具判断。"
+                )
+            else:
+                sandbox_instruction = (
+                    f"研究日盘前最多调用 {sandbox_calls} 次，先整理证据表，"
+                    "后续调用只能复核最终候选。"
+                )
             self._system_prompt += (
                 "\n\n## 本 Agent 的研究执行约束\n"
-                "execute_code 仅在盘前可用。研究日盘前最多调用两次：第一次完成机械筛选，"
-                "第二次只复核最终候选的 K 线；不得在沙盒里查询新闻、公告、政策、估值或基本面。"
-                "之后停止代码研究，使用普通行情工具把候选缩减到最多3只；离开盘前前必须调用 "
-                "add_watchlist 登记最终候选，否则窗口没有这些股票的分钟行情，不得开仓。\n"
+                f"execute_code 仅在盘前可用。{sandbox_instruction}"
+                "market.get_behavioral_features() 不存在 change_5_pct，严格只使用"
+                "已公布的列；如需 5 日涨跌，用 market.get_all_daily(days=20) 的 close "
+                "按 stock_code 自行计算。"
+                "代码不得替你输出龙头或买卖结论，也不得在沙盒里查询新闻、公告、政策、"
+                "估值或基本面。之后停止代码研究，使用普通工具把候选缩减到最多2只；"
+                "离开盘前前必须调用 add_watchlist 登记最终候选，否则窗口没有这些股票的分钟行情，"
+                "不得开仓。\n"
             )
+
+        if self.require_decision_card and self.prompt_contract_version == "v3":
+            self._system_prompt += DECISION_CARD_EXECUTION_CONTRACT
+        elif self.require_decision_card and self.prompt_contract_version == CONTRACT_VERSION:
+            self._system_prompt += CURRENT_DECISION_CARD_EXECUTION_CONTRACT
 
         self._registry = ToolRegistry()
         for tool in TOOL_DEFINITIONS:
@@ -403,6 +563,7 @@ class ToolAgent:
 
         # 自选股（Agent 通过 add_watchlist 工具动态管理，跨天持久）
         self._watchlist_codes: set[str] = set()
+        self._watchlist_meta: dict[str, dict] = {}
         self._position_plans: dict[str, dict] = {}
 
         self.day_results: list[DayResult] = []
@@ -440,17 +601,39 @@ class ToolAgent:
             max_position_pct=self.max_position_pct,
             max_positions=self.max_positions,
             require_structured_plan=self.require_structured_plan,
+            require_decision_card=self.require_decision_card,
+            require_phase_completion=(
+                self.require_phase_completion
+                and self.prompt_contract_version == CONTRACT_VERSION
+            ),
             minimum_holding_days=self.minimum_holding_days,
             day_index=bus._day_index,
             research_interval_days=self.research_interval_days,
             sandbox_pre_market_only=self.sandbox_pre_market_only,
             allowed_tools=frozenset(self.allowed_tools),
             sandbox_max_calls_per_day=self.sandbox_max_calls_per_day,
+            watchlist_ttl_days=self.watchlist_ttl_days,
+            max_active_memories=self.max_active_memories,
+            max_daily_memories=self.max_daily_memories,
+            replay_mode=getattr(self.llm_client, "_player", None) is not None,
             _bus=bus,
         )
         # Seed persisted watchlist so morning brief / tools see yesterday's set,
         # and so an emptied watchlist can be written back at day end.
-        ctx.tool_call_cache["watchlist"] = {code: "" for code in sorted(self._watchlist_codes)}
+        active_watchlist: dict[str, str] = {}
+        active_meta: dict[str, dict] = {}
+        held_codes = set(portfolio.positions)
+        for code in sorted(self._watchlist_codes):
+            meta = dict(self._watchlist_meta.get(code, {}))
+            expires = meta.get("expires_day_index")
+            if expires is not None and bus._day_index > int(expires) and code not in held_codes:
+                continue
+            active_watchlist[code] = str(meta.get("reason", ""))
+            active_meta[code] = meta
+        self._watchlist_codes = set(active_watchlist)
+        self._watchlist_meta = active_meta
+        ctx.tool_call_cache["watchlist"] = active_watchlist
+        ctx.tool_call_cache["_watchlist_meta"] = active_meta
         self._position_plans = {
             code: plan
             for code, plan in self._position_plans.items()
@@ -515,3 +698,8 @@ class ToolAgent:
         if "watchlist" in ctx.tool_call_cache:
             watchlist_from_ctx = ctx.tool_call_cache.get("watchlist") or {}
             self._watchlist_codes = set(watchlist_from_ctx.keys())
+            self._watchlist_meta = {
+                code: dict(meta)
+                for code, meta in (ctx.tool_call_cache.get("_watchlist_meta") or {}).items()
+                if code in self._watchlist_codes
+            }

@@ -45,6 +45,7 @@ class EngineConfig:
     dataset_dir: str | None = None
     mask_entities: bool = False
     entity_mask_seed: int | str = 0
+    entity_mask_style: str = "permutation"
     cancel_check: Callable[[], bool] | None = None
 
 
@@ -899,6 +900,7 @@ class BacktestEngine:
                 aliases=aliases,
                 sanitize_aliases=build_alias_map(registry, canonical_announcements),
                 seed=self._config.entity_mask_seed,
+                style=self._config.entity_mask_style,
             )
         self._entity_masker = entity_masker
 

@@ -454,6 +454,49 @@ def test_result_analysis_summary_defers_bulk_evidence_but_keeps_trade_review(tmp
     assert full["agents"]["agent"]["tools"][0]["name"] == "place_order"
 
 
+def test_masked_summary_sidecar_skips_expensive_entity_reconstruction(
+    tmp_path, monkeypatch
+):
+    import traderharness.server.app as server_app
+    from traderharness.results import write_result_analysis_summary
+
+    client = _client(tmp_path)
+    path = tmp_path / "results" / "20260717_result.json"
+    document = {
+        "status": "done",
+        "start_date": "2024-03-14",
+        "end_date": "2024-03-15",
+        "trading_days": 2,
+        "config": {
+            "start_date": "2024-03-14",
+            "end_date": "2024-03-15",
+            "mask_entities": True,
+        },
+        "agent_data": {
+            "agent": {
+                "equity_curve": [["2024-03-14", 101]],
+                "trades": [],
+                "trajectory": {"steps": []},
+            }
+        },
+    }
+    path.write_text(json.dumps(document), encoding="utf-8")
+    write_result_analysis_summary(path, document)
+
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("masked summary should not load the canonical dataset")
+
+    monkeypatch.setattr(server_app, "_build_result_entity_revealer", fail_if_called)
+
+    with client:
+        response = client.get(
+            "/api/results/20260717_result.json/analysis?detail=summary"
+        )
+
+    assert response.status_code == 200
+    assert response.json()["detail"] == "summary"
+
+
 def test_result_analysis_can_reveal_entities_without_mutating_artifact(tmp_path):
     import pandas as pd
 

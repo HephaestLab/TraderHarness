@@ -1,0 +1,101 @@
+<p>LLM 炒股 Agent 今年彻底火了。让大模型读公告、看 K 线、自己下单，回测收益动辄年化翻倍——几乎每个这类项目的 README 里，都躺着一张漂亮的净值曲线。</p>
+<p>但很少有人追问一句：<strong>这条曲线，有多少是模型&quot;交易&quot;出来的，又有多少是它&quot;背&quot;出来的？</strong></p>
+<h2>一个被普遍无视的问题：模型可能认得考题</h2>
+<p>现在主流的 LLM trading 项目（包括那个 6 万多 star 的 AI 对冲基金），回测方式大同小异：把历史行情和新闻丢给模型，告诉它&quot;今天是 2024 年 3 月 14 日，贵州茅台现价 1700 元&quot;，然后看它的买卖决策。</p>
+<p>问题在于：<strong>通用大模型很可能&quot;认识&quot;这段历史。</strong></p>
+<p>茅台 2024 年的走势、2025 年那几波暴跌、每轮牛熊的时间点——这些全都躺在模型的预训练语料里。当你把真实日期和真实公司名喂给它，它根本不需要分析，只需要&quot;回忆&quot;。这样的回测，本质是开卷考试，而且答案就印在考卷上。</p>
+<p>更麻烦的是另外两件事：</p>
+<ul>
+<li><strong>时点泄漏</strong>：Agent 查&quot;最新公告&quot;时，拿到的可能是当时还没发布的公告；看到的新闻是事后才被报道的。未来函数以最隐蔽的方式混进决策。</li>
+<li><strong>口径混乱</strong>：成交价用开盘价还是收盘价？复权还是不复权？每个项目各搞一套，跑出来的收益根本无法横向比较。</li>
+</ul>
+<p>所以现在的局面是：Agent 交易的研究越来越多，但<strong>没有一个规范化的&quot;考场&quot;</strong>——你分不清一个 Agent 是真有 Alpha，还是只是记性好。</p>
+<h2>我们做了一个&quot;防作弊考场&quot;：TraderHarness</h2>
+<p>TraderHarness 是一个面向 LLM 交易 Agent 的抗污染回测环境。它解决的核心问题就一个：<strong>让模型在完全不知道&quot;自己身处哪段历史&quot;的前提下做交易，并且整个过程可复现、可审计。</strong></p>
+<p>几个关键设计：</p>
+<p><strong>1. 双重遮罩：日期和实体全部匿名化</strong></p>
+<p>Agent 看到的不是&quot;2024-03-14&quot;，而是&quot;D-1&quot;；不是&quot;贵州茅台&quot;，而是一个确定性映射出来的伪代码。映射种子固定，同一次运行内自洽，跨运行不可猜测。模型无法触发任何关于真实历史走势的记忆。</p>
+<p><strong>2. 严格的时点安全</strong></p>
+<p>所有数据出口（日线、5 分钟线、公告、新闻、基本面）都强制按当前模拟时点过滤，盘前看不到盘中的数据，盘中看不到收盘后的公告。没有未来函数。</p>
+<p><strong>3. 唯一受控的下单路径 + 确定性引擎</strong></p>
+<p>所有成交必须经过同一个撮合入口，按不复权的历史真实价格结算；市场数据全部预载在内存，回测过程零 I/O——同样的输入必然得到同样的结果。</p>
+<p><strong>4. 指纹回放</strong></p>
+<p>每一次 LLM 调用的完整请求都会记录指纹。生成的回放盒带可以在没有 API Key 的情况下逐位复现整个回测，分享前还有泄漏审计扫描。别人可以精确复核你的每一次决策上下文——这在 Agent 评测里是我们目前唯一见到的做法。</p>
+<p><img src="https://hephaestlab.github.io/TraderHarness/assets/traderharness-demo.gif" alt="TraderHarness 控制台演示" /></p>
+<h2>实战检验：让 4 个主流模型去跌最狠的一个月</h2>
+<p>光说机制不够，我们直接做了组实验。</p>
+<p>2026 年 6 月 20 日 – 7 月 20 日，A 股急速回撤，沪深 300 区间收益 <strong>-9.12%</strong>——标准的魔鬼行情。我们在这个窗口用同一张&quot;趋势波段&quot; Agent 卡（双重遮罩、种子 42、初始资金 100 万），让 4 个主流模型各自独立跑完 21 个交易日：</p>
+<table>
+<thead>
+<tr>
+<th>模型</th>
+<th>区间收益</th>
+<th>相对沪深300</th>
+<th>夏普比率</th>
+<th>最大回撤</th>
+<th>交易笔数</th>
+<th>胜率</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Claude Opus 4.8</td>
+<td><strong>+1.45%</strong></td>
+<td>+10.57</td>
+<td>2.61</td>
+<td>0.76%</td>
+<td>6</td>
+<td>66.7%</td>
+</tr>
+<tr>
+<td>Kimi K2.6</td>
+<td>+0.34%</td>
+<td>+9.46</td>
+<td>0.69</td>
+<td>0.37%</td>
+<td>2</td>
+<td>100%</td>
+</tr>
+<tr>
+<td>Qwen3.7-Max</td>
+<td>-1.64%</td>
+<td>+7.48</td>
+<td>-3.77</td>
+<td>1.64%</td>
+<td>12</td>
+<td>0%</td>
+</tr>
+<tr>
+<td>DeepSeek V4-Pro</td>
+<td>-2.69%</td>
+<td>+6.43</td>
+<td>-6.57</td>
+<td>2.69%</td>
+<td>10</td>
+<td>20.0%</td>
+</tr>
+</tbody>
+</table>
+<p>四个模型全部大幅跑赢指数。但更有意思的是<strong>行为差异</strong>：Kimi 全月只出手 2 次，稳到近乎懒惰；Qwen 出手 12 次却无一盈利，越努力越亏钱；Claude 6 笔交易、回撤不到 1%，展现出明显的纪律性。</p>
+<p>同样的市场、同样的工具、同样的提示词契约——模型的&quot;性格&quot;一目了然。这就是一个规范化考场该回答的问题。</p>
+<p>（要说明：这是小样本、单 Agent 风格的冒烟测试，不构成模型排名。每次调用的完整轨迹都可以回放复核。）</p>
+<p><img src="https://hephaestlab.github.io/TraderHarness/assets/results-workbench.png" alt="回测结果研究工作台" /></p>
+<h2>附带产物：它还是一个训练数据合成器</h2>
+<p>因为每一次模型调用都被全保真记录（完整消息、工具 schema、推理内容、每次工具调用的参数），每次回测同时就是一次数据生产：</p>
+<pre><code class="language-bash">traderharness audit result.json replay.jsonl      # 泄漏审计
+traderharness export sft result.json --output training.jsonl   # 轨迹导出
+</code></pre>
+<p>导出的是 OpenAI 风格的轨迹 JSONL，由遮罩和泄漏检查把关——可以直接用于 SFT/RL 的专项训练数据。我们已经把一套 5 年 A 股全市场数据（日线 + 5 分钟线 + 公告 + 新闻 + 基本面 + 估值 + 分红 + 沪深300）打包发在 Hugging Face 上。</p>
+<h2>60 秒上手</h2>
+<pre><code class="language-bash">pip install &quot;traderharness[llm,data,ui]&quot;
+traderharness data download --full
+traderharness demo        # 无需 API Key，流式回放一段遮罩轨迹
+</code></pre>
+<p>本地研究控制台（FastAPI + React）里有个像素风办公室：每个 Agent 是一个小人，盘前查资料、盘中下单、尾盘复盘全程直播——回测第一次变成可以围观的现场。</p>
+<p><img src="https://hephaestlab.github.io/TraderHarness/assets/office-live.png" alt="像素风办公室：Agent 上班直播" /></p>
+<h2>写在最后</h2>
+<p>LLM 进入交易这个场景，现在缺的不是更多&quot;会炒股的 Agent&quot;，而是<strong>一套能判断 Agent 到底行不行</strong>的基础设施。没有规范考场，所有收益曲线都只是市场营销。</p>
+<p>项目地址：<code>https://github.com/HephaestLab/TraderHarness</code>
+文档站：<code>https://hephaestlab.github.io/TraderHarness/</code></p>
+<p>如果这个话题对你有用，欢迎 Star 支持；也欢迎在评论区聊聊——你觉得 AI 交易评测还缺什么？</p>
+<hr />

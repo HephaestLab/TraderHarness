@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 import click
@@ -11,6 +12,17 @@ from traderharness import __version__
 from traderharness._hashseed import ensure_fixed_hash_seed
 
 load_dotenv()
+
+
+def _replay_provenance(path: Path | None) -> dict:
+    if path is None:
+        return {"mode": "live"}
+    artifact = path / "manifest.json" if path.is_dir() else path
+    return {
+        "mode": "replay",
+        "artifact": artifact.name,
+        "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
+    }
 
 
 @click.group()
@@ -34,7 +46,7 @@ def _is_committee(agent) -> bool:
 @click.option("--start", "-s", required=True, help="Start date (YYYY-MM-DD)")
 @click.option("--end", "-e", required=True, help="End date (YYYY-MM-DD)")
 @click.option(
-    "--model", "-m", default=None, help="Override model (deepseek-chat, deepseek-v4-flash)"
+    "--model", "-m", default=None, help="Override model (for example: deepseek-v4-pro)"
 )
 @click.option("--cash", default=1000000, help="Initial cash (default: 1000000)")
 @click.option(
@@ -119,7 +131,10 @@ def run(
     # New single-file recordings embed the live contract version so replay can
     # reinject the same system prompt (legacy files without meta stay on v1).
     replay_recorder = (
-        ReplayRecorder(prompt_contract_version=CONTRACT_VERSION)
+        ReplayRecorder(
+            prompt_contract_version=CONTRACT_VERSION,
+            entity_mask_style="opaque",
+        )
         if record_replay is not None and not record_is_bundle
         else None
     )
@@ -237,10 +252,15 @@ def run(
             max_pre_iterations=card.max_pre_iterations,
             max_window_iterations=card.max_window_iterations,
             require_structured_plan=card.require_structured_plan,
+            require_decision_card=card.require_decision_card,
+            require_phase_completion=card.require_phase_completion,
             minimum_holding_days=card.minimum_holding_days,
             research_interval_days=card.research_interval_days,
             sandbox_pre_market_only=card.sandbox_pre_market_only,
             sandbox_max_calls_per_day=card.sandbox_max_calls_per_day,
+            watchlist_ttl_days=card.watchlist_ttl_days,
+            max_active_memories=card.max_active_memories,
+            max_daily_memories=card.max_daily_memories,
             allowed_tools=card.allowed_tools,
             mask_dates=mask_dates,
             prompt_contract_version=prompt_contract_version,
@@ -257,7 +277,7 @@ def run(
 
     # Write pending result (UI sees this as "running")
     result_filename = generate_result_filename()
-    live_file = RESULTS_DIR / result_filename.replace("_result.json", "_live.json")
+    live_file = RESULTS_DIR / result_filename.replace("_result.json", "_live.jsonl")
     config = {
         "start_date": str(start_date),
         "end_date": str(end_date),
@@ -267,6 +287,14 @@ def run(
         "mask_dates": mask_dates,
         "mask_entities": mask_entities,
         "entity_mask_seed": entity_mask_seed,
+        "entity_mask_style": (
+            bundle_player.manifest.entity_mask_style
+            if bundle_player is not None
+            else replay_player.entity_mask_style
+            if replay_player is not None
+            else "opaque"
+        ),
+        "provenance": _replay_provenance(replay),
     }
     save_pending(result_filename, config)
 
@@ -283,9 +311,10 @@ def run(
     # Set live file on agent for real-time streaming
     agent_obj._trajectory._live_file = Path(live_file)
     agent_obj._trajectory._live_file.parent.mkdir(parents=True, exist_ok=True)
-    agent_obj._trajectory._live_file.write_text("[]", encoding="utf-8")
+    agent_obj._trajectory._live_file.write_text("", encoding="utf-8")
 
     click.echo(f"Result: ~/.traderharness/results/{result_filename}")
+    click.echo(f"Web result: /results?file={result_filename} (auto-refreshes until complete)")
     click.echo(f"Live: {live_file.name}")
     if not mask_dates or not mask_entities:
         click.echo(
@@ -294,21 +323,25 @@ def run(
         )
     click.echo("Running...")
 
+    complete_path = None
     try:
-        from dataclasses import asdict
-
         from traderharness.core.engine import BacktestEngine, EngineConfig
         from traderharness.core.events import EventBus
-        from traderharness.metrics.behavior import calculate_behavior
         from traderharness.metrics.benchmark import load_csi300_curve
-        from traderharness.metrics.comparison import compare_vs_benchmark
-        from traderharness.metrics.performance import calculate_metrics
+        from traderharness.run_results import build_result_document
 
         engine = BacktestEngine(
             EngineConfig(
                 initial_cash=initial_cash,
                 mask_entities=mask_entities,
                 entity_mask_seed=entity_mask_seed,
+                entity_mask_style=(
+                    bundle_player.manifest.entity_mask_style
+                    if bundle_player is not None
+                    else replay_player.entity_mask_style
+                    if replay_player is not None
+                    else "opaque"
+                ),
             ),
             event_bus=EventBus(),
         )
@@ -329,72 +362,14 @@ def run(
 
         result = asyncio.run(run_and_close_clients())
 
-        data = result.agent_data[agent_id]
-        metrics = calculate_metrics(data["equity_curve"], initial_cash, data["trades"])
         benchmark_curve = load_csi300_curve(start_date, end_date, initial_cash)
-        vs_benchmark = (
-            compare_vs_benchmark(data["equity_curve"], benchmark_curve, initial_cash)
-            if benchmark_curve
-            else None
+        result_data = build_result_document(
+            result,
+            initial_cash=initial_cash,
+            config=config,
+            benchmark_curve=benchmark_curve,
+            entity_masker=engine._entity_masker,
         )
-        steps = (data.get("trajectory") or {}).get("steps", [])
-        tool_calls_by_date = {}
-        for step in steps:
-            if step.get("type") == "tool_call":
-                key = step.get("date")
-                tool_calls_by_date[key] = tool_calls_by_date.get(key, 0) + 1
-        tool_call_counts = [tool_calls_by_date.get(str(day), 0) for day, _ in data["equity_curve"]]
-        behavior = calculate_behavior(
-            data["trades"],
-            data["equity_curve"],
-            initial_cash,
-            tool_call_counts,
-        )
-        persisted_trades = data["trades"]
-        persisted_behavior = asdict(behavior)
-        if engine._entity_masker is not None:
-            persisted_trades = engine._entity_masker.mask_obj(persisted_trades)
-            persisted_behavior = engine._entity_masker.mask_obj(persisted_behavior)
-
-        result_data = {
-            "trading_days": result.trading_days,
-            "start_date": str(start_date),
-            "end_date": str(end_date),
-            "config": config,
-            "agent_data": {
-                agent_id: {
-                    "equity_curve": [(str(d), float(v)) for d, v in data["equity_curve"]],
-                    "trades": persisted_trades,
-                    "trajectory": data.get("trajectory"),
-                    "behavior": persisted_behavior,
-                    "vs_benchmark": asdict(vs_benchmark) if vs_benchmark else None,
-                    "metrics": {
-                        "total_return_pct": metrics.total_return_pct,
-                        "annual_return_pct": metrics.annual_return_pct,
-                        "sharpe_ratio": metrics.sharpe_ratio,
-                        "sortino_ratio": metrics.sortino_ratio,
-                        "max_drawdown_pct": metrics.max_drawdown_pct,
-                        "win_rate": metrics.win_rate,
-                        "profit_loss_ratio": metrics.profit_loss_ratio,
-                        "total_trades": metrics.total_trades,
-                        "final_value": metrics.final_value,
-                    },
-                }
-            },
-            "benchmark": (
-                {
-                    "name": "CSI 300",
-                    "equity_curve": [(str(d), float(v)) for d, v in benchmark_curve],
-                }
-                if benchmark_curve
-                else None
-            ),
-            "usage": {
-                "llm_total_tokens": int(
-                    getattr(getattr(agent_obj, "llm_client", None), "total_tokens_used", 0)
-                )
-            },
-        }
 
         if replay_player is not None:
             replay_player.assert_consumed()
@@ -404,6 +379,7 @@ def run(
             from traderharness.audit import audit_artifacts
 
             replay_recorder.save(record_replay)
+            config["recorded_replay"] = _replay_provenance(record_replay)
             audit_report = audit_artifacts([record_replay])
             if not audit_report["passed"]:
                 if mask_dates and mask_entities:
@@ -432,6 +408,7 @@ def run(
                 mask_dates=mask_dates,
                 mask_entities=mask_entities,
                 entity_mask_seed=entity_mask_seed,
+                entity_mask_style="opaque",
                 agents=[
                     AgentManifestEntry(
                         id=agent_id,
@@ -448,6 +425,7 @@ def run(
                 traderharness_version=th_version,
             )
             manifest_path = bundle_recorder.save_bundle(record_replay, manifest)
+            config["recorded_replay"] = _replay_provenance(record_replay)
             artifacts = [manifest_path] + [
                 record_replay / "agents" / f"{scope}.jsonl" for scope in bundle_recorder.scope_ids
             ]
@@ -471,16 +449,25 @@ def run(
         if live_file.exists():
             live_file.unlink()
 
-        click.echo(f"\nDone! {result.trading_days} trading days")
-        click.echo(f"  Return: {metrics.total_return_pct:+.2f}%")
-        click.echo(f"  Sharpe: {metrics.sharpe_ratio:.2f}")
-        click.echo(f"  Max DD: -{metrics.max_drawdown_pct:.2f}%")
-        click.echo(f"  Trades: {metrics.total_trades}")
-        if vs_benchmark:
-            click.echo(
-                f"  CSI 300: {vs_benchmark.benchmark_return_pct:+.2f}% | "
-                f"Alpha: {vs_benchmark.alpha:+.2f}%"
-            )
+        metrics = result_data["agent_data"][agent_id]["metrics"]
+        vs_benchmark = result_data["agent_data"][agent_id]["vs_benchmark"]
+        try:
+            click.echo(f"\nDone! {result.trading_days} trading days")
+            click.echo(f"  Return: {metrics['total_return_pct']:+.2f}%")
+            click.echo(f"  Sharpe: {metrics['sharpe_ratio']:.2f}")
+            click.echo(f"  Max DD: -{metrics['max_drawdown_pct']:.2f}%")
+            click.echo(f"  Trades: {metrics['total_trades']}")
+            if vs_benchmark:
+                click.echo(
+                    f"  CSI 300: {vs_benchmark['benchmark_return_pct']:+.2f}% | "
+                    f"Alpha: {vs_benchmark['alpha']:+.2f}%"
+                )
+        except OSError as output_error:
+            # A long-running CLI may outlive its supervising terminal or pipe.
+            # The completed research artifact must remain authoritative even
+            # when best-effort terminal output can no longer be delivered.
+            if getattr(output_error, "errno", None) not in {22, 32}:
+                raise
         return {
             "result_path": complete_path,
             "result": result_data,
@@ -488,7 +475,10 @@ def run(
         }
 
     except Exception as e:
-        save_failed(result_filename, str(e), config)
+        # Never overwrite an already persisted, auditable result merely
+        # because post-run cleanup or terminal output failed.
+        if complete_path is None:
+            save_failed(result_filename, str(e), config)
         if live_file.exists():
             live_file.unlink()
         click.echo(f"\nFailed: {e}", err=True)
@@ -739,10 +729,15 @@ def compare(
                 max_pre_iterations=card.max_pre_iterations,
                 max_window_iterations=card.max_window_iterations,
                 require_structured_plan=card.require_structured_plan,
+                require_decision_card=card.require_decision_card,
+                require_phase_completion=card.require_phase_completion,
                 minimum_holding_days=card.minimum_holding_days,
                 research_interval_days=card.research_interval_days,
                 sandbox_pre_market_only=card.sandbox_pre_market_only,
                 sandbox_max_calls_per_day=card.sandbox_max_calls_per_day,
+                watchlist_ttl_days=card.watchlist_ttl_days,
+                max_active_memories=card.max_active_memories,
+                max_daily_memories=card.max_daily_memories,
                 allowed_tools=card.allowed_tools,
                 mask_dates=mask_dates,
                 prompt_contract_version=prompt_contract_version,
@@ -759,6 +754,11 @@ def compare(
             initial_cash=initial_cash,
             mask_entities=mask_entities,
             entity_mask_seed=entity_mask_seed,
+            entity_mask_style=(
+                replay_player.manifest.entity_mask_style
+                if replay_player is not None
+                else "opaque"
+            ),
         )
     )
     click.echo(
@@ -806,6 +806,7 @@ def compare(
             mask_dates=mask_dates,
             mask_entities=mask_entities,
             entity_mask_seed=entity_mask_seed,
+            entity_mask_style="opaque",
             agents=[
                 AgentManifestEntry(
                     id=agent.agent_id,
@@ -896,6 +897,11 @@ def compare(
                 "mask_dates": mask_dates,
                 "mask_entities": mask_entities,
                 "entity_mask_seed": entity_mask_seed,
+                "entity_mask_style": (
+                    replay_player.manifest.entity_mask_style
+                    if replay_player is not None
+                    else "opaque"
+                ),
                 "comparison": rows,
                 "behavior": behavior,
                 "agent_runs": agent_runs,

@@ -1,5 +1,157 @@
 # Behavioral Cycle Trader：实现、回测与审计
 
+## 2026-08-14：主动阶段协议与三类龙头入口（当前版本）
+
+本节覆盖下方 v3 五轮微阶段和“只开放 `place_order` 纠错”的旧设计。当前 prompt contract 为
+v4，核心目标是：LLM 对主题与资金迁移作语义判断，Harness 负责给它完整、可纠错、不会被市场
+时钟中途截断的执行环境。
+
+### 三类正向入口
+
+`decision_card.entry_setup` 必须选择以下之一：
+
+| 入口 | 语义准入 |
+|---|---|
+| `low_base_ignition` | 新因果逻辑获得早期板块扩散，`emerging_leader` / `true_leader` 从低位启动；高低切模式可对应 `emerging_repricing` |
+| `trend_continuation` | 主线持续获得增量资金、真龙头保持相对强度和成交承接，不要求先回踩 |
+| `leader_pullback` | 已确认真龙头在主线内健康分歧后恢复，而非高位派发 |
+
+`managed_extension` 表示趋势较强但增量资金、承接、失效位和跳空风险仍可管理，因此允许交易；
+`overextended` 和 `unclear` 仍然否决。退出不再依赖固定持有锁：主题证伪、板块扩散衰减、龙头
+地位丧失、结构破坏，或市场资金明确迁往更强方向时应卖出，再研究新方向。
+
+### Harness 阶段合同
+
+- 盘前、开盘前半、开盘后半、尾盘前半分别注入独立系统消息，说明本阶段职责并列出完整工具面；
+- 上述四阶段必须由 Agent 调用 `complete_phase` 主动结束；最后收盘阶段调用 `finish_day`；
+- 纯文本输出不会推进市场时钟，基础轮次耗尽后仍提供有界的纠错与完成延长轮；
+- 不再用盘前五个微阶段频繁撤下合理研究工具。盘前研究工具在同一阶段保持可用，非研究日只撤下
+  `execute_code`，盘中按阶段撤下沙盒和不合法执行工具；
+- 工具不可用、未知工具、执行异常和决策卡证据缺失统一返回
+  `error_code / retryable / correction / available_tools`；
+- 下单缺少 `get_stock_info / get_business_segments / get_valuation / get_kline /
+  get_stock_price` 证据时，纠错轮同时暴露缺失工具与 `place_order`。补证成功后在同一市场阶段重交
+  原语义订单；Agent 也可因新行情失效而显式放弃；
+- opaque 遮罩代码若被模型误删板块前缀，唯一数字后缀自动恢复；多板块同后缀则返回所有候选别名，
+  不静默映射到错误股票；
+- v1/v2/v3 replay 保留原工具面与提示合同，避免破坏已有 cassette 指纹。
+
+### 单日真实验收
+
+验收配置：真实 canonical 数据、`deepseek-v4-pro`、2026-07-16、日期/实体双遮罩、固定 seed 42。
+
+| 工件 | 结果 |
+|---|---|
+| `20260814_002330_result.json` | 14 次 LLM 交互、29 次工具调用、0 工具错误、0 强制阶段推进、0 交易 |
+| `behavioral-cycle-v4-protocol-smoke-20260716.jsonl` | result 与 replay audit 均 0 findings |
+
+盘前、两个开盘子窗和尾盘前半分别成功调用 `complete_phase`，最后收盘调用 `finish_day`。当天空仓
+不是协议失败：创新药真龙头在板块整体仍强时低开、冲高回落并显著跑输板块，模型把它裁决为
+高位派发而非健康回踩，同时拒绝把主营不同、缺乏文本催化的低位补涨硬改称新龙头。
+
+## 2026-08-11：语义龙头裁决重构（当前版本）
+
+本节覆盖后文的历史版本设计。当前版本不再把量价筛选结果直接称为“龙头”，也不把
+`extended_20d` 等单项指标作为机械买卖阈值。系统采用以下职责分工：
+
+- Python 和普通工具只提供点时安全的新闻、公告、主营构成、行业扩散、相对强弱、成交额、
+  换手、量价阶段与持仓事实；
+- LLM 负责判断板块上涨的因果逻辑、公司主营与主题的真实契合度、市场辨识度、容量是否合适、
+  当前属于启动/确认/回踩/加速/高潮/派发中的哪个阶段；
+- 环境只校验 LLM 自己提交的证据是否完整、结论是否自洽，并继续负责 T+1、撮合、条件单、
+  冻结止损、日期遮罩和实体遮罩，不替 LLM 计算“谁是龙头”。
+
+### 入场决策卡
+
+新建仓必须随 `place_order` 提交 `decision_card`：
+
+| 字段 | 含义 |
+|---|---|
+| `mode` | `leader_attack` 或 `high_low_rotation` |
+| `theme_logic` | 催化到收入/利润或风险偏好的因果链 |
+| `text_evidence_ids` | 可回溯的新闻、公告或记忆证据编号 |
+| `business_fit` | 主营直接受益、间接受益或概念关联的判断 |
+| `sector_state` / `sector_confirmation` | LLM 对板块领先/重新定价已确认、单股脉冲或不清楚的裁决与证据 |
+| `candidate_role` | `true_leader`、`rotation_core`、`follower` 或 `unclear` |
+| `leadership_comparison` | 与同主题最强候选的辨识度、先发性、抗跌与修复比较 |
+| `candidate_rank` / `best_expression_reason` | 当前标的是否确为该主题与模式的最优表达，以及语义依据 |
+| `stronger_candidate_status` | 是否存在更强的可买或不可买候选；只要存在就不能把次强标的下单 |
+| `execution_compromise` | 是否为了更容易成交而降级选择较弱替代品 |
+| `capacity_liquidity` | 成交额、换手和分时流动性是否承接计划仓位 |
+| `price_volume_confirmation` | 量价是否验证叙事被市场接受 |
+| `market_stage` | 启动、确认、健康回踩、加速、高潮、派发或重新定价 |
+| `extension_assessment` | `acceptable`、`overextended` 或 `unclear` |
+| `counter_evidence` | 当前最强反证 |
+| `why_now` / `abstention_case` | 为什么现在交易，以及为什么不交易可能更好 |
+| `invalidation` | 原假设被证伪的可观察条件 |
+
+系统只执行 LLM 自己标记为 `decision=trade`、`extension_assessment=acceptable`、
+`candidate_rank=best_expression`、`stronger_candidate_status=none_identified`、
+`execution_compromise=none`，且模式与角色、板块状态一致的决策：`leader_attack` 对应
+`true_leader + confirmed_leading`，`high_low_rotation` 对应 `rotation_core + confirmed_repricing`。这不是用量化
+阈值定义龙头，而是防止模型一边承认标的是补涨/跟风或已经过度延伸，一边仍然调用下单工具。
+如果真龙头没有合适买点，正确动作是等待或放弃主题，不能自动降级购买较弱股票。
+
+### 本轮同时修复
+
+- 沙盒的 `market.get_market_overview()` / `get_sector_stocks()` 接受叙事工具的新 allowlist 名称，
+  不再因新旧工具名错配抛出 `PermissionError`；
+- 运行时持仓计划进入记忆前先做日期清洗，结果持久化时对旧记忆再做一次非元数据清洗；
+- 新闻和公告工具输出在实体 permutation 后再清理全局历史别名，范围外公司退化为“外部公司”；
+- `finish_day` 只在实时运行的最后收盘阶段暴露一次，同时保留历史 replay 的旧工具指纹；
+- 盘前研究由工具面编排为五轮闭环：全量文本/市场、两个板块、一次代码证据、两个候选深挖、最终登记；每轮只限制可用资料类型，不替 LLM 作交易判断；
+- 完整五步只在每 5 个交易日一次的研究日运行；普通监控日跳过 Python 与重复候选深挖，压缩为四步；
+- 阶段只在所需工具成功后推进；研究日沙盒正常只运行一次，第一次代码报错时把 traceback
+  明确返回给 LLM 并允许一次同目标纠错，第二次仍失败则记录失败并跳过代码证据，避免卡死整日；
+  两次执行均计入配额，越权工具不会执行，第五步完成后立即结束盘前循环；
+- 候选深挖阶段只开放公司信息、主营、估值和公告证据，不再开放重复 K 线/现价查询；前三项是
+  必需核心证据，公告仅在核实公司级催化或反证时使用，避免可选公告缺失阻塞候选登记；每轮
+  会把已完成工具从 schema 移除并明确列出仍缺证据，盘前上限为 9 轮以容纳一次沙盒纠错；
+- 最终登记前允许一次普通 K 线/现价复核，成功后立即从下一轮 schema 移除；批量工具错误按
+  一次 LLM 轮次计入连续错误阈值，不再把同一响应中的 4 个失败误算成连续 4 轮失败；
+- 决策卡禁止夹带持仓计划字段，并校验 `text_evidence_ids` 确实由当日文本工具返回；
+- 决策卡格式、字段层级、数值类型或证据 ID 错误会返回结构化
+  `error_code / retryable / correction`，Agent 在只开放 `place_order` 的受控窗口中自动重试一次；
+- 较弱备选、存在更强候选、板块未确认、过度延伸或 `abstain` 都是不可重试的
+  语义否决，不得借“纠错”改写为可交易；
+- 明确拒绝“最强候选涨停/难买后改买次强标的”的执行降级；
+- 相同板块/新闻查询使用日内缓存，两个板块或两组新闻证据用完后从后续工具表移除；
+- `empty_days_pct` 改为根据实际成交重建日终持仓，不再用“净值接近初始资金”错误近似；
+- 结果工件直接写入逐 Agent 和全局 LLM token/tool usage；审计脚本不再把 masked code 误称为
+  canonical code。
+
+### 真实数据验收结果
+
+> 2026-08-13 运行配置更新：后续正式实验统一使用 `deepseek-v4-pro`，不再使用
+> `deepseek-v4-flash`。下表和后文命令保留的是既有 Flash 历史工件，便于复现，不能代表
+> 下一轮 Pro 正式回测的模型配置。
+
+本轮保留两层验收，均使用 `deepseek-v4-flash`、真实 canonical 数据、日期与实体双遮罩：
+
+| 验收 | 工件 | 结果 |
+|---|---|---|
+| 10 交易日行为回测 | `20260811_114332_result.json` | 收益 -0.11%，沪深 300 -0.48%，alpha +0.37%，最大回撤 0.62%，一买一卖，持有 5 个交易日，result/replay audit 均 0 findings |
+| 最终编排两日验收 | `20260811_121449_result.json` | 研究日盘前 7 轮、普通监控日 4 轮，普通日未执行 Python，保持空仓，result/replay audit 均 0 findings |
+| 决策卡自动纠错两日验收 | `20260811_160115_result.json` | 首次下单因两个不可追溯证据 ID 被拒；只开放 `place_order` 重试 1 次，十个受保护的分类裁决字段前后完全一致，修正证据 ID 并清理依赖该错误证据的说明文字后成交；result/replay audit 均 0 findings |
+
+自动纠错验收 cassette `behavioral-cycle-decision-repair-acceptance-20260615-20260616.jsonl`
+已在无网络模式确定性重放为 `20260811_162726_result.json`；收益、回撤、净值与成交记录和
+实时运行一致，重放结果与 cassette 亦均为 0 findings。
+
+10 日回测中唯一完整建仓约占初始资金 19.95%，裁决卡的模式、主题、文本证据、主营契合、
+板块确认、龙头比较、最优表达、执行妥协、反证与失效条件覆盖率均为 100%。第一次下单因引用
+未由工具返回的文本 ID 被拒绝，补充真实 `news:*` 证据后才成交；第 5 个自然计数交易日的卖出
+尝试因真实 `holding_trading_days=4` 被拒绝，到 `holding_trading_days=5` 才成交。没有向下摊平、
+没有在最强候选不可成交后降级购买次强标的、没有下移原始止损。
+
+这次结果只证明行为合同明显收敛，不证明策略已经有效。10 日样本只有一笔闭环交易，收益为负，
+且优化前共使用 111 次 LLM 交互和约 181.5 万 token。最终版本已消除普通监控日的重复候选深挖，
+但 DeepSeek 偶尔仍会请求当前阶段未开放的工具；环境会拒绝并记录，不能把这种拒单误报成模型
+完全服从。当前 prompt contract 为 v3，补齐了决策卡字段层级、证据 ID、回测终点偏差和受控沙盒
+纠错说明；最终长区间结果完成后再在本节补录。当前代码通过 634 项测试与 Ruff 检查。
+
+下面内容保留为历史实验记录，其中的机械阶段筛选和旧仓位锚点不再代表当前 Agent 合同。
+
 状态：2026-08-06 完成策略改造、DeepSeek 官方 API 全窗口回测、结果审计和 replay 审计。结论是：动态仓位和沙盒研究已经实现，但 10–40 日持有纪律仍不能仅靠提示词保证，当前版本不应被描述为已经达到预期。
 
 ## 1. 目标与边界

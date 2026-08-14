@@ -113,6 +113,7 @@ class ReplayBundleManifest:
     mask_dates: bool = True
     mask_entities: bool = True
     entity_mask_seed: int = 0
+    entity_mask_style: str = "permutation"
     agents: list[AgentManifestEntry] = field(default_factory=list)
     prompt_contract_version: str = "v1"
     thinking: dict[str, Any] = field(default_factory=lambda: {"enabled": False, "effort": None})
@@ -132,6 +133,7 @@ class ReplayBundleManifest:
             "mask_dates": self.mask_dates,
             "mask_entities": self.mask_entities,
             "entity_mask_seed": self.entity_mask_seed,
+            "entity_mask_style": self.entity_mask_style,
             "agents": [agent.to_dict() for agent in self.agents],
             "prompt_contract_version": self.prompt_contract_version,
             "thinking": self.thinking,
@@ -148,6 +150,7 @@ class ReplayBundleManifest:
             mask_dates=data.get("mask_dates", True),
             mask_entities=data.get("mask_entities", True),
             entity_mask_seed=data.get("entity_mask_seed", 0),
+            entity_mask_style=data.get("entity_mask_style", "permutation"),
             agents=[AgentManifestEntry.from_dict(a) for a in data.get("agents", [])],
             prompt_contract_version=data.get("prompt_contract_version", "v1"),
             thinking=data.get("thinking") or {"enabled": False, "effort": None},

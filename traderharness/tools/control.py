@@ -1,8 +1,21 @@
-"""控制工具 — finish_day 结束当天循环。"""
+"""Agent-controlled phase and day completion tools."""
 
 from __future__ import annotations
 
 from traderharness.tools.registry import ToolContext, ToolDefinition
+
+
+async def handle_complete_phase(params: dict, ctx: ToolContext) -> dict:
+    """Acknowledge that the Agent, rather than an iteration cap, ended a phase."""
+    return {
+        "success": True,
+        "status": "phase_complete",
+        "phase": ctx.current_phase,
+        "sub_window": getattr(ctx, "_current_sub_window", None),
+        "decision": params["decision"],
+        "summary": params["summary"],
+        "next_focus": params.get("next_focus", ""),
+    }
 
 
 async def handle_finish_day(params: dict, ctx: ToolContext) -> dict:
@@ -11,6 +24,36 @@ async def handle_finish_day(params: dict, ctx: ToolContext) -> dict:
         "summary_saved": True,
         "trades_today": len(ctx.trade_results),
     }
+
+
+COMPLETE_PHASE = ToolDefinition(
+    name="complete_phase",
+    description=(
+        "主动结束当前盘前或盘中子阶段。只有确认当前阶段的研究、下单及纠错都已完成后调用；"
+        "调用成功后市场时钟才推进。最后一个收盘阶段请改用 finish_day。"
+    ),
+    parameters={
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "decision": {
+                "type": "string",
+                "enum": ["ready", "trade_complete", "no_trade", "monitor"],
+                "description": "当前阶段的显式结论。",
+            },
+            "summary": {
+                "type": "string",
+                "description": "简要记录已完成的工作、结论以及关键反证。",
+            },
+            "next_focus": {
+                "type": "string",
+                "description": "下一阶段需要验证的价格、板块资金或失效条件。",
+            },
+        },
+        "required": ["decision", "summary"],
+    },
+    handler=handle_complete_phase,
+)
 
 
 FINISH_DAY = ToolDefinition(
