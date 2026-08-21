@@ -29,6 +29,7 @@ from traderharness.tools.conditional_orders import (
     LIST_CONDITIONAL_ORDERS,
     MANAGE_CONDITIONAL_ORDER,
 )
+from traderharness.tools.contracts import CURRENT_TOOL_CONTRACT_VERSION
 from traderharness.tools.control import COMPLETE_PHASE, FINISH_DAY
 from traderharness.tools.fundamentals import GET_FUNDAMENTALS
 from traderharness.tools.market import GET_KLINE, GET_STOCK_INFO, GET_STOCK_PRICE
@@ -91,6 +92,8 @@ READ_ONLY_TOOL_NAMES = frozenset(
         "get_stock_info",
         "get_market_overview",
         "get_narrative_market_overview",
+        "screen_stocks",
+        "screen_behavioral_cycle",
         "get_sector_summary",
         "get_narrative_sector_summary",
         "get_portfolio",
@@ -173,11 +176,21 @@ missing_tools；先补齐同一候选证据，再重交原语义订单。纠错�
 # Current contract version: DECISION_RECORDING_CONTRACT is injected into the
 # system prompt. Cassettes/bundles recorded under this version include the
 # contract text in every recorded prompt fingerprint.
-CONTRACT_VERSION = "v4"
+CONTRACT_VERSION = CURRENT_TOOL_CONTRACT_VERSION
 # Legacy version: no contract text was injected (pre-dates this feature, or a
 # manifest/replay source explicitly says the recorded prompt lacked it).
 LEGACY_CONTRACT_VERSION = "v1"
-_DECISION_RECORDING_CONTRACT_VERSIONS = frozenset({"v2", "v3", CONTRACT_VERSION})
+_DECISION_RECORDING_CONTRACT_VERSIONS = frozenset({"v2", "v3", "v4", CONTRACT_VERSION})
+
+TOOL_CONTRACT_V5_PROMPT = """
+
+## 工具调用合同 v5
+
+每个工具描述都包含可复制的 arguments 示例。Schema 是硬约束；不得添加未声明字段。
+成功结果统一包含 success=true；失败结果统一包含 success=false、error_code、retryable 和
+correction。retryable=true 时按 correction 在当前阶段修正；false 时不得重复调用。
+证券代码必须原样复制工具或窗口返回的完整可见代码，禁止只写遮罩代码的六位后缀。
+"""
 
 
 def resolve_decision_contract(
@@ -210,6 +223,7 @@ def resolve_decision_contract(
     if getattr(llm_client, "_player", None) is not None:
         return "\n", LEGACY_CONTRACT_VERSION
     return DECISION_RECORDING_CONTRACT, CONTRACT_VERSION
+
 
 SYSTEM_PROMPT_TEMPLATE = """
 你是一位A股交易员，正在模拟交易环境中回测对战。初始资金{initial_cash}元。
@@ -434,14 +448,10 @@ class ToolAgent:
         self.mask_dates = mask_dates
         self.allowed_tools = normalize_allowed_tools(allowed_tools)
         if self.require_phase_completion and "complete_phase" not in self.allowed_tools:
-            raise ValueError(
-                "require_phase_completion=True requires complete_phase in allowed_tools"
-            )
+            raise ValueError("require_phase_completion=True requires complete_phase in allowed_tools")
         self.workspace_root = workspace_root or agent_id
 
-        contract_text, self.prompt_contract_version = resolve_decision_contract(
-            llm_client, prompt_contract_version
-        )
+        contract_text, self.prompt_contract_version = resolve_decision_contract(llm_client, prompt_contract_version)
         prompt_template = COMPACT_SYSTEM_PROMPT_TEMPLATE if compact_prompt else SYSTEM_PROMPT_TEMPLATE
         self._system_prompt = prompt_template.format(
             initial_cash=f"{float(initial_cash):,.0f}",
@@ -458,9 +468,7 @@ class ToolAgent:
                     f"Watchlist entries expire after {self.watchlist_ttl_days} trading days unless refreshed."
                 )
             if self.max_daily_memories > 0:
-                governance_rules.append(
-                    f"At most {self.max_daily_memories} Agent memory writes are accepted per day."
-                )
+                governance_rules.append(f"At most {self.max_daily_memories} Agent memory writes are accepted per day.")
             if self.max_active_memories > 0:
                 governance_rules.append(
                     f"At most {self.max_active_memories} Agent memories may remain active; replace stale "
@@ -517,10 +525,7 @@ class ToolAgent:
                     "第二次仍失败就停止代码研究，继续使用普通工具判断。"
                 )
             else:
-                sandbox_instruction = (
-                    f"研究日盘前最多调用 {sandbox_calls} 次，先整理证据表，"
-                    "后续调用只能复核最终候选。"
-                )
+                sandbox_instruction = f"研究日盘前最多调用 {sandbox_calls} 次，先整理证据表，后续调用只能复核最终候选。"
             self._system_prompt += (
                 "\n\n## 本 Agent 的研究执行约束\n"
                 f"execute_code 仅在盘前可用。{sandbox_instruction}"
@@ -535,10 +540,20 @@ class ToolAgent:
 
         if self.require_decision_card and self.prompt_contract_version == "v3":
             self._system_prompt += DECISION_CARD_EXECUTION_CONTRACT
-        elif self.require_decision_card and self.prompt_contract_version == CONTRACT_VERSION:
+        elif self.require_decision_card and self.prompt_contract_version in {
+            "v4",
+            CONTRACT_VERSION,
+        }:
             self._system_prompt += CURRENT_DECISION_CARD_EXECUTION_CONTRACT
 
-        self._registry = ToolRegistry()
+        if self.prompt_contract_version == CONTRACT_VERSION:
+            self._system_prompt += TOOL_CONTRACT_V5_PROMPT
+            if "execute_code" in self.allowed_tools:
+                self._system_prompt += (
+                    "\nexecute_code 的 portfolio 还提供 get_gross_exposure_pct()，返回当前多头市值占净资产百分比。\n"
+                )
+
+        self._registry = ToolRegistry(contract_version=self.prompt_contract_version)
         for tool in TOOL_DEFINITIONS:
             if tool.name in self.allowed_tools:
                 self._registry.register(tool)
@@ -603,8 +618,7 @@ class ToolAgent:
             require_structured_plan=self.require_structured_plan,
             require_decision_card=self.require_decision_card,
             require_phase_completion=(
-                self.require_phase_completion
-                and self.prompt_contract_version == CONTRACT_VERSION
+                self.require_phase_completion and self.prompt_contract_version == CONTRACT_VERSION
             ),
             minimum_holding_days=self.minimum_holding_days,
             day_index=bus._day_index,
@@ -616,6 +630,7 @@ class ToolAgent:
             max_active_memories=self.max_active_memories,
             max_daily_memories=self.max_daily_memories,
             replay_mode=getattr(self.llm_client, "_player", None) is not None,
+            tool_contract_version=self.prompt_contract_version,
             _bus=bus,
         )
         # Seed persisted watchlist so morning brief / tools see yesterday's set,
@@ -635,9 +650,7 @@ class ToolAgent:
         ctx.tool_call_cache["watchlist"] = active_watchlist
         ctx.tool_call_cache["_watchlist_meta"] = active_meta
         self._position_plans = {
-            code: plan
-            for code, plan in self._position_plans.items()
-            if code in portfolio.positions
+            code: plan for code, plan in self._position_plans.items() if code in portfolio.positions
         }
         ctx.tool_call_cache["_position_plans"] = self._position_plans
         ctx.tool_call_cache["_memory"] = self._memory
@@ -671,12 +684,10 @@ class ToolAgent:
         # P0 + P1 for morning brief
         if news_mgr is not None:
             target_codes = set(portfolio.positions.keys()) | self._watchlist_codes
-            prev_close = datetime.combine(
-                current_date - timedelta(days=1), datetime.min.time()
-            ).replace(hour=15, minute=0)
-            today_open = datetime.combine(current_date, datetime.min.time()).replace(
-                hour=9, minute=30
+            prev_close = datetime.combine(current_date - timedelta(days=1), datetime.min.time()).replace(
+                hour=15, minute=0
             )
+            today_open = datetime.combine(current_date, datetime.min.time()).replace(hour=9, minute=30)
             ctx.tool_call_cache["_p0_announcements"] = news_mgr.get_p0_announcements(
                 target_codes, prev_close, today_open
             )

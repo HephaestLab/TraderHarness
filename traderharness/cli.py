@@ -14,13 +14,23 @@ from traderharness._hashseed import ensure_fixed_hash_seed
 load_dotenv()
 
 
-def _replay_provenance(path: Path | None) -> dict:
+def _replay_provenance(
+    path: Path | None,
+    *,
+    mask_dates: bool = False,
+    anchor=None,
+) -> dict:
     if path is None:
         return {"mode": "live"}
     artifact = path / "manifest.json" if path.is_dir() else path
+    artifact_name = artifact.name
+    if mask_dates and anchor is not None:
+        from traderharness.core.masking import DateMasker
+
+        artifact_name = DateMasker(anchor=anchor).mask_text(artifact_name)
     return {
         "mode": "replay",
-        "artifact": artifact.name,
+        "artifact": artifact_name,
         "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
     }
 
@@ -45,9 +55,7 @@ def _is_committee(agent) -> bool:
 @click.option("--agent", "-a", required=True, help="Agent card ID or YAML config path")
 @click.option("--start", "-s", required=True, help="Start date (YYYY-MM-DD)")
 @click.option("--end", "-e", required=True, help="End date (YYYY-MM-DD)")
-@click.option(
-    "--model", "-m", default=None, help="Override model (for example: deepseek-v4-pro)"
-)
+@click.option("--model", "-m", default=None, help="Override model (for example: deepseek-v4-pro)")
 @click.option("--cash", default=1000000, help="Initial cash (default: 1000000)")
 @click.option(
     "--mask-dates/--no-mask-dates",
@@ -205,14 +213,11 @@ def run(
         if bundle_player is not None or bundle_recorder is not None:
             scope = executor_scope_id(card.id, is_committee=False)
             scoped_player = bundle_player.scope(scope) if bundle_player is not None else None
-            scoped_recorder = (
-                bundle_recorder.scope(scope) if bundle_recorder is not None else None
-            )
+            scoped_recorder = bundle_recorder.scope(scope) if bundle_recorder is not None else None
             api_key = "replay" if scoped_player is not None else resolved_key
             if not api_key:
                 click.echo(
-                    "Error: 未配置 LLM API Key。请设置环境变量 DEEPSEEK_API_KEY，"
-                    "或在 Web 控制台设置页配置。",
+                    "Error: 未配置 LLM API Key。请设置环境变量 DEEPSEEK_API_KEY，或在 Web 控制台设置页配置。",
                     err=True,
                 )
                 raise SystemExit(1)
@@ -228,8 +233,7 @@ def run(
             api_key = "replay" if replay_player is not None else resolved_key
             if not api_key:
                 click.echo(
-                    "Error: 未配置 LLM API Key。请设置环境变量 DEEPSEEK_API_KEY，"
-                    "或在 Web 控制台设置页配置。",
+                    "Error: 未配置 LLM API Key。请设置环境变量 DEEPSEEK_API_KEY，或在 Web 控制台设置页配置。",
                     err=True,
                 )
                 raise SystemExit(1)
@@ -294,7 +298,11 @@ def run(
             if replay_player is not None
             else "opaque"
         ),
-        "provenance": _replay_provenance(replay),
+        "provenance": _replay_provenance(
+            replay,
+            mask_dates=mask_dates,
+            anchor=start_date,
+        ),
     }
     save_pending(result_filename, config)
 
@@ -302,10 +310,7 @@ def run(
     # experiment's scratch features or scripts from contaminating a rerun,
     # while preserving files across all trading days within this run.
     agent_obj.workspace_root = str(
-        RESULTS_DIR.parent
-        / "workspaces"
-        / result_filename.removesuffix("_result.json")
-        / agent_id
+        RESULTS_DIR.parent / "workspaces" / result_filename.removesuffix("_result.json") / agent_id
     )
 
     # Set live file on agent for real-time streaming
@@ -345,16 +350,14 @@ def run(
             ),
             event_bus=EventBus(),
         )
+
         async def run_and_close_clients():
             try:
                 return await engine.run([agent_obj], start_date, end_date)
             finally:
                 clients = [getattr(agent_obj, "llm_client", None)]
                 committee = getattr(agent_obj, "committee", None)
-                clients.extend(
-                    getattr(advisor, "llm_client", None)
-                    for advisor in getattr(committee, "advisors", [])
-                )
+                clients.extend(getattr(advisor, "llm_client", None) for advisor in getattr(committee, "advisors", []))
                 for client in clients:
                     close = getattr(client, "aclose", None)
                     if close is not None:
@@ -379,13 +382,16 @@ def run(
             from traderharness.audit import audit_artifacts
 
             replay_recorder.save(record_replay)
-            config["recorded_replay"] = _replay_provenance(record_replay)
+            config["recorded_replay"] = _replay_provenance(
+                record_replay,
+                mask_dates=mask_dates,
+                anchor=start_date,
+            )
             audit_report = audit_artifacts([record_replay])
             if not audit_report["passed"]:
                 if mask_dates and mask_entities:
                     raise RuntimeError(
-                        f"Recorded replay failed leakage audit "
-                        f"({audit_report['finding_count']} findings)"
+                        f"Recorded replay failed leakage audit ({audit_report['finding_count']} findings)"
                     )
                 click.echo(
                     "Replay leakage audit: EXPECTED FINDINGS "
@@ -414,10 +420,7 @@ def run(
                         id=agent_id,
                         name=getattr(agent_obj, "name", agent_id),
                         model=model or "deepseek-chat",
-                        cassette=(
-                            f"{executor_scope_id(agent_id, is_committee=_is_committee(agent_obj))}"
-                            ".jsonl"
-                        ),
+                        cassette=(f"{executor_scope_id(agent_id, is_committee=_is_committee(agent_obj))}.jsonl"),
                     )
                 ],
                 prompt_contract_version=getattr(agent_obj, "prompt_contract_version", "v1"),
@@ -425,7 +428,11 @@ def run(
                 traderharness_version=th_version,
             )
             manifest_path = bundle_recorder.save_bundle(record_replay, manifest)
-            config["recorded_replay"] = _replay_provenance(record_replay)
+            config["recorded_replay"] = _replay_provenance(
+                record_replay,
+                mask_dates=mask_dates,
+                anchor=start_date,
+            )
             artifacts = [manifest_path] + [
                 record_replay / "agents" / f"{scope}.jsonl" for scope in bundle_recorder.scope_ids
             ]
@@ -433,8 +440,7 @@ def run(
             if not audit_report["passed"]:
                 if mask_dates and mask_entities:
                     raise RuntimeError(
-                        f"Recorded replay bundle failed leakage audit "
-                        f"({audit_report['finding_count']} findings)"
+                        f"Recorded replay bundle failed leakage audit ({audit_report['finding_count']} findings)"
                     )
                 click.echo(
                     "Replay leakage audit: EXPECTED FINDINGS "
@@ -459,8 +465,7 @@ def run(
             click.echo(f"  Trades: {metrics['total_trades']}")
             if vs_benchmark:
                 click.echo(
-                    f"  CSI 300: {vs_benchmark['benchmark_return_pct']:+.2f}% | "
-                    f"Alpha: {vs_benchmark['alpha']:+.2f}%"
+                    f"  CSI 300: {vs_benchmark['benchmark_return_pct']:+.2f}% | Alpha: {vs_benchmark['alpha']:+.2f}%"
                 )
         except OSError as output_error:
             # A long-running CLI may outlive its supervising terminal or pipe.
@@ -494,12 +499,7 @@ def demo():
     from importlib.resources import as_file, files
 
     cassette = files("traderharness.demo").joinpath("momentum_dragon_2024-03-14.jsonl")
-    source_cassette = (
-        Path(__file__).resolve().parents[1]
-        / "examples"
-        / "replays"
-        / "momentum_dragon_2024-03-14.jsonl"
-    )
+    source_cassette = Path(__file__).resolve().parents[1] / "examples" / "replays" / "momentum_dragon_2024-03-14.jsonl"
     selected = cassette if cassette.is_file() else source_cassette
     if not selected.is_file():
         raise click.ClickException("Bundled replay cassette is missing from this installation")
@@ -554,9 +554,7 @@ def masking_ab(
     from traderharness.experiments.masking_ab import run_experiment
 
     ctx = click.get_current_context()
-    click.echo(
-        f"Frozen masking A/B protocol: {repetitions} pair(s), {start} -> {end}, model={model}"
-    )
+    click.echo(f"Frozen masking A/B protocol: {repetitions} pair(s), {start} -> {end}, model={model}")
     outcome = run_experiment(
         invoke_run=lambda **kwargs: ctx.invoke(run, **kwargs),
         agent=agent,
@@ -572,10 +570,7 @@ def masking_ab(
     click.echo(f"Experiment: {outcome['output']}")
     click.echo("Masked audit: PASS")
     unmasked = outcome["audit"]["unmasked"]
-    click.echo(
-        "Unmasked control audit: "
-        f"{unmasked['status']} ({unmasked['finding_count']} findings retained)"
-    )
+    click.echo(f"Unmasked control audit: {unmasked['status']} ({unmasked['finding_count']} findings retained)")
 
 
 @main.command()
@@ -677,9 +672,7 @@ def compare(
         mask_dates = replay_player.manifest.mask_dates
         mask_entities = replay_player.manifest.mask_entities
         entity_mask_seed = replay_player.manifest.entity_mask_seed
-    prompt_contract_version = (
-        replay_player.manifest.prompt_contract_version if replay_player is not None else None
-    )
+    prompt_contract_version = replay_player.manifest.prompt_contract_version if replay_player is not None else None
 
     initial_cash = Decimal(str(cash))
     agents = []
@@ -699,15 +692,12 @@ def compare(
                 raise click.ClickException(f"Agent card '{spec}' not found")
             scope = executor_scope_id(card.id, is_committee=False)
             scoped_player = replay_player.scope(scope) if replay_player is not None else None
-            scoped_recorder = (
-                replay_recorder.scope(scope) if replay_recorder is not None else None
-            )
+            scoped_recorder = replay_recorder.scope(scope) if replay_recorder is not None else None
             resolved_key, resolved_url = resolve_llm_credentials(card.model)
             api_key = "replay" if scoped_player is not None else resolved_key
             if not api_key:
                 raise click.ClickException(
-                    "未配置 LLM API Key。请设置环境变量 DEEPSEEK_API_KEY，"
-                    "或在 Web 控制台设置页配置。"
+                    "未配置 LLM API Key。请设置环境变量 DEEPSEEK_API_KEY，或在 Web 控制台设置页配置。"
                 )
             llm = LLMClient(
                 model=card.model,
@@ -754,16 +744,10 @@ def compare(
             initial_cash=initial_cash,
             mask_entities=mask_entities,
             entity_mask_seed=entity_mask_seed,
-            entity_mask_style=(
-                replay_player.manifest.entity_mask_style
-                if replay_player is not None
-                else "opaque"
-            ),
+            entity_mask_style=(replay_player.manifest.entity_mask_style if replay_player is not None else "opaque"),
         )
     )
-    click.echo(
-        f"Running {len(agents)} agents: {', '.join(ids)} ({start_date} -> {end_date})"
-    )
+    click.echo(f"Running {len(agents)} agents: {', '.join(ids)} ({start_date} -> {end_date})")
     if not mask_dates or not mask_entities:
         click.echo(
             "WARNING: unmasked research control enabled; outputs may contain real dates or entities.",
@@ -812,10 +796,7 @@ def compare(
                     id=agent.agent_id,
                     name=getattr(agent, "name", agent.agent_id),
                     model=getattr(agent.llm_client, "model", ""),
-                    cassette=(
-                        f"{executor_scope_id(agent.agent_id, is_committee=_is_committee(agent))}"
-                        ".jsonl"
-                    ),
+                    cassette=(f"{executor_scope_id(agent.agent_id, is_committee=_is_committee(agent))}.jsonl"),
                 )
                 for agent in agents
             ],
@@ -862,9 +843,7 @@ def compare(
                 tool_calls,
             )
         )
-        behavior[agent_id] = (
-            entity_masker.mask_obj(metrics) if entity_masker is not None else metrics
-        )
+        behavior[agent_id] = entity_masker.mask_obj(metrics) if entity_masker is not None else metrics
 
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     html_path = output or results_dir() / f"{stamp}_comparison.html"
@@ -898,9 +877,7 @@ def compare(
                 "mask_entities": mask_entities,
                 "entity_mask_seed": entity_mask_seed,
                 "entity_mask_style": (
-                    replay_player.manifest.entity_mask_style
-                    if replay_player is not None
-                    else "opaque"
+                    replay_player.manifest.entity_mask_style if replay_player is not None else "opaque"
                 ),
                 "comparison": rows,
                 "behavior": behavior,
@@ -928,8 +905,7 @@ def compare(
                     f"comparison was still written to {html_path}"
                 )
             click.echo(
-                "Replay leakage audit: EXPECTED FINDINGS "
-                f"({audit_report['finding_count']}; unmasked research control)"
+                f"Replay leakage audit: EXPECTED FINDINGS ({audit_report['finding_count']}; unmasked research control)"
             )
         else:
             click.echo("Replay leakage audit: PASS")
@@ -1058,9 +1034,7 @@ def data_update(only: str, since, end, dry_run: bool):
     updater = DataUpdater(
         dataset_dir(),
         daily_provider=BaostockDailyProvider(),
-        min5_provider=Eastmoney5MinProvider(
-            cache_dir=dataset_dir() / ".update_cache" / "eastmoney_5min"
-        ),
+        min5_provider=Eastmoney5MinProvider(cache_dir=dataset_dir() / ".update_cache" / "eastmoney_5min"),
         valuation_provider=BaostockValuationProvider(),
         announcements_provider=CninfoAnnouncementsProvider(),
         news_provider=ClsNewsProvider(),
@@ -1076,10 +1050,7 @@ def data_update(only: str, since, end, dry_run: bool):
         if isinstance(value, UpdatePlan):
             click.echo(f"{name}: {value.start} -> {value.end}")
         else:
-            click.echo(
-                f"{name}: rows {value.rows_before:,} -> {value.rows_after:,} "
-                f"(+{value.rows_added:,})"
-            )
+            click.echo(f"{name}: rows {value.rows_before:,} -> {value.rows_after:,} (+{value.rows_added:,})")
 
 
 @main.command()

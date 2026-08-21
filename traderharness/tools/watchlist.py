@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from traderharness.tools.contracts import is_current_contract
 from traderharness.tools.registry import ToolContext, ToolDefinition
 
 
@@ -53,22 +54,34 @@ async def handle_get_watchlist(params: dict, ctx: ToolContext) -> dict:
 
     items = []
     meta = ctx.tool_call_cache.get("_watchlist_meta", {})
+    current_contract = is_current_contract(getattr(ctx, "tool_contract_version", None))
     for code, reason in watchlist.items():
         info = {"stock_code": code, "reason": reason}
         expires = meta.get(code, {}).get("expires_day_index")
         if expires is not None:
             info["expires_in_trading_days"] = max(0, int(expires) - int(ctx.day_index))
+        visible_price = ctx.execution_price.get(code) if ctx.current_phase != "pre_market" else None
+        if current_contract and visible_price is not None:
+            info["price"] = round(float(visible_price), 2)
+            info["close"] = info["price"]
+            info["price_source"] = "current_visible_window"
         df = ctx.preloaded_daily.get(code)
         if df is not None and not df.empty:
             filtered = df[df["date"] < ctx.current_date]
             if not filtered.empty:
                 last = filtered.iloc[-1]
-                info["close"] = round(float(last["close"]), 2)
-                if len(filtered) >= 2:
+                if "close" not in info:
+                    info["close"] = round(float(last["close"]), 2)
+                    if current_contract:
+                        info["price"] = info["close"]
+                        info["price_source"] = "previous_daily_close"
+                if visible_price is not None and current_contract:
+                    previous_close = float(last["close"])
+                    change = (float(visible_price) - previous_close) / previous_close * 100 if previous_close else 0.0
+                    info["change_pct"] = round(change, 2)
+                elif len(filtered) >= 2:
                     prev = filtered.iloc[-2]
-                    change = (
-                        (float(last["close"]) - float(prev["close"])) / float(prev["close"]) * 100
-                    )
+                    change = (float(last["close"]) - float(prev["close"])) / float(prev["close"]) * 100
                     info["change_pct"] = round(change, 2)
         items.append(info)
 

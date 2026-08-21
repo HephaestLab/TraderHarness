@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from traderharness.tools.contracts import is_current_contract
 from traderharness.tools.registry import ToolContext, ToolDefinition
 
 
@@ -27,7 +28,7 @@ async def handle_get_fundamentals(params: dict, ctx: ToolContext) -> dict:
         return {"error": f"{code} 在当前交易日之前无已发布的财务数据"}
 
     latest = visible.iloc[-1]
-    return {
+    result = {
         "stock_code": code,
         "roe": latest.get("roe"),
         "net_profit_margin": latest.get("net_profit_margin"),
@@ -38,6 +39,18 @@ async def handle_get_fundamentals(params: dict, ctx: ToolContext) -> dict:
         "yoy_net_profit": latest.get("yoy_net_profit"),
         "yoy_eps": latest.get("yoy_eps"),
     }
+    if is_current_contract(getattr(ctx, "tool_contract_version", None)):
+        result["units"] = {
+            "roe": "percent",
+            "net_profit_margin": "percent",
+            "gross_margin": "percent",
+            "yoy_net_profit": "percent",
+            "yoy_eps": "percent",
+            "net_profit": "CNY",
+            "revenue": "CNY",
+            "eps_ttm": "CNY_per_share",
+        }
+    return result
 
 
 GET_FUNDAMENTALS = ToolDefinition(

@@ -10,6 +10,7 @@ import pandas as pd
 
 from traderharness.data.stock_registry_loader import get_stock_industry
 from traderharness.tools._coerce import safe_int
+from traderharness.tools.contracts import is_current_contract
 from traderharness.tools.registry import ToolContext, ToolDefinition
 
 logger = logging.getLogger(__name__)
@@ -79,9 +80,7 @@ def _stock_leadership_metrics(filtered: pd.DataFrame, code: str) -> dict | None:
         "amount_5d_avg_million": _rounded_or_none(amount_5d),
         "amount_20d_avg_million": _rounded_or_none(amount_20d),
         "distance_from_20d_high_pct": (
-            round(float(distance_from_20d_high), 2)
-            if distance_from_20d_high is not None
-            else None
+            round(float(distance_from_20d_high), 2) if distance_from_20d_high is not None else None
         ),
     }
 
@@ -148,11 +147,7 @@ def build_narrative_market_overview(ctx: ToolContext) -> dict:
     if not sector_data:
         return {"error": "当前交易日无市场数据"}
 
-    sector_rows = [
-        _sector_metrics(sector, rows)
-        for sector, rows in sector_data.items()
-        if len(rows) >= 3
-    ]
+    sector_rows = [_sector_metrics(sector, rows) for sector, rows in sector_data.items() if len(rows) >= 3]
     strongest = sorted(
         sector_rows,
         key=lambda row: (
@@ -215,7 +210,20 @@ def build_screen_stocks(ctx: ToolContext, params: dict | None = None) -> dict:
     volume_min = params.get("volume_min", 0)
     industry = params.get("industry", "")
     sort_by = params.get("sort_by", "change_5d")
-    max_results = min(params.get("max_results", 10), 30)
+    max_results = max(1, min(safe_int(params.get("max_results", 10), default=10), 30))
+
+    if price_min > price_max:
+        return {
+            "success": False,
+            "error": "price_min 不能大于 price_max",
+            "error_code": "invalid_filter_range",
+            "retryable": True,
+            "correction": {
+                "instruction": "交换或修正 price_min/price_max 后重试。",
+                "price_min": price_min,
+                "price_max": price_max,
+            },
+        }
 
     results = []
     for code, df in ctx.preloaded_daily.items():
@@ -320,9 +328,7 @@ def build_behavioral_cycle_features(ctx: ToolContext) -> dict:
         low = frame["low"].to_numpy(dtype=float)
         volume = frame["volume"].to_numpy(dtype=float)
         previous_close = np.concatenate(([close[0]], close[:-1]))
-        true_range = np.maximum.reduce(
-            (high - low, np.abs(high - previous_close), np.abs(low - previous_close))
-        )
+        true_range = np.maximum.reduce((high - low, np.abs(high - previous_close), np.abs(low - previous_close)))
 
         last_close = float(close[-1])
         high_60 = float(np.max(high[-60:]))
@@ -349,9 +355,7 @@ def build_behavioral_cycle_features(ctx: ToolContext) -> dict:
         atr_contraction = _finite_ratio(atr_5, atr_20, 1.0)
         volume_ratio = _finite_ratio(volume_5, volume_20)
         up_down_volume_ratio = _finite_ratio(up_volume, down_volume, 1.0)
-        obv_flow_20 = _finite_ratio(
-            float(np.sum(signed_volume[-20:])), float(np.sum(volume[-20:])), 0.0
-        )
+        obv_flow_20 = _finite_ratio(float(np.sum(signed_volume[-20:])), float(np.sum(volume[-20:])), 0.0)
         breakout_20_pct = (_finite_ratio(last_close, resistance_20, 1.0) - 1.0) * 100
         change_20_pct = (_finite_ratio(last_close, float(close[-20]), 1.0) - 1.0) * 100
         clv_5 = float(np.mean(clv[-5:]))
@@ -388,9 +392,7 @@ def build_behavioral_cycle_features(ctx: ToolContext) -> dict:
                 "touched_support": bool(float(low[-1]) <= support_20 * 1.01),
                 "recently_broke_out": bool(recently_broke_out),
                 "extended_20d": bool(change_20_pct >= 25),
-                "distribution_risk": bool(
-                    range_position_60 >= 0.85 and volume_ratio >= 1.5 and clv_last < 0
-                ),
+                "distribution_risk": bool(range_position_60 >= 0.85 and volume_ratio >= 1.5 and clv_last < 0),
                 "zero_volume_baseline": bool(volume_20 <= 0),
             }
         )
@@ -420,11 +422,7 @@ def build_behavioral_cycle_screen(ctx: ToolContext, max_results: int = 8) -> dic
         base_score += 1.0 if row["obv_flow_20"] > 0 else 0.0
         base_score += 0.5 if row["clv_5"] > 0 else 0.0
 
-        is_markup = (
-            row["breakout_20d_pct"] >= 0.5
-            and row["volume_5_to_20"] >= 1.2
-            and row["clv_last"] >= 0.25
-        )
+        is_markup = row["breakout_20d_pct"] >= 0.5 and row["volume_5_to_20"] >= 1.2 and row["clv_last"] >= 0.25
         is_test = (
             row["touched_support"]
             and row["last_close"] >= row["support_20"]
@@ -440,11 +438,7 @@ def build_behavioral_cycle_screen(ctx: ToolContext, max_results: int = 8) -> dic
 
         if is_markup:
             stage = "markup"
-            score = (
-                8.0
-                + min(row["breakout_20d_pct"], 10.0) / 5.0
-                + min(row["volume_5_to_20"], 3.0) / 3.0
-            )
+            score = 8.0 + min(row["breakout_20d_pct"], 10.0) / 5.0 + min(row["volume_5_to_20"], 3.0) / 3.0
             invalidation = max(row["support_20"], row["resistance_20"] * 0.98)
         elif is_washout:
             stage = "washout"
@@ -599,12 +593,10 @@ def build_market_overview(ctx: ToolContext) -> dict:
         "up_count": total_up,
         "down_count": total_down,
         "top_sectors": [
-            {"sector": sector, "avg_change_pct": round(change, 2)}
-            for sector, change in sorted_sectors[:5]
+            {"sector": sector, "avg_change_pct": round(change, 2)} for sector, change in sorted_sectors[:5]
         ],
         "bottom_sectors": [
-            {"sector": sector, "avg_change_pct": round(change, 2)}
-            for sector, change in sorted_sectors[-5:]
+            {"sector": sector, "avg_change_pct": round(change, 2)} for sector, change in sorted_sectors[-5:]
         ],
         "total_sectors": len(sorted_sectors),
     }
@@ -682,11 +674,22 @@ async def handle_get_narrative_sector_summary(params: dict, ctx: ToolContext) ->
     if sector in cache:
         return cache[sector]
     if len(cache) >= 2:
-        return {
+        result = {
             "budget_exhausted": True,
             "limit": 2,
             "instruction": "Use the two sector summaries already returned; do not retry today.",
         }
+        if is_current_contract(getattr(ctx, "tool_contract_version", None)):
+            result.update(
+                {
+                    "success": False,
+                    "error": "叙事板块工具今日两个板块查询预算已耗尽。",
+                    "error_code": "daily_tool_budget_exhausted",
+                    "retryable": False,
+                    "correction": {"instruction": "使用已经返回的两个板块结果继续判断，不要重试。"},
+                }
+            )
+        return result
     payload = build_narrative_sector_summary(ctx, sector)
     cache[sector] = payload
     ctx.tool_call_cache["_narrative_sector_summary_calls"] = len(cache)

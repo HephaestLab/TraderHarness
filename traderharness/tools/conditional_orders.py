@@ -4,11 +4,29 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+from traderharness.tools.contracts import is_current_contract
 from traderharness.tools.registry import ToolContext, ToolDefinition
 
 
 def _phase(ctx: ToolContext) -> str:
     return getattr(ctx, "_current_sub_window", None) or ctx.current_phase
+
+
+def _visible_order(order: dict, ctx: ToolContext) -> dict:
+    """Expose relative expiry in v5 so internal day indexes are not copied as input."""
+    visible = dict(order)
+    if not is_current_contract(getattr(ctx, "tool_contract_version", None)):
+        return visible
+    expiry = visible.pop("expires_day_index", None)
+    visible["expires_in_trading_days"] = max(0, int(expiry) - int(ctx.day_index)) if expiry is not None else None
+    return visible
+
+
+def _visible_result(result: dict, ctx: ToolContext) -> dict:
+    visible = dict(result)
+    if isinstance(visible.get("order"), dict):
+        visible["order"] = _visible_order(visible["order"], ctx)
+    return visible
 
 
 async def handle_manage_conditional_order(params: dict, ctx: ToolContext) -> dict:
@@ -39,6 +57,9 @@ async def handle_manage_conditional_order(params: dict, ctx: ToolContext) -> dic
                 protective = protective or is_original_hard_stop
                 if not is_original_hard_stop:
                     not_before = int(plan["entry_day_index"]) + int(plan["minimum_holding_days"])
+            expires_day_index = params.get("expires_day_index")
+            if params.get("expires_in_trading_days") is not None:
+                expires_day_index = ctx.day_index + int(params["expires_in_trading_days"])
             order = ctx._bus.create_conditional_order(
                 agent_id=ctx.agent_id,
                 stock_code=code,
@@ -49,12 +70,12 @@ async def handle_manage_conditional_order(params: dict, ctx: ToolContext) -> dic
                 reasoning=params.get("reasoning", ""),
                 created_phase=_phase(ctx),
                 protective=protective,
-                expires_day_index=params.get("expires_day_index"),
+                expires_day_index=expires_day_index,
                 not_before_day_index=not_before,
                 max_positions=ctx.max_positions,
                 max_position_pct=ctx.max_position_pct,
             )
-            return {"success": True, "order": order}
+            return {"success": True, "order": _visible_order(order, ctx)}
         if operation == "update":
             order_id = params.get("order_id", "")
             current = next(
@@ -71,9 +92,7 @@ async def handle_manage_conditional_order(params: dict, ctx: ToolContext) -> dic
             result = ctx._bus.update_conditional_order(
                 order_id,
                 trigger_price=(
-                    Decimal(str(params["trigger_price"]))
-                    if params.get("trigger_price") is not None
-                    else None
+                    Decimal(str(params["trigger_price"])) if params.get("trigger_price") is not None else None
                 ),
                 quantity=params.get("quantity"),
                 reasoning=params.get("reasoning", ""),
@@ -84,10 +103,14 @@ async def handle_manage_conditional_order(params: dict, ctx: ToolContext) -> dic
                 plan = ctx.tool_call_cache.get("_position_plans", {}).get(current["stock_code"])
                 if plan is not None and params.get("trigger_price") is not None:
                     plan["current_protective_stop"] = float(params["trigger_price"])
-            return result
+            return _visible_result(result, ctx)
         if operation == "cancel":
-            return ctx._bus.cancel_conditional_order(
-                params.get("order_id", ""), reasoning=params.get("reasoning", "")
+            return _visible_result(
+                ctx._bus.cancel_conditional_order(
+                    params.get("order_id", ""),
+                    reasoning=params.get("reasoning", ""),
+                ),
+                ctx,
             )
         return {"success": False, "error": "operation 必须是 create、update 或 cancel"}
     except (TypeError, ValueError) as exc:
@@ -98,7 +121,11 @@ async def handle_list_conditional_orders(params: dict, ctx: ToolContext) -> dict
     if ctx._bus is None:
         return {"error": "无交易总线"}
     status = params.get("status", "active")
-    return {"orders": ctx._bus.list_conditional_orders(status=status)}
+    orders = [_visible_order(order, ctx) for order in ctx._bus.list_conditional_orders(status=status)]
+    result = {"orders": orders}
+    if is_current_contract(getattr(ctx, "tool_contract_version", None)):
+        result.update({"count": len(orders), "status_filter": status})
+    return result
 
 
 MANAGE_CONDITIONAL_ORDER = ToolDefinition(

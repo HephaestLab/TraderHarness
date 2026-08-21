@@ -253,9 +253,14 @@ class BacktestRunner:
         path = self._config.replay_path
         if path is not None:
             artifact = path / "manifest.json" if path.is_dir() else path
+            artifact_name = artifact.name
+            if self._config.mask_dates:
+                from traderharness.core.masking import DateMasker
+
+                artifact_name = DateMasker(anchor=self._config.start_date).mask_text(artifact_name)
             config["provenance"] = {
                 "mode": "replay",
-                "artifact": artifact.name,
+                "artifact": artifact_name,
                 "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
             }
         else:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from traderharness.tools.contracts import is_current_contract
 from traderharness.tools.registry import ToolContext, ToolDefinition
 
 
@@ -46,7 +47,10 @@ async def handle_get_business_segments(params: dict, ctx: ToolContext) -> dict:
         }
         revenue = row.get("revenue")
         if revenue is not None and revenue == revenue:  # not NaN
-            seg["revenue_billion"] = round(float(revenue) / 1e8, 2)
+            if is_current_contract(getattr(ctx, "tool_contract_version", None)):
+                seg["revenue_100m_cny"] = round(float(revenue) / 1e8, 2)
+            else:
+                seg["revenue_billion"] = round(float(revenue) / 1e8, 2)
         result["segments"].append(seg)
 
     return result

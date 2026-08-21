@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+from traderharness.tools.contracts import is_current_contract
 from traderharness.tools.registry import ToolContext, ToolDefinition
 
 
 async def handle_complete_phase(params: dict, ctx: ToolContext) -> dict:
     """Acknowledge that the Agent, rather than an iteration cap, ended a phase."""
-    return {
+    result = {
         "success": True,
         "status": "phase_complete",
         "phase": ctx.current_phase,
@@ -16,14 +17,21 @@ async def handle_complete_phase(params: dict, ctx: ToolContext) -> dict:
         "summary": params["summary"],
         "next_focus": params.get("next_focus", ""),
     }
+    if is_current_contract(getattr(ctx, "tool_contract_version", None)):
+        result["abandon_error_codes"] = params.get("abandon_error_codes", [])
+    return result
 
 
 async def handle_finish_day(params: dict, ctx: ToolContext) -> dict:
-    return {
+    result = {
         "status": "day_complete",
         "summary_saved": True,
         "trades_today": len(ctx.trade_results),
     }
+    if is_current_contract(getattr(ctx, "tool_contract_version", None)):
+        result["summary"] = params.get("summary", "")
+        result["abandon_error_codes"] = params.get("abandon_error_codes", [])
+    return result
 
 
 COMPLETE_PHASE = ToolDefinition(

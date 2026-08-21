@@ -75,6 +75,7 @@ nav:
   - Architecture: architecture.md
   - Comparison: comparison.md
   - Multi-role Committees: design/multi-role-agent.md
+  - Agent Tool Contract v5: design/agent-tool-contract-v5.md
   - Trajectories for RL and Evaluation: training-data.md
   - Data and Licensing: data.md
   - CLI and Local API: api.md

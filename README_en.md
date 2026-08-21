@@ -28,10 +28,14 @@ every model call is recorded at full fidelity, a data synthesizer that turns tho
 StockBench, and Qlib](docs/comparison.md) · [read the LLM-agent backtesting guide](https://hephaestlab.github.io/TraderHarness/guides/agent-stock-backtesting/) · [中文文档](https://hephaestlab.github.io/TraderHarness/zh/)
 
 <p align="center">
-  <img src="docs/assets/traderharness-demo.gif" alt="TraderHarness streaming historical replay console" width="920">
+  <a href="videos/traderharness-agent-day-promo/renders/traderharness-agent-day-promo-v4.mp4">
+    <img src="docs/assets/traderharness-demo.gif" alt="TraderHarness streaming historical replay console" width="920">
+  </a>
 </p>
 
-<p align="center"><sub>Captured from the local research console (<code>webui/scripts/capture-demo.mjs</code>). Regenerate with <code>npm run capture:demo</code> after any UI change; this GIF will be refreshed alongside the v1.0 acceptance run.</sub></p>
+<p align="center"><strong><a href="videos/traderharness-agent-day-promo/renders/traderharness-agent-day-promo-v4.mp4">▶ Watch TraderHarness: A Day in the Life of a Trading Agent</a></strong></p>
+
+<p align="center"><sub>Click the demo or link above to watch the full product film. The GIF was captured from the local research console (<code>webui/scripts/capture-demo.mjs</code>).</sub></p>
 
 > If leakage control, execution fairness, or reproducible LLM evaluation matters to your work, consider starring the
 > repository. New public benchmarks, replay cassettes, and dataset updates will land here.

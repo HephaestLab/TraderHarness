@@ -16,11 +16,14 @@ Security layers:
 from __future__ import annotations
 
 import ast
+import ctypes
 import io
 import json
 import os
+import re
 import sys
 import threading
+import time
 import traceback
 import types
 from pathlib import Path
@@ -28,9 +31,11 @@ from typing import Any
 
 from traderharness.agents.sandbox.api import build_api_module
 from traderharness.agents.sandbox.guard import build_sandbox_globals
+from traderharness.tools.contracts import is_current_contract
 from traderharness.tools.registry import ToolContext, ToolDefinition
 
 SANDBOX_TIMEOUT = 60
+_LEGACY_EXEC_TRACEBACK_LINE = 151
 
 BLOCKED_IMPORTS = {
     "traderharness",
@@ -54,16 +59,10 @@ def _check_blocked_imports(code: str) -> str | None:
         if isinstance(node, ast.Import):
             for alias in node.names:
                 if alias.name.split(".")[0] in BLOCKED_IMPORTS:
-                    return (
-                        f"禁止导入 '{alias.name}'。沙箱内不能使用回测框架，"
-                        "请通过 traderharness_api 访问数据。"
-                    )
+                    return f"禁止导入 '{alias.name}'。沙箱内不能使用回测框架，请通过 traderharness_api 访问数据。"
         elif isinstance(node, ast.ImportFrom) and node.module:
             if node.module.split(".")[0] in BLOCKED_IMPORTS:
-                return (
-                    f"禁止导入 '{node.module}'。沙箱内不能使用回测框架，"
-                    "请通过 traderharness_api 访问数据。"
-                )
+                return f"禁止导入 '{node.module}'。沙箱内不能使用回测框架，请通过 traderharness_api 访问数据。"
     return None
 
 
@@ -97,16 +96,55 @@ class _ImportBlocker:
         raise ImportError(f"Module '{fullname}' is blocked in sandbox")
 
 
+def _interrupt_thread(thread: threading.Thread) -> bool:
+    """Stop timed-out Python bytecode and confirm that the worker exited."""
+    if thread.ident is None or not thread.is_alive():
+        return True
+    result = ctypes.pythonapi.PyThreadState_SetAsyncExc(
+        ctypes.c_ulong(thread.ident),
+        ctypes.py_object(SystemExit),
+    )
+    if result > 1:
+        ctypes.pythonapi.PyThreadState_SetAsyncExc(ctypes.c_ulong(thread.ident), None)
+        return False
+    thread.join(timeout=2)
+    return not thread.is_alive()
+
+
+def _normalize_legacy_traceback(value: str) -> str:
+    """Keep v1-v4 cassette fingerprints stable after the v5 timeout guard moved code."""
+    return re.sub(
+        r'(File "[^\"]*traderharness[\\/]tools[\\/]sandbox\.py", line )\d+(, in _run)',
+        rf"\g<1>{_LEGACY_EXEC_TRACEBACK_LINE}\g<2>",
+        value,
+    )
+
+
 async def handle_execute_code(params: dict, ctx: ToolContext) -> dict:
+    current_contract = is_current_contract(getattr(ctx, "tool_contract_version", None))
     limit = max(0, int(getattr(ctx, "sandbox_max_calls_per_day", 0)))
     calls = int(ctx.tool_call_cache.get("_sandbox_call_count", 0))
     if limit and calls >= limit:
-        return {
+        result = {
             "error": (
                 f"execute_code daily limit reached ({limit}); use ordinary allowed tools "
                 "to validate and register the final candidates"
             )
         }
+        if current_contract:
+            result.update(
+                {
+                    "success": False,
+                    "error_code": "sandbox_daily_limit_reached",
+                    "retryable": False,
+                    "correction": {
+                        "instruction": "今日停止代码研究，改用当前阶段暴露的普通工具。",
+                        "daily_limit": limit,
+                        "calls_used": calls,
+                    },
+                }
+            )
+        return result
     code = params.get("code", "")
     if not code.strip():
         return {"error": "code 不能为空"}
@@ -147,10 +185,20 @@ async def handle_execute_code(params: dict, ctx: ToolContext) -> dict:
 
         def _run():
             nonlocal result_value, error_msg
+            deadline = time.monotonic() + SANDBOX_TIMEOUT
+
+            def _deadline_trace(frame, event, arg):
+                if time.monotonic() > deadline:
+                    raise TimeoutError(f"执行超时（{SANDBOX_TIMEOUT}秒限制）")
+                return _deadline_trace
+
             try:
+                sys.settrace(_deadline_trace)
                 exec(compile(code, "<agent_code>", "exec"), exec_globals)
                 if "result" in exec_globals:
                     result_value = exec_globals["result"]
+            except TimeoutError as exc:
+                error_msg = f"{exc}；后台执行已终止"
             except ImportError as e:
                 if any(blocked in str(e) for blocked in BLOCKED_IMPORTS):
                     error_msg = f"禁止导入: {e}。沙箱内不能使用回测框架。"
@@ -158,13 +206,20 @@ async def handle_execute_code(params: dict, ctx: ToolContext) -> dict:
                     error_msg = traceback.format_exc()
             except Exception:
                 error_msg = traceback.format_exc()
+            finally:
+                sys.settrace(None)
 
         thread = threading.Thread(target=_run, daemon=True)
         thread.start()
         thread.join(timeout=SANDBOX_TIMEOUT)
 
         if thread.is_alive():
-            error_msg = f"执行超时（{SANDBOX_TIMEOUT}秒限制）"
+            terminated = _interrupt_thread(thread)
+            error_msg = (
+                f"执行超时（{SANDBOX_TIMEOUT}秒限制）；后台执行已终止"
+                if terminated
+                else f"执行超时（{SANDBOX_TIMEOUT}秒限制）；后台线程未能安全终止"
+            )
 
     finally:
         sys.stdout = old_stdout
@@ -183,7 +238,29 @@ async def handle_execute_code(params: dict, ctx: ToolContext) -> dict:
     if stdout_text:
         response["stdout"] = stdout_text
     if error_msg:
+        if not current_contract:
+            error_msg = _normalize_legacy_traceback(error_msg)
         response["error"] = error_msg
+        if current_contract:
+            timed_out = "执行超时" in error_msg
+            attempts_after_this = calls + 1
+            retryable = not limit or attempts_after_this < limit
+            response.update(
+                {
+                    "success": False,
+                    "error_code": "sandbox_timeout" if timed_out else "sandbox_execution_failed",
+                    "retryable": retryable,
+                    "correction": {
+                        "instruction": (
+                            "读取 traceback 的最后一行和 <agent_code> 行号，只修正同一分析目标后重试。"
+                            if retryable
+                            else "代码调用预算已耗尽；使用普通工具继续，不要重试。"
+                        ),
+                        "attempts_used_after_call": attempts_after_this,
+                        "daily_limit": limit or None,
+                    },
+                }
+            )
     if result_value is not None:
         try:
             response["result"] = json.loads(json.dumps(result_value, default=str))

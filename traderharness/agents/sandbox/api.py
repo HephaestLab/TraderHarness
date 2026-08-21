@@ -22,6 +22,7 @@ from traderharness.tools.analysis import (
     build_sector_constituents,
     build_sector_summary,
 )
+from traderharness.tools.contracts import is_current_contract
 
 if TYPE_CHECKING:
     from traderharness.tools.registry import ToolContext
@@ -58,9 +59,7 @@ def _mask_df(ctx: ToolContext, df: pd.DataFrame, col: str = "date") -> pd.DataFr
     if entity_masker is None:
         return out
     out = entity_masker.mask_df(out)
-    if getattr(ctx, "replay_mode", False) and not getattr(
-        ctx, "require_decision_card", False
-    ):
+    if getattr(ctx, "replay_mode", False) and not getattr(ctx, "require_decision_card", False):
         return out
     for column in out.columns:
         if pd.api.types.is_object_dtype(out[column]) or pd.api.types.is_string_dtype(out[column]):
@@ -80,9 +79,7 @@ def _mask_obj(ctx: ToolContext, value):
     masker = getattr(ctx, "entity_masker", None)
     if masker is not None:
         value = masker.mask_obj(value)
-        if not getattr(ctx, "replay_mode", False) or getattr(
-            ctx, "require_decision_card", False
-        ):
+        if not getattr(ctx, "replay_mode", False) or getattr(ctx, "require_decision_card", False):
             value = masker.sanitize_agent_obj(value)
     return value
 
@@ -102,9 +99,7 @@ def _require_any_tool(ctx: ToolContext, *tool_names: str) -> str:
     for name in tool_names:
         if name in allowed:
             return name
-    raise PermissionError(
-        "sandbox access requires one allowed tool: " + ", ".join(tool_names)
-    )
+    raise PermissionError("sandbox access requires one allowed tool: " + ", ".join(tool_names))
 
 
 class MarketAPI:
@@ -142,9 +137,7 @@ class MarketAPI:
             if masker is not None and masker.enabled and not bars.empty:
                 # Keep wall-clock time, neutralize the calendar date.
                 bars = bars.copy()
-                bars["datetime"] = pd.to_datetime(
-                    bars["datetime"].dt.strftime("2000-01-01 %H:%M:%S")
-                )
+                bars["datetime"] = pd.to_datetime(bars["datetime"].dt.strftime("2000-01-01 %H:%M:%S"))
             return _mask_df(self._ctx, bars)
         if cap <= 0:
             return pd.DataFrame()
@@ -152,6 +145,8 @@ class MarketAPI:
 
     def get_stock_list(self) -> list[str]:
         """Get all available stock codes."""
+        if is_current_contract(getattr(self._ctx, "tool_contract_version", None)):
+            _require_any_tool(self._ctx, "get_kline", "screen_stocks", "screen_behavioral_cycle")
         return _mask_obj(self._ctx, list(self._ctx.preloaded_daily.keys()))
 
     def get_all_stocks(self) -> list[str]:
@@ -165,6 +160,8 @@ class MarketAPI:
         ``change_pct`` is vs the previous visible bar of the same stock (NaN on
         the first bar in the returned window).
         """
+        if is_current_contract(getattr(self._ctx, "tool_contract_version", None)):
+            _require_tool(self._ctx, "get_kline")
         if kwargs:
             illegal = ", ".join(sorted(kwargs))
             raise TypeError(
@@ -198,6 +195,8 @@ class MarketAPI:
         The returned table intentionally has no composite score or stage. Agent
         code must rank the cross-section and make the falsifiable stage call.
         """
+        if is_current_contract(getattr(self._ctx, "tool_contract_version", None)):
+            _require_any_tool(self._ctx, "screen_behavioral_cycle", "get_kline")
         if self._ctx.full_market_research_allowed is False:
             raise RuntimeError(
                 "get_behavioral_features() is disabled today; reuse the existing watchlist "
@@ -213,33 +212,23 @@ class MarketAPI:
 
     def get_market_overview(self) -> dict:
         """Full-market breadth and sector leaders (point-in-time)."""
-        authorized = _require_any_tool(
-            self._ctx, "get_market_overview", "get_narrative_market_overview"
-        )
+        authorized = _require_any_tool(self._ctx, "get_market_overview", "get_narrative_market_overview")
         builder = (
-            build_narrative_market_overview
-            if authorized == "get_narrative_market_overview"
-            else build_market_overview
+            build_narrative_market_overview if authorized == "get_narrative_market_overview" else build_market_overview
         )
         return _mask_obj(self._ctx, builder(self._ctx))
 
     def get_sector_summary(self, sector: str) -> dict:
         """Sector 1/5/20d strength, breadth, and ranked leaders (point-in-time)."""
-        authorized = _require_any_tool(
-            self._ctx, "get_sector_summary", "get_narrative_sector_summary"
-        )
+        authorized = _require_any_tool(self._ctx, "get_sector_summary", "get_narrative_sector_summary")
         builder = (
-            build_narrative_sector_summary
-            if authorized == "get_narrative_sector_summary"
-            else build_sector_summary
+            build_narrative_sector_summary if authorized == "get_narrative_sector_summary" else build_sector_summary
         )
         return _mask_obj(self._ctx, builder(self._ctx, sector))
 
     def get_sector_stocks(self, sector: str) -> pd.DataFrame:
         """Sector constituents with 1/5/20d strength and volume evidence."""
-        authorized = _require_any_tool(
-            self._ctx, "get_sector_summary", "get_narrative_sector_summary"
-        )
+        authorized = _require_any_tool(self._ctx, "get_sector_summary", "get_narrative_sector_summary")
         builder = (
             build_narrative_sector_constituents
             if authorized == "get_narrative_sector_summary"
@@ -272,9 +261,7 @@ class MarketAPI:
         last = filtered.iloc[-1]
         prev = filtered.iloc[-2] if len(filtered) >= 2 else last
         prev_close = float(prev["close"])
-        change_pct = (
-            ((float(last["close"]) - prev_close) / prev_close * 100) if prev_close != 0 else 0.0
-        )
+        change_pct = ((float(last["close"]) - prev_close) / prev_close * 100) if prev_close != 0 else 0.0
         masker = getattr(self._ctx, "date_masker", None)
         day_label = masker.mask_date(last["date"]) if masker is not None else "T-1"
         return _mask_obj(
@@ -299,8 +286,7 @@ class MarketAPI:
         if fund_data is None or fund_data.empty:
             return None
         stock_data = fund_data[
-            (fund_data["stock_code"] == code)
-            & (fund_data["pub_date"] <= str(self._ctx.current_date))
+            (fund_data["stock_code"] == code) & (fund_data["pub_date"] <= str(self._ctx.current_date))
         ]
         if stock_data.empty:
             return None
@@ -339,9 +325,7 @@ class PortfolioAPI:
                     "quantity": pos.quantity,
                     "avg_cost": avg_cost,
                     "current_price": current_price,
-                    "pnl_pct": round((current_price / avg_cost - 1.0) * 100, 2)
-                    if avg_cost
-                    else 0.0,
+                    "pnl_pct": round((current_price / avg_cost - 1.0) * 100, 2) if avg_cost else 0.0,
                     "market_value": current_price * pos.quantity,
                 }
             )
@@ -359,8 +343,7 @@ class PortfolioAPI:
         """Current long market value as a percentage of marked total equity."""
         prices = self._visible_prices()
         gross = sum(
-            float(prices.get(code, pos.avg_cost)) * pos.quantity
-            for code, pos in self._ctx.portfolio.positions.items()
+            float(prices.get(code, pos.avg_cost)) * pos.quantity for code, pos in self._ctx.portfolio.positions.items()
         )
         total = float(self._ctx.portfolio.total_value(prices))
         return round(gross / total * 100, 2) if total > 0 else 0.0
@@ -410,8 +393,7 @@ class NewsAPI:
         start = self._ctx.current_date - timedelta(days=days)
         keywords = ["央行", "证监会", "国务院", "财政部", "银保监", "发改委", "人民银行"]
         filtered = news_data[
-            (news_data["display_time"].dt.date >= start)
-            & (news_data["display_time"].dt.date < self._ctx.current_date)
+            (news_data["display_time"].dt.date >= start) & (news_data["display_time"].dt.date < self._ctx.current_date)
         ]
         if filtered.empty:
             return []

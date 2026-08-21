@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from traderharness.tools.contracts import is_current_contract
 from traderharness.tools.registry import ToolContext, ToolDefinition
 
 
@@ -18,9 +19,7 @@ async def handle_get_valuation(params: dict, ctx: ToolContext) -> dict:
     if valuation_data is None:
         return {"error": "估值数据未加载"}
 
-    stock_data = valuation_data[
-        (valuation_data["stock_code"] == code) & (valuation_data["date"] < ctx.current_date)
-    ]
+    stock_data = valuation_data[(valuation_data["stock_code"] == code) & (valuation_data["date"] < ctx.current_date)]
     if stock_data.empty:
         return {"error": f"{code} 无估值数据"}
 
@@ -43,6 +42,15 @@ async def handle_get_valuation(params: dict, ctx: ToolContext) -> dict:
     if len(stock_data) >= 5:
         recent_turn = stock_data.tail(5)["turn"].mean()
         result["avg_turnover_5d_pct"] = _safe_round(recent_turn)
+
+    if is_current_contract(getattr(ctx, "tool_contract_version", None)):
+        result["units"] = {
+            "pe_ttm": "ratio",
+            "pb_mrq": "ratio",
+            "ps_ttm": "ratio",
+            "turnover_pct": "percent",
+            "avg_turnover_5d_pct": "percent",
+        }
 
     return result
 

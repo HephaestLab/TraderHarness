@@ -7,6 +7,7 @@ from datetime import timedelta
 import pandas as pd
 
 from traderharness.data.stock_registry_loader import get_stock_name
+from traderharness.tools.contracts import is_current_contract
 from traderharness.tools.registry import ToolContext, ToolDefinition
 
 
@@ -29,11 +30,7 @@ def _text_contains(frame: pd.DataFrame, term: str) -> pd.Series:
 
 def _remember_visible_evidence_ids(ctx: ToolContext, items: list[dict]) -> None:
     visible = ctx.tool_call_cache.setdefault("_visible_text_evidence_ids", set())
-    visible.update(
-        str(item["evidence_id"])
-        for item in items
-        if str(item.get("evidence_id", "")).strip()
-    )
+    visible.update(str(item["evidence_id"]) for item in items if str(item.get("evidence_id", "")).strip())
 
 
 async def handle_get_announcement_evidence(params: dict, ctx: ToolContext) -> dict:
@@ -104,11 +101,22 @@ async def handle_get_narrative_news(params: dict, ctx: ToolContext) -> dict:
         return cache[query_key]
     calls = int(ctx.tool_call_cache.get("_narrative_news_calls", 0))
     if calls >= 2:
-        return {
+        result = {
             "budget_exhausted": True,
             "limit": 2,
             "instruction": "Use the narrative evidence already returned; do not retry today.",
         }
+        if is_current_contract(getattr(ctx, "tool_contract_version", None)):
+            result.update(
+                {
+                    "success": False,
+                    "error": "叙事新闻工具今日两次查询预算已耗尽。",
+                    "error_code": "daily_tool_budget_exhausted",
+                    "retryable": False,
+                    "correction": {"instruction": "使用今日已经返回的叙事证据继续判断，不要重试。"},
+                }
+            )
+        return result
 
     news_data = ctx.tool_call_cache.get("_news_data")
     if news_data is None:
@@ -117,9 +125,7 @@ async def handle_get_narrative_news(params: dict, ctx: ToolContext) -> dict:
     cutoff = ctx.current_date
     start = ctx.current_date - timedelta(days=days)
 
-    filtered = news_data[
-        (news_data["display_time"].dt.date >= start) & (news_data["display_time"].dt.date < cutoff)
-    ]
+    filtered = news_data[(news_data["display_time"].dt.date >= start) & (news_data["display_time"].dt.date < cutoff)]
 
     # The source stock_list commonly contains names rather than codes. Search
     # both so an Agent can link a masked code back to the point-in-time text.
@@ -218,7 +224,17 @@ async def handle_get_announcements(params: dict, ctx: ToolContext) -> dict:
             "count": 0,
             "hint": f"{code} 近{days}天无公告",
         }
-    results = [{"title": row["title"]} for _, row in filtered.tail(20).iterrows()]
+    if is_current_contract(getattr(ctx, "tool_contract_version", None)):
+        results = [
+            {
+                "time": _masked_time(ctx, row["announcement_time"]),
+                "title": _clean_text(row.get("title")),
+                "type": _clean_text(row.get("ann_type")),
+            }
+            for _, row in filtered.tail(20).iterrows()
+        ]
+    else:
+        results = [{"title": row["title"]} for _, row in filtered.tail(20).iterrows()]
     return {"stock_code": code, "announcements": results, "count": len(filtered)}
 
 
@@ -232,29 +248,50 @@ async def handle_get_news(params: dict, ctx: ToolContext) -> dict:
         return {"error": "快讯数据未加载"}
     cutoff = ctx.current_date
     start = ctx.current_date - timedelta(days=days)
-    filtered = news_data[
-        (news_data["display_time"].dt.date >= start)
-        & (news_data["display_time"].dt.date < cutoff)
-    ]
-    if stock_code and "stock_list" in filtered.columns:
-        filtered = filtered[filtered["stock_list"].str.contains(stock_code, na=False)]
+    filtered = news_data[(news_data["display_time"].dt.date >= start) & (news_data["display_time"].dt.date < cutoff)]
+    current_contract = is_current_contract(getattr(ctx, "tool_contract_version", None))
+    if stock_code:
+        if current_contract:
+            stock_name = get_stock_name(stock_code)
+            matched = _text_contains(filtered, stock_code)
+            if stock_name and stock_name != stock_code:
+                matched |= _text_contains(filtered, stock_name)
+            filtered = filtered[matched]
+        elif "stock_list" in filtered.columns:
+            filtered = filtered[filtered["stock_list"].str.contains(stock_code, na=False)]
     search_terms = []
     if keyword:
         search_terms.append(keyword)
     if sector:
         search_terms.append(sector)
     if search_terms:
-        pattern = "|".join(search_terms)
-        filtered = filtered[filtered["content"].str.contains(pattern, na=False)]
+        if current_contract:
+            matched = pd.Series(False, index=filtered.index)
+            for term in search_terms:
+                matched |= _text_contains(filtered, str(term))
+            filtered = filtered[matched]
+        else:
+            pattern = "|".join(search_terms)
+            filtered = filtered[filtered["content"].str.contains(pattern, na=False)]
     if filtered.empty:
         hint = f"近{days}天无"
         if keyword or sector:
             hint += f"含「{keyword or sector}」的"
         return {"news": [], "count": 0, "hint": hint + "快讯"}
-    results = [
-        {"content": row["content"][:100], "level": row.get("level", "")}
-        for _, row in filtered.tail(15).iterrows()
-    ]
+    if current_contract:
+        results = [
+            {
+                "time": _masked_time(ctx, row["display_time"]),
+                "title": _clean_text(row.get("title")),
+                "content": _clean_text(row.get("content"))[:300],
+                "level": _clean_text(row.get("level")),
+            }
+            for _, row in filtered.tail(15).iterrows()
+        ]
+    else:
+        results = [
+            {"content": row["content"][:100], "level": row.get("level", "")} for _, row in filtered.tail(15).iterrows()
+        ]
     return {
         "news": results,
         "count": len(filtered),

@@ -82,3 +82,40 @@ async def test_create_list_and_raise_protective_stop_with_masking():
     assert updated["success"] is True
     assert listed["orders"][0]["stock_code"] == code
     assert listed["orders"][0]["trigger_price"] == 9.8
+
+
+@pytest.mark.asyncio
+async def test_v5_uses_relative_expiry_on_input_and_output():
+    ctx = _context()
+    ctx.tool_contract_version = "v5"
+    registry = ToolRegistry(contract_version="v5")
+    registry.register(MANAGE_CONDITIONAL_ORDER)
+    registry.register(LIST_CONDITIONAL_ORDERS)
+    code = ctx.entity_masker.mask_code("600519")
+
+    created = await registry.execute(
+        "manage_conditional_order",
+        {
+            "operation": "create",
+            "action": "sell",
+            "stock_code": code,
+            "quantity": 0,
+            "comparator": "price_lte",
+            "trigger_price": 9.4,
+            "protective": True,
+            "expires_in_trading_days": 5,
+            "reasoning": "structural stop",
+        },
+        ctx,
+    )
+    listed = await registry.execute(
+        "list_conditional_orders",
+        {"status": "active"},
+        ctx,
+    )
+
+    assert created["success"] is True
+    assert created["order"]["expires_in_trading_days"] == 5
+    assert "expires_day_index" not in created["order"]
+    assert listed["orders"][0]["expires_in_trading_days"] == 5
+    assert "expires_day_index" not in listed["orders"][0]

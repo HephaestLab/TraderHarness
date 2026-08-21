@@ -4,18 +4,20 @@ from __future__ import annotations
 
 from typing import Any
 
+from traderharness.tools.contracts import TOOL_EXAMPLES, TOOL_RESULT_SUMMARIES
+
 TOOL_CATALOG: tuple[dict[str, Any], ...] = (
     {
         "name": "get_kline",
         "label": "K 线历史",
-        "description": "查询严格按时间点遮罩的日线与分钟 OHLCV。",
+        "description": "查询严格早于当前交易日的日线 OHLCV；分钟线由窗口消息或沙箱方法提供。",
         "category": "market",
         "required": False,
     },
     {
         "name": "get_stock_price",
         "label": "最新可见价格",
-        "description": "读取当前时间窗口内最新可用价格。",
+        "description": "盘前读取D-1日线，盘中读取当前已揭示子窗口的最新5分钟收盘价。",
         "category": "market",
         "required": False,
     },
@@ -241,4 +243,20 @@ def normalize_allowed_tools(tools: list[str] | tuple[str, ...] | None) -> list[s
 
 
 def tool_catalog_payload() -> list[dict[str, Any]]:
-    return [dict(item) for item in TOOL_CATALOG]
+    return [
+        {
+            **item,
+            "example_arguments": TOOL_EXAMPLES.get(item["name"]),
+            "success_result": TOOL_RESULT_SUMMARIES.get(item["name"]),
+            "error_contract": {
+                "required": [
+                    "success",
+                    "error",
+                    "error_code",
+                    "retryable",
+                    "correction",
+                ]
+            },
+        }
+        for item in TOOL_CATALOG
+    ]

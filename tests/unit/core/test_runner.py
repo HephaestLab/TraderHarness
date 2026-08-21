@@ -160,6 +160,22 @@ class TestBundleMultiAgentReplay:
         with pytest.raises(FileNotFoundError):
             runner._build_agents()
 
+    def test_masked_result_provenance_does_not_leak_date_from_replay_filename(self, tmp_path):
+        cassette = tmp_path / "agent_2024-03-04.jsonl"
+        cassette.write_text("", encoding="utf-8")
+        config = RunConfig(
+            start_date=date(2024, 3, 4),
+            end_date=date(2024, 3, 4),
+            agents=[{"id": "trend-breakout"}],
+            replay_path=cassette,
+            mask_dates=True,
+        )
+
+        persisted = BacktestRunner(config)._persisted_config()
+
+        assert persisted["provenance"]["artifact"] == "agent_D+0.jsonl"
+        assert "2024-03-04" not in str(persisted["provenance"])
+
 
 class TestLLMCredentialWiring:
     """Server-side runs must resolve credentials via llm_settings

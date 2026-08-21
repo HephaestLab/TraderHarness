@@ -10,6 +10,7 @@ import logging
 import pandas as pd
 
 from traderharness.tools._coerce import safe_int
+from traderharness.tools.contracts import is_current_contract
 from traderharness.tools.dedup import with_dedup
 from traderharness.tools.registry import ToolContext, ToolDefinition
 
@@ -79,9 +80,7 @@ async def handle_get_kline(params: dict, ctx: ToolContext) -> dict:
             "open_price": round(float(older.iloc[0]["open"]), 2),
             "close_price": round(float(older.iloc[-1]["close"]), 2),
             "change_pct": round(
-                (float(older.iloc[-1]["close"]) - float(older.iloc[0]["open"]))
-                / float(older.iloc[0]["open"])
-                * 100,
+                (float(older.iloc[-1]["close"]) - float(older.iloc[0]["open"])) / float(older.iloc[0]["open"]) * 100,
                 2,
             ),
             "avg_volume": int(volumes.mean()),
@@ -107,14 +106,34 @@ async def handle_get_stock_price(params: dict, ctx: ToolContext) -> dict:
     last = filtered.iloc[-1]
     prev = filtered.iloc[-2] if len(filtered) >= 2 else last
     prev_close = float(prev["close"])
-    change_pct = (
-        ((float(last["close"]) - prev_close) / prev_close * 100) if prev_close != 0 else 0.0
-    )
+    change_pct = ((float(last["close"]) - prev_close) / prev_close * 100) if prev_close != 0 else 0.0
+
+    if is_current_contract(getattr(ctx, "tool_contract_version", None)):
+        sub_window = getattr(ctx, "_current_sub_window", None)
+        if ctx.current_phase != "pre_market" and ctx._bus is not None:
+            window = sub_window or ("open" if ctx.current_phase == "open_window" else "close")
+            visible_price = ctx._bus.get_execution_price(code, window)
+            if visible_price is not None:
+                price = float(visible_price)
+                intraday_change = (
+                    (price - float(last["close"])) / float(last["close"]) * 100 if float(last["close"]) != 0 else 0.0
+                )
+                return {
+                    "stock_code": code,
+                    "day": "D+0",
+                    "price": round(price, 2),
+                    "close": round(price, 2),
+                    "previous_close": round(float(last["close"]), 2),
+                    "change_pct": round(intraday_change, 2),
+                    "price_source": "current_visible_5min_close",
+                    "as_of": str(window),
+                    "tradable_execution_price": True,
+                }
 
     masker = getattr(ctx, "date_masker", None)
     day_label = masker.mask_date(last["date"]) if masker is not None else "T-1"
 
-    return {
+    result = {
         "stock_code": code,
         "day": day_label,
         "open": round(float(last["open"]), 2),
@@ -124,6 +143,16 @@ async def handle_get_stock_price(params: dict, ctx: ToolContext) -> dict:
         "volume": safe_int(last.get("volume", 0)),
         "change_pct": round(change_pct, 2),
     }
+    if is_current_contract(getattr(ctx, "tool_contract_version", None)):
+        result.update(
+            {
+                "price": result["close"],
+                "price_source": "previous_daily_close",
+                "as_of": day_label,
+                "tradable_execution_price": False,
+            }
+        )
+    return result
 
 
 async def handle_get_stock_info(params: dict, ctx: ToolContext) -> dict:

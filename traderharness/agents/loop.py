@@ -19,6 +19,11 @@ from traderharness.agents.context import ContextManager
 from traderharness.agents.llm_client import LLMClient
 from traderharness.agents.memory import DailyMemory
 from traderharness.tools._coerce import safe_int
+from traderharness.tools.contracts import (
+    CURRENT_TOOL_CONTRACT_VERSION,
+    is_current_contract,
+    tool_example,
+)
 from traderharness.tools.registry import ToolContext, ToolRegistry
 
 if TYPE_CHECKING:
@@ -27,6 +32,11 @@ if TYPE_CHECKING:
     from traderharness.trajectory.collector import TrajectoryCollector
 
 MAX_TOOL_RESULT_CHARS = 3000
+
+
+class PhaseProtocolError(RuntimeError):
+    """Raised when a v5 Agent exhausts repair turns without ending its phase."""
+
 
 _CORRECTION_LOCKED_ORDER_FIELDS = ("action", "stock_code", "quantity")
 _CORRECTION_LOCKED_CARD_FIELDS = (
@@ -44,9 +54,7 @@ _CORRECTION_LOCKED_CARD_FIELDS = (
 )
 
 
-def _validate_decision_card_correction(
-    original: dict | None, corrected: dict
-) -> dict | None:
+def _validate_decision_card_correction(original: dict | None, corrected: dict) -> dict | None:
     """Prevent a format/evidence retry from becoming a new trading decision."""
     if not isinstance(original, dict):
         return None
@@ -62,8 +70,7 @@ def _validate_decision_card_correction(
         changed_card_fields = [
             field
             for field in _CORRECTION_LOCKED_CARD_FIELDS
-            if field in original_card
-            and corrected_card.get(field) != original_card.get(field)
+            if field in original_card and corrected_card.get(field) != original_card.get(field)
         ]
     elif isinstance(original_card, dict):
         changed_card_fields = ["decision_card"]
@@ -71,9 +78,7 @@ def _validate_decision_card_correction(
         return None
     return {
         "success": False,
-        "error": (
-            "受控纠错重试改变了原候选或决策卡语义，已拒绝进入撮合"
-        ),
+        "error": ("受控纠错重试改变了原候选或决策卡语义，已拒绝进入撮合"),
         "error_code": "decision_card_correction_changed_semantics",
         "retryable": False,
         "correction": {
@@ -82,6 +87,7 @@ def _validate_decision_card_correction(
             "changed_decision_card_fields": changed_card_fields,
         },
     }
+
 
 _SEMANTIC_STATE_TOOLS = frozenset(
     {
@@ -165,10 +171,7 @@ def _semantic_premarket_stage_instruction(
         tool_cache = getattr(ctx, "tool_call_cache", {})
         sandbox_limit = max(0, int(getattr(ctx, "sandbox_max_calls_per_day", 0)))
         sandbox_calls = int(tool_cache.get("_sandbox_call_count", 0))
-        if (
-            tool_cache.get("_sandbox_last_error") is True
-            and sandbox_limit > sandbox_calls
-        ):
+        if tool_cache.get("_sandbox_last_error") is True and sandbox_limit > sandbox_calls:
             return (
                 "Research step 3/5 controlled code correction: the previous "
                 "execute_code attempt failed. Read its traceback, preserve the same "
@@ -221,10 +224,7 @@ def _semantic_premarket_allowed_tools(ctx: ToolContext, iteration_index: int) ->
 def _available_tools_instruction(available_tool_names) -> str:
     """Name the exact callable surface for this turn to prevent stale tool calls."""
     names = ", ".join(sorted(set(available_tool_names))) or "none"
-    return (
-        "Current-turn available tools (the complete list): "
-        f"{names}. Do not call any tool not in this list."
-    )
+    return f"Current-turn available tools (the complete list): {names}. Do not call any tool not in this list."
 
 
 def _phase_protocol_instruction(ctx: ToolContext, available_tool_names) -> str:
@@ -255,9 +255,7 @@ def _phase_protocol_instruction(ctx: ToolContext, available_tool_names) -> str:
             "不要求先回踩。完成本窗口的研究、交易及纠错后调用 complete_phase，"
             "市场时钟在此之前不会主动推进。"
         )
-    return "【当前阶段执行协议】" + duty + "\n" + _available_tools_instruction(
-        available_tool_names
-    )
+    return "【当前阶段执行协议】" + duty + "\n" + _available_tools_instruction(available_tool_names)
 
 
 def _json_safe(value):
@@ -278,11 +276,76 @@ def _json_safe(value):
     return value
 
 
-def _serialize_tool_result(result: dict) -> str:
+def _compact_result_value(value, *, list_limit: int, string_limit: int, depth: int = 0):
+    if isinstance(value, str):
+        return value if len(value) <= string_limit else value[:string_limit] + "…"
+    if isinstance(value, list):
+        return [
+            _compact_result_value(
+                item,
+                list_limit=list_limit,
+                string_limit=string_limit,
+                depth=depth + 1,
+            )
+            for item in value[:list_limit]
+        ]
+    if isinstance(value, dict):
+        if depth >= 6:
+            return {"summary": "nested object omitted"}
+        return {
+            key: _compact_result_value(
+                item,
+                list_limit=list_limit,
+                string_limit=string_limit,
+                depth=depth + 1,
+            )
+            for key, item in value.items()
+        }
+    return value
+
+
+def _serialize_tool_result(
+    result: dict,
+    *,
+    contract_version: str = CURRENT_TOOL_CONTRACT_VERSION,
+) -> str:
     """Serialize tool result, truncating if over budget."""
     text = json.dumps(_json_safe(result), ensure_ascii=False, allow_nan=False, default=str)
     if len(text) > MAX_TOOL_RESULT_CHARS:
-        return text[:MAX_TOOL_RESULT_CHARS] + "... (truncated)"
+        if not is_current_contract(contract_version):
+            return text[:MAX_TOOL_RESULT_CHARS] + "... (truncated)"
+        original_characters = len(text)
+        for list_limit, string_limit in ((8, 240), (5, 160), (3, 100), (1, 60)):
+            compacted = _compact_result_value(
+                _json_safe(result),
+                list_limit=list_limit,
+                string_limit=string_limit,
+            )
+            compacted["_truncation"] = {
+                "truncated": True,
+                "original_characters": original_characters,
+                "list_items_kept_per_array": list_limit,
+                "instruction": "缩小查询范围或减少 max_results 后重试；不要猜测被省略内容。",
+            }
+            text = json.dumps(
+                compacted,
+                ensure_ascii=False,
+                allow_nan=False,
+                default=str,
+            )
+            if len(text) <= MAX_TOOL_RESULT_CHARS:
+                return text
+        return json.dumps(
+            {
+                "success": bool(result.get("success", True)),
+                "_truncation": {
+                    "truncated": True,
+                    "original_characters": original_characters,
+                    "instruction": "结果过大，必须缩小查询范围或减少 max_results 后重试。",
+                },
+            },
+            ensure_ascii=False,
+        )
     return text
 
 
@@ -354,9 +417,7 @@ class AgentLoop:
             agent_id=getattr(ctx, "agent_id", ""),
             phase="pre_market",
         )
-        available_tool_names = [
-            schema["function"]["name"] for schema in self.registry.get_openai_tools_schema()
-        ]
+        available_tool_names = [schema["function"]["name"] for schema in self.registry.get_openai_tools_schema(ctx=ctx)]
         morning_brief = self._build_morning_brief(ctx, available_tool_names)
 
         # Record morning brief in trajectory
@@ -365,9 +426,8 @@ class AgentLoop:
         remaining_info = ""
         if self.remaining_trading_days is not None and self.total_trading_days is not None:
             day_num = self.total_trading_days - self.remaining_trading_days
-            legacy_replay_horizon = (
-                getattr(self.llm_client, "_player", None) is not None
-                and not getattr(ctx, "require_decision_card", False)
+            legacy_replay_horizon = getattr(self.llm_client, "_player", None) is not None and not getattr(
+                ctx, "require_decision_card", False
             )
             if legacy_replay_horizon:
                 # Preserve old cassette fingerprints only. New live/recorded
@@ -381,8 +441,7 @@ class AgentLoop:
                 research_day = (day_num - 1) % interval == 0
                 ctx.full_market_research_allowed = research_day
                 remaining_info += (
-                    f"\n研究日：{'是' if research_day else '否'}"
-                    "（由环境计算；只有“是”时才做全市场行为特征研究）"
+                    f"\n研究日：{'是' if research_day else '否'}（由环境计算；只有“是”时才做全市场行为特征研究）"
                 )
         self._context.add_message(
             {
@@ -403,9 +462,7 @@ class AgentLoop:
             exclude_tools={"place_order"} | early_finish_exclude,
         )
 
-        window_exclude_tools = (
-            {"execute_code"} if getattr(ctx, "sandbox_pre_market_only", False) else set()
-        )
+        window_exclude_tools = {"execute_code"} if getattr(ctx, "sandbox_pre_market_only", False) else set()
         non_final_window_exclude_tools = window_exclude_tools | early_finish_exclude
 
         # === Phase 2: 开盘窗口 (分两轮推进) ===
@@ -431,16 +488,13 @@ class AgentLoop:
 
         # Round 1: 9:30-9:50 (前3根bar)
         half1 = self._filter_window_bars(ctx.window_minutes, 9 * 60 + 35, 9 * 60 + 50)
-        window_text = self._format_window_klines(
-            half1, "开盘窗口 前半 (9:30-9:50)", ctx.execution_price, ctx
-        )
+        window_text = self._format_window_klines(half1, "开盘窗口 前半 (9:30-9:50)", ctx.execution_price, ctx)
         window_news = self._format_window_news(ctx, "open")
         self._context.add_message(
             {
                 "role": "user",
                 "content": (
-                    f"{window_text}{window_news}\n\n你现在可以下单"
-                    "（成交价=当前最新bar收盘价），或等待看后续走势。"
+                    f"{window_text}{window_news}\n\n你现在可以下单（成交价=当前最新bar收盘价），或等待看后续走势。"
                 ),
             }
         )
@@ -454,15 +508,11 @@ class AgentLoop:
         ctx._current_sub_window = "open_2"
         self._process_conditional_orders(ctx, "open_2")
         half2 = self._filter_window_bars(ctx.window_minutes, 9 * 60 + 55, 10 * 60)
-        window_text = self._format_window_klines(
-            half2, "开盘窗口 后半 (9:50-10:00)", ctx.execution_price, ctx
-        )
+        window_text = self._format_window_klines(half2, "开盘窗口 后半 (9:50-10:00)", ctx.execution_price, ctx)
         self._context.add_message(
             {
                 "role": "user",
-                "content": (
-                    f"{window_text}\n\n开盘窗口即将结束。下单则以10:00价格成交，不下单则等尾盘。"
-                ),
+                "content": (f"{window_text}\n\n开盘窗口即将结束。下单则以10:00价格成交，不下单则等尾盘。"),
             }
         )
         await self._run_phase(
@@ -494,15 +544,12 @@ class AgentLoop:
         # Round 1: 14:30-14:50 (前3根bar)
         half1 = self._filter_window_bars(ctx.window_minutes, 14 * 60 + 35, 14 * 60 + 50)
         window_news = self._format_window_news(ctx, "close")
-        window_text = self._format_window_klines(
-            half1, "尾盘窗口 前半 (14:30-14:50)", ctx.execution_price, ctx
-        )
+        window_text = self._format_window_klines(half1, "尾盘窗口 前半 (14:30-14:50)", ctx.execution_price, ctx)
         self._context.add_message(
             {
                 "role": "user",
                 "content": (
-                    f"{window_text}{window_news}\n\n你可以下单"
-                    "（成交价=当前最新bar收盘价），或等待看尾盘走势。"
+                    f"{window_text}{window_news}\n\n你可以下单（成交价=当前最新bar收盘价），或等待看尾盘走势。"
                 ),
             }
         )
@@ -516,16 +563,11 @@ class AgentLoop:
         ctx._current_sub_window = "close_2"
         self._process_conditional_orders(ctx, "close_2")
         half2 = self._filter_window_bars(ctx.window_minutes, 14 * 60 + 55, 15 * 60)
-        window_text = self._format_window_klines(
-            half2, "尾盘窗口 后半 (14:50-15:00)", ctx.execution_price, ctx
-        )
+        window_text = self._format_window_klines(half2, "尾盘窗口 后半 (14:50-15:00)", ctx.execution_price, ctx)
         self._context.add_message(
             {
                 "role": "user",
-                "content": (
-                    f"{window_text}\n\n收盘在即。下单则以收盘价成交。"
-                    "操作完成后请调用 finish_day 总结今天。"
-                ),
+                "content": (f"{window_text}\n\n收盘在即。下单则以收盘价成交。操作完成后请调用 finish_day 总结今天。"),
             }
         )
         await self._run_phase(
@@ -615,7 +657,11 @@ class AgentLoop:
         self._context.add_message(
             {
                 "role": "user",
-                "content": "=== 环境条件单事件 ===\n" + _serialize_tool_result({"events": visible}),
+                "content": "=== 环境条件单事件 ===\n"
+                + _serialize_tool_result(
+                    {"events": visible},
+                    contract_version=self.registry.contract_version,
+                ),
             }
         )
         if self.trajectory:
@@ -638,6 +684,7 @@ class AgentLoop:
         correction_retry_pending = False
         correction_retry_arguments: dict | None = None
         correction_required_tools: set[str] = set()
+        pending_tool_corrections: dict[str, str] = {}
         phase_protocol = bool(getattr(ctx, "require_phase_completion", False))
         # The configured iteration count is the normal reasoning budget. A
         # protocol Agent gets bounded extension turns so a read, a repair, and
@@ -698,9 +745,7 @@ class AgentLoop:
             tool_cache = getattr(ctx, "tool_call_cache", {})
             if not phase_protocol:
                 dynamic_exclude.add("complete_phase")
-            elif ctx.current_phase == "close_window" and getattr(
-                ctx, "_current_sub_window", None
-            ) == "close_2":
+            elif ctx.current_phase == "close_window" and getattr(ctx, "_current_sub_window", None) == "close_2":
                 dynamic_exclude.add("complete_phase")
             if phase_protocol and ctx.current_phase == "pre_market":
                 dynamic_exclude.add("manage_conditional_order")
@@ -712,49 +757,38 @@ class AgentLoop:
                 and not phase_protocol
             )
             if semantic_premarket:
-                allowed_for_stage = _semantic_premarket_allowed_tools(
-                    ctx, semantic_stage_index
-                )
+                allowed_for_stage = _semantic_premarket_allowed_tools(ctx, semantic_stage_index)
                 if semantic_stage_index in {3, 4}:
                     # Once a dossier surface succeeds, remove it from subsequent
                     # schemas so the model must finish the missing company evidence
                     # instead of repeatedly querying the same type of fact.
                     allowed_for_stage -= semantic_stage_successes
-                all_names = {
-                    schema["function"]["name"]
-                    for schema in self.registry.get_openai_tools_schema()
-                }
+                all_names = {schema["function"]["name"] for schema in self.registry.get_openai_tools_schema(ctx=ctx)}
                 dynamic_exclude.update(all_names - allowed_for_stage)
             if is_correction_retry:
-                all_names = {
-                    schema["function"]["name"]
-                    for schema in self.registry.get_openai_tools_schema()
-                }
+                all_names = {schema["function"]["name"] for schema in self.registry.get_openai_tools_schema(ctx=ctx)}
                 correction_surface = {"place_order"} | correction_required_tools
                 if phase_protocol:
                     correction_surface.add("complete_phase")
-                    if ctx.current_phase == "close_window" and getattr(
-                        ctx, "_current_sub_window", None
-                    ) == "close_2":
+                    if ctx.current_phase == "close_window" and getattr(ctx, "_current_sub_window", None) == "close_2":
                         correction_surface.discard("complete_phase")
                         correction_surface.add("finish_day")
                 dynamic_exclude.update(all_names - correction_surface)
             sandbox_limit = max(0, int(getattr(ctx, "sandbox_max_calls_per_day", 0)))
             if sandbox_limit and int(tool_cache.get("_sandbox_call_count", 0)) >= sandbox_limit:
                 dynamic_exclude.add("execute_code")
-            if (
-                not phase_protocol
-                and len(tool_cache.get("_narrative_sector_summary_cache", {})) >= 2
-            ):
+            if not phase_protocol and len(tool_cache.get("_narrative_sector_summary_cache", {})) >= 2:
                 dynamic_exclude.add("get_narrative_sector_summary")
             if not phase_protocol and "_narrative_market_overview_payload" in tool_cache:
                 dynamic_exclude.add("get_narrative_market_overview")
             if not phase_protocol and int(tool_cache.get("_narrative_news_calls", 0)) >= 2:
                 dynamic_exclude.add("get_narrative_news")
-            tools_schema = self.registry.get_openai_tools_schema(exclude=dynamic_exclude)
-            if (
-                getattr(self.llm_client, "_player", None) is not None
-                and not getattr(ctx, "require_decision_card", False)
+            tools_schema = self.registry.get_openai_tools_schema(
+                exclude=dynamic_exclude,
+                ctx=ctx,
+            )
+            if getattr(self.llm_client, "_player", None) is not None and not getattr(
+                ctx, "require_decision_card", False
             ):
                 # The bundled v2 demo cassette predates the optional semantic
                 # decision_card property. Runtime validation is disabled for
@@ -766,9 +800,7 @@ class AgentLoop:
                         continue
                     properties = function.get("parameters", {}).get("properties", {})
                     properties.pop("decision_card", None)
-            available_tool_names = {
-                schema["function"]["name"] for schema in tools_schema
-            }
+            available_tool_names = {schema["function"]["name"] for schema in tools_schema}
 
             request_messages = self._context.get_api_messages()
             if phase_protocol:
@@ -776,9 +808,7 @@ class AgentLoop:
                     *request_messages,
                     {
                         "role": "system",
-                        "content": _phase_protocol_instruction(
-                            ctx, available_tool_names
-                        ),
+                        "content": _phase_protocol_instruction(ctx, available_tool_names),
                     },
                 ]
             if semantic_premarket:
@@ -787,9 +817,7 @@ class AgentLoop:
                     {
                         "role": "system",
                         "content": (
-                            _semantic_premarket_stage_instruction(
-                                ctx, semantic_stage_index, semantic_stage_successes
-                            )
+                            _semantic_premarket_stage_instruction(ctx, semantic_stage_index, semantic_stage_successes)
                             + "\n\n"
                             + _available_tools_instruction(available_tool_names)
                         ),
@@ -835,18 +863,12 @@ class AgentLoop:
                     if date_masker is not None:
                         response["content"] = date_masker.mask_text(response["content"])
                     if entity_masker is not None:
-                        response["content"] = entity_masker.sanitize_agent_text(
-                            response["content"]
-                        )
+                        response["content"] = entity_masker.sanitize_agent_text(response["content"])
                 if response.get("reasoning_content"):
                     if date_masker is not None:
-                        response["reasoning_content"] = date_masker.mask_text(
-                            response["reasoning_content"]
-                        )
+                        response["reasoning_content"] = date_masker.mask_text(response["reasoning_content"])
                     if entity_masker is not None:
-                        response["reasoning_content"] = entity_masker.sanitize_agent_text(
-                            response["reasoning_content"]
-                        )
+                        response["reasoning_content"] = entity_masker.sanitize_agent_text(response["reasoning_content"])
                 if date_masker is not None or entity_masker is not None:
                     for tool_call in response.get("tool_calls") or []:
                         raw_arguments = tool_call["function"].get("arguments", "")
@@ -857,9 +879,7 @@ class AgentLoop:
                         if date_masker is not None:
                             parsed_arguments = date_masker.mask_obj(parsed_arguments)
                         if entity_masker is not None:
-                            parsed_arguments = entity_masker.sanitize_agent_obj(
-                                parsed_arguments
-                            )
+                            parsed_arguments = entity_masker.sanitize_agent_obj(parsed_arguments)
                         tool_call["function"]["arguments"] = json.dumps(
                             parsed_arguments,
                             ensure_ascii=False,
@@ -943,10 +963,12 @@ class AgentLoop:
                 break
 
             should_finish = False
+            completion_arguments: dict = {}
             correction_retry_requested = False
             correction_order_calls = 0
             iteration_had_error = False
             iteration_had_success = False
+            iteration_blocking_errors: set[str] = set()
             # Partition: the historical read-then-write message order is part of
             # the replay fingerprint. Keep that ordering, but execute each batch
             # serially (concurrent gather previously raced on shared frames).
@@ -954,31 +976,57 @@ class AgentLoop:
             # semantics in one auditable catalog.
             from traderharness.agents.tool_agent import READ_ONLY_TOOL_NAMES
 
+            read_only_tool_names = set(READ_ONLY_TOOL_NAMES)
+            if not is_current_contract(self.registry.contract_version):
+                # v1-v4 classified these two tools as stateful. Preserve that
+                # historical message ordering and serializer for replay hashes.
+                read_only_tool_names.difference_update({"screen_stocks", "screen_behavioral_cycle"})
+
             parsed_calls = []
             for tc in response["tool_calls"]:
                 tool_name = tc["function"]["name"]
                 try:
                     arguments = json.loads(tc["function"]["arguments"])
-                except (json.JSONDecodeError, TypeError):
+                except (json.JSONDecodeError, TypeError) as exc:
+                    if is_current_contract(self.registry.contract_version):
+                        parse_result = {
+                            "success": False,
+                            "error": f"工具参数不是合法 JSON：{exc}",
+                            "error_code": "invalid_tool_arguments_json",
+                            "retryable": True,
+                            "correction": {
+                                "tool": tool_name,
+                                "instruction": (
+                                    "输出一个完整 JSON object；不要使用 Markdown 代码块、"
+                                    "尾随逗号或注释，然后在当前阶段重试。"
+                                ),
+                                "valid_arguments_example": tool_example(tool_name),
+                                "received_arguments_fragment": str(tc["function"].get("arguments", ""))[:500],
+                            },
+                        }
+                    else:
+                        parse_result = {"error": "参数解析失败，请检查JSON格式"}
+                    if is_current_contract(self.registry.contract_version):
+                        pending_tool_corrections[tool_name] = str(parse_result["error_code"])
+                        iteration_blocking_errors.add(str(parse_result["error_code"]))
                     self._context.add_message(
                         {
                             "role": "tool",
                             "tool_call_id": tc["id"],
-                            "content": json.dumps(
-                                {"error": "参数解析失败，请检查JSON格式"}, ensure_ascii=False
-                            ),
+                            "content": json.dumps(parse_result, ensure_ascii=False),
                         }
                     )
                     iteration_had_error = True
                     continue
                 if tool_name not in available_tool_names:
-                    if getattr(ctx, "require_decision_card", False):
+                    if is_current_contract(self.registry.contract_version) or getattr(
+                        ctx, "require_decision_card", False
+                    ):
                         result = {
                             "success": False,
                             "error": (
                                 f"Tool '{tool_name}' is unavailable in the current "
-                                "phase or research stage. "
-                                + _available_tools_instruction(available_tool_names)
+                                "phase or research stage. " + _available_tools_instruction(available_tool_names)
                             ),
                             "error_code": "tool_unavailable_in_phase",
                             "retryable": True,
@@ -1019,9 +1067,7 @@ class AgentLoop:
                                 "args": arguments,
                                 "result": result,
                                 "phase": ctx.current_phase,
-                                "sub_window": getattr(
-                                    ctx, "_current_sub_window", None
-                                ),
+                                "sub_window": getattr(ctx, "_current_sub_window", None),
                             },
                         )
                     self._context.add_message(
@@ -1032,34 +1078,33 @@ class AgentLoop:
                         }
                     )
                     iteration_had_error = True
+                    if result.get("retryable") is True:
+                        unavailable_code = str(result.get("error_code") or "tool_unavailable_in_phase")
+                        iteration_blocking_errors.add(unavailable_code)
+                        if is_current_contract(self.registry.contract_version):
+                            pending_tool_corrections[tool_name] = unavailable_code
                     continue
                 parsed_calls.append((tc, tool_name, arguments))
 
-            read_batch = [
-                (tc, name, args)
-                for tc, name, args in parsed_calls
-                if name in READ_ONLY_TOOL_NAMES
-            ]
-            write_batch = [
-                (tc, name, args)
-                for tc, name, args in parsed_calls
-                if name not in READ_ONLY_TOOL_NAMES
-            ]
+            read_batch = [(tc, name, args) for tc, name, args in parsed_calls if name in read_only_tool_names]
+            write_batch = [(tc, name, args) for tc, name, args in parsed_calls if name not in read_only_tool_names]
 
             async def _run_tool(tc, tool_name, arguments, *, read_only: bool) -> None:
                 nonlocal should_finish, iteration_had_error, iteration_had_success
+                nonlocal completion_arguments
                 nonlocal correction_retry_requested, correction_retry_arguments
                 nonlocal correction_order_calls, correction_retry_pending
-                if tool_name == "finish_day":
+                completion_tool = tool_name in {"finish_day", "complete_phase"}
+                if completion_tool:
+                    completion_arguments = dict(arguments)
+                if completion_tool and not is_current_contract(self.registry.contract_version):
                     should_finish = True
-                    ctx.tool_call_cache["finish_day_summary"] = arguments.get("summary", "")
-                elif tool_name == "complete_phase":
-                    should_finish = True
-                    sub_window = getattr(ctx, "_current_sub_window", None)
-                    phase_key = f"{ctx.current_phase}:{sub_window or ctx.current_phase}"
-                    ctx.tool_call_cache.setdefault("_completed_phases", {})[
-                        phase_key
-                    ] = copy.deepcopy(arguments)
+                    if tool_name == "finish_day":
+                        ctx.tool_call_cache["finish_day_summary"] = arguments.get("summary", "")
+                    else:
+                        sub_window = getattr(ctx, "_current_sub_window", None)
+                        phase_key = f"{ctx.current_phase}:{sub_window or ctx.current_phase}"
+                        ctx.tool_call_cache.setdefault("_completed_phases", {})[phase_key] = copy.deepcopy(arguments)
 
                 correction_guard = None
                 if is_correction_retry and tool_name == "place_order":
@@ -1072,15 +1117,22 @@ class AgentLoop:
                             "retryable": False,
                         }
                     else:
-                        correction_guard = _validate_decision_card_correction(
-                            correction_retry_arguments, arguments
-                        )
-                result = correction_guard or await self.registry.execute(
-                    tool_name, arguments, ctx
-                )
-                correction_count = int(
-                    tool_cache.get("_decision_card_correction_retries", 0)
-                )
+                        correction_guard = _validate_decision_card_correction(correction_retry_arguments, arguments)
+                result = correction_guard or await self.registry.execute(tool_name, arguments, ctx)
+                if (
+                    is_current_contract(self.registry.contract_version)
+                    and completion_tool
+                    and "error" not in result
+                    and result.get("success") is not False
+                ):
+                    should_finish = True
+                    if tool_name == "finish_day":
+                        ctx.tool_call_cache["finish_day_summary"] = arguments.get("summary", "")
+                    else:
+                        sub_window = getattr(ctx, "_current_sub_window", None)
+                        phase_key = f"{ctx.current_phase}:{sub_window or ctx.current_phase}"
+                        ctx.tool_call_cache.setdefault("_completed_phases", {})[phase_key] = copy.deepcopy(arguments)
+                correction_count = int(tool_cache.get("_decision_card_correction_retries", 0))
                 if (
                     tool_name == "place_order"
                     and result.get("retryable") is True
@@ -1129,7 +1181,10 @@ class AgentLoop:
                 # truncated JSON helper; write/stateful tools used raw dumps.
                 # Mixing them is load-bearing for fingerprinted cassettes.
                 content = (
-                    _serialize_tool_result(result)
+                    _serialize_tool_result(
+                        result,
+                        contract_version=self.registry.contract_version,
+                    )
                     if read_only
                     else json.dumps(result, ensure_ascii=False, default=str)
                 )
@@ -1143,15 +1198,9 @@ class AgentLoop:
                 sandbox_attempts_exhausted = (
                     tool_name == "execute_code"
                     and "error" in result
-                    and (
-                        sandbox_limit <= 0
-                        or int(tool_cache.get("_sandbox_call_count", 0))
-                        >= sandbox_limit
-                    )
+                    and (sandbox_limit <= 0 or int(tool_cache.get("_sandbox_call_count", 0)) >= sandbox_limit)
                 )
-                usable_stage_evidence = (
-                    "error" not in result or sandbox_attempts_exhausted
-                )
+                usable_stage_evidence = "error" not in result or sandbox_attempts_exhausted
                 if semantic_premarket and usable_stage_evidence:
                     semantic_stage_successes.add(tool_name)
                 if (
@@ -1176,17 +1225,23 @@ class AgentLoop:
                             "sandbox_retry",
                             {
                                 "phase": ctx.current_phase,
-                                "sub_window": getattr(
-                                    ctx, "_current_sub_window", None
-                                ),
+                                "sub_window": getattr(ctx, "_current_sub_window", None),
                                 "retry_count": retry_count,
                                 "scope": "traceback_code_correction_only",
                             },
                         )
                 if "error" in result:
                     iteration_had_error = True
+                    if is_current_contract(self.registry.contract_version):
+                        error_code = str(result.get("error_code") or "tool_rejected")
+                        if result.get("retryable") is True:
+                            pending_tool_corrections[tool_name] = error_code
+                            iteration_blocking_errors.add(error_code)
+                        else:
+                            pending_tool_corrections.pop(tool_name, None)
                 else:
                     iteration_had_success = True
+                    pending_tool_corrections.pop(tool_name, None)
 
             for tc, name, args in read_batch:
                 await _run_tool(tc, name, args, read_only=True)
@@ -1202,9 +1257,15 @@ class AgentLoop:
                 consecutive_errors += 1
 
             if correction_retry_requested:
-                retry_count = int(
-                    tool_cache.get("_decision_card_correction_retries", 0)
-                ) + 1
+                if is_current_contract(self.registry.contract_version) and should_finish:
+                    phase_key = f"{ctx.current_phase}:{getattr(ctx, '_current_sub_window', None) or ctx.current_phase}"
+                    ctx.tool_call_cache.get("_completed_phases", {}).pop(
+                        phase_key,
+                        None,
+                    )
+                    ctx.tool_call_cache.pop("finish_day_summary", None)
+                    should_finish = False
+                retry_count = int(tool_cache.get("_decision_card_correction_retries", 0)) + 1
                 tool_cache["_decision_card_correction_retries"] = retry_count
                 correction_retry_pending = True
                 self._emit(
@@ -1228,6 +1289,39 @@ class AgentLoop:
                 continue
 
             if should_finish:
+                if is_current_contract(self.registry.contract_version):
+                    abandoned = {str(code) for code in completion_arguments.get("abandon_error_codes", [])}
+                    pending_tool_corrections = {
+                        tool_name: error_code
+                        for tool_name, error_code in pending_tool_corrections.items()
+                        if error_code not in abandoned
+                    }
+                    if pending_tool_corrections or iteration_blocking_errors - abandoned:
+                        should_finish = False
+                        phase_key = (
+                            f"{ctx.current_phase}:{getattr(ctx, '_current_sub_window', None) or ctx.current_phase}"
+                        )
+                        ctx.tool_call_cache.get("_completed_phases", {}).pop(
+                            phase_key,
+                            None,
+                        )
+                        ctx.tool_call_cache.pop("finish_day_summary", None)
+                        pending_text = ", ".join(
+                            f"{tool}={code}" for tool, code in sorted(pending_tool_corrections.items())
+                        )
+                        self._context.add_message(
+                            {
+                                "role": "system",
+                                "content": (
+                                    "阶段未结束：仍有待处理的可重试工具错误："
+                                    + (pending_text or ", ".join(sorted(iteration_blocking_errors)))
+                                    + "。按 correction 重试成功；若明确放弃该动作，"
+                                    "在阶段结束工具的 abandon_error_codes 中列出对应 error_code，"
+                                    "并在 summary 说明原因。"
+                                ),
+                            }
+                        )
+                        continue
                 correction_retry_pending = False
                 correction_required_tools.clear()
                 return
@@ -1244,26 +1338,16 @@ class AgentLoop:
                 correction_required_tools.clear()
 
             if semantic_premarket:
-                requirements = _SEMANTIC_PREMARKET_STAGE_REQUIREMENTS[
-                    semantic_stage_index
-                ]
-                if (
-                    semantic_stage_index == 2
-                    and getattr(ctx, "full_market_research_allowed", None) is False
-                ):
+                requirements = _SEMANTIC_PREMARKET_STAGE_REQUIREMENTS[semantic_stage_index]
+                if semantic_stage_index == 2 and getattr(ctx, "full_market_research_allowed", None) is False:
                     requirements = frozenset(_SEMANTIC_CANDIDATE_TOOLS)
                 stage_complete = requirements <= semantic_stage_successes
                 if semantic_stage_index in {2, 4}:
                     stage_complete = bool(requirements & semantic_stage_successes)
                 if stage_complete:
-                    if semantic_stage_index == len(
-                        _SEMANTIC_PREMARKET_STAGE_REQUIREMENTS
-                    ) - 1:
+                    if semantic_stage_index == len(_SEMANTIC_PREMARKET_STAGE_REQUIREMENTS) - 1:
                         return
-                    if (
-                        semantic_stage_index == 2
-                        and getattr(ctx, "full_market_research_allowed", None) is False
-                    ):
+                    if semantic_stage_index == 2 and getattr(ctx, "full_market_research_allowed", None) is False:
                         semantic_stage_index = 4
                     else:
                         semantic_stage_index += 1
@@ -1281,12 +1365,29 @@ class AgentLoop:
             if self.trajectory:
                 self.trajectory.record_step(
                     ctx.current_date,
-                    "phase_forced_complete",
+                    (
+                        "phase_protocol_failure"
+                        if is_current_contract(self.registry.contract_version)
+                        else "phase_forced_complete"
+                    ),
                     {
                         "phase": ctx.current_phase,
                         "sub_window": getattr(ctx, "_current_sub_window", None),
                         "reason": "completion_extension_exhausted",
                     },
+                )
+            if is_current_contract(self.registry.contract_version):
+                failure = {
+                    "phase": ctx.current_phase,
+                    "sub_window": getattr(ctx, "_current_sub_window", None),
+                    "error_code": "phase_completion_protocol_exhausted",
+                    "pending_tool_corrections": dict(pending_tool_corrections),
+                }
+                ctx.tool_call_cache["_phase_protocol_failure"] = failure
+                raise PhaseProtocolError(
+                    "Agent 未在纠错预算内成功调用阶段结束工具；"
+                    f"phase={failure['phase']} sub_window={failure['sub_window']} "
+                    f"pending={failure['pending_tool_corrections']}"
                 )
 
     async def _ensure_finish(self, ctx: ToolContext) -> str:
@@ -1302,7 +1403,15 @@ class AgentLoop:
         if finish_tool is None:
             return "（无 finish_day 工具）"
 
-        tools_schema = [finish_tool.to_openai_schema()]
+        if is_current_contract(self.registry.contract_version):
+            return await self._ensure_finish_current(ctx, finish_tool)
+
+        tools_schema = [
+            finish_tool.to_openai_schema(
+                contract_version=self.registry.contract_version,
+                ctx=ctx,
+            )
+        ]
         request_messages = self._context.get_api_messages()
         response = await self.llm_client.chat(
             messages=request_messages,
@@ -1370,10 +1479,187 @@ class AgentLoop:
                 summary = entity_masker.sanitize_agent_text(summary)
         return summary or "（Agent 未提供当日总结）"
 
+    async def _ensure_finish_current(self, ctx: ToolContext, finish_tool) -> str:
+        """Require a valid ``finish_day`` call and expose every repair attempt."""
+        tools_schema = [
+            finish_tool.to_openai_schema(
+                contract_version=self.registry.contract_version,
+                ctx=ctx,
+            )
+        ]
+        last_error_code = "finish_day_not_called"
+
+        for attempt in range(1, 4):
+            request_messages = self._context.get_api_messages()
+            response = await self.llm_client.chat(
+                messages=request_messages,
+                tools=tools_schema,
+            )
+            is_replay = getattr(self.llm_client, "_player", None) is not None
+            date_masker = getattr(ctx, "date_masker", None)
+            entity_masker = getattr(ctx, "entity_masker", None)
+            if not is_replay:
+                for key in ("content", "reasoning_content"):
+                    if not response.get(key):
+                        continue
+                    if date_masker is not None:
+                        response[key] = date_masker.mask_text(response[key])
+                    if entity_masker is not None:
+                        response[key] = entity_masker.sanitize_agent_text(response[key])
+                for tool_call in response.get("tool_calls") or []:
+                    raw_arguments = tool_call["function"].get("arguments", "")
+                    try:
+                        parsed_arguments = json.loads(raw_arguments)
+                    except (json.JSONDecodeError, TypeError):
+                        continue
+                    if date_masker is not None:
+                        parsed_arguments = date_masker.mask_obj(parsed_arguments)
+                    if entity_masker is not None:
+                        parsed_arguments = entity_masker.sanitize_agent_obj(parsed_arguments)
+                    tool_call["function"]["arguments"] = json.dumps(
+                        parsed_arguments,
+                        ensure_ascii=False,
+                    )
+
+            record_replay_call = getattr(self.llm_client, "record_replay_call", None)
+            if record_replay_call is not None:
+                record_replay_call(
+                    messages=request_messages,
+                    tools=tools_schema,
+                    output=response,
+                )
+            if self.trajectory:
+                self.trajectory.record_step(
+                    ctx.current_date,
+                    "llm_exchange",
+                    {
+                        "phase": ctx.current_phase,
+                        "sub_window": getattr(ctx, "_current_sub_window", None),
+                        "messages": copy.deepcopy(request_messages),
+                        "tools": copy.deepcopy(tools_schema),
+                        "response": copy.deepcopy(response),
+                        "finish_repair_attempt": attempt,
+                    },
+                )
+
+            assistant_message = {
+                "role": "assistant",
+                "content": response.get("content", "") or "",
+            }
+            if response.get("reasoning_content"):
+                assistant_message["reasoning_content"] = response["reasoning_content"]
+            if response.get("tool_calls"):
+                assistant_message["tool_calls"] = response["tool_calls"]
+            self._context.add_message(assistant_message)
+
+            usage = response.get("_usage", {})
+            if usage:
+                tokens = usage.get("total_tokens", 0)
+                self._total_tokens += tokens
+                if self._budget:
+                    self._budget.consume(tokens)
+
+            finish_calls = [
+                call
+                for call in response.get("tool_calls") or []
+                if call.get("function", {}).get("name") == "finish_day"
+            ]
+            if not finish_calls:
+                repair_result = {
+                    "success": False,
+                    "error": "收盘阶段必须显式调用 finish_day，普通文本不能结束交易日。",
+                    "error_code": "finish_day_not_called",
+                    "retryable": True,
+                    "correction": {
+                        "instruction": "立即按有效示例调用 finish_day。",
+                        "valid_arguments_example": tool_example("finish_day"),
+                        "attempt": attempt,
+                    },
+                }
+                last_error_code = repair_result["error_code"]
+                self._context.add_message({"role": "system", "content": json.dumps(repair_result, ensure_ascii=False)})
+                continue
+
+            call = finish_calls[0]
+            raw_arguments = call["function"].get("arguments", "")
+            call_arguments: dict = {}
+            try:
+                call_arguments = json.loads(raw_arguments)
+            except (json.JSONDecodeError, TypeError) as exc:
+                result = {
+                    "success": False,
+                    "error": f"finish_day 参数不是合法 JSON：{exc}",
+                    "error_code": "invalid_tool_arguments_json",
+                    "retryable": True,
+                    "correction": {
+                        "instruction": "输出完整 JSON object 后重试 finish_day。",
+                        "valid_arguments_example": tool_example("finish_day"),
+                        "received_arguments_fragment": str(raw_arguments)[:500],
+                    },
+                }
+            else:
+                result = await self.registry.execute("finish_day", call_arguments, ctx)
+
+            self._context.add_message(
+                {
+                    "role": "tool",
+                    "tool_call_id": call.get("id", f"finish-repair-{attempt}"),
+                    "content": json.dumps(result, ensure_ascii=False, default=str),
+                }
+            )
+            self._emit(
+                "tool_call",
+                date=ctx.current_date,
+                agent_id=getattr(ctx, "agent_id", ""),
+                tool="finish_day",
+                args=call_arguments,
+                success=result.get("success") is True,
+            )
+            if self.trajectory:
+                self.trajectory.record_step(
+                    ctx.current_date,
+                    "tool_call",
+                    {
+                        "id": call.get("id"),
+                        "name": "finish_day",
+                        "args": call_arguments,
+                        "result": result,
+                        "phase": ctx.current_phase,
+                        "sub_window": getattr(ctx, "_current_sub_window", None),
+                        "finish_repair_attempt": attempt,
+                    },
+                )
+            if result.get("success") is True:
+                summary = str(result.get("summary") or call_arguments.get("summary") or "")
+                ctx.tool_call_cache["finish_day_summary"] = summary
+                return summary
+
+            last_error_code = str(result.get("error_code") or "finish_day_rejected")
+            self._context.add_message(
+                {
+                    "role": "system",
+                    "content": (
+                        "finish_day 尚未成功，不能用普通文本结束。读取紧邻工具结果的 correction，并在本阶段重试。"
+                    ),
+                }
+            )
+
+        summary = f"（finish_day 三次纠错失败：{last_error_code}）"
+        ctx.tool_call_cache["finish_day_summary"] = summary
+        ctx.tool_call_cache["_finish_day_protocol_failure"] = {
+            "error_code": last_error_code,
+            "attempts": 3,
+        }
+        if self.trajectory:
+            self.trajectory.record_step(
+                ctx.current_date,
+                "finish_day_protocol_failure",
+                {"error_code": last_error_code, "attempts": 3},
+            )
+        return summary
+
     @staticmethod
-    def _build_morning_brief(
-        ctx: ToolContext, available_tool_names: list[str] | None = None
-    ) -> str:
+    def _build_morning_brief(ctx: ToolContext, available_tool_names: list[str] | None = None) -> str:
         """从已有数据生成晨报。包含持仓涨跌、总收益率、板块概览、P0公告、P1政策。"""
         lines = ["=== 市场晨报 ==="]
 
@@ -1381,9 +1667,7 @@ class AgentLoop:
         from traderharness.agents.window_context import previous_close_prices
 
         prices = previous_close_prices(ctx)
-        total_value = (
-            float(ctx.portfolio.total_value(prices)) if prices else float(ctx.portfolio.cash)
-        )
+        total_value = float(ctx.portfolio.total_value(prices)) if prices else float(ctx.portfolio.cash)
         initial = float(ctx.initial_cash)
         return_pct = ((total_value - initial) / initial * 100) if initial > 0 else 0.0
         lines.append(f"\n总资产: {total_value:,.0f}元 | 累计收益: {return_pct:+.2f}%")
@@ -1426,8 +1710,7 @@ class AgentLoop:
                         suspended = True
                 suspend_str = " ⚠️停牌" if suspended else ""
                 lines.append(
-                    f"  {code}: {pos.quantity}股, 成本{float(pos.avg_cost):.2f}"
-                    f"{change_str}{pnl_str}{suspend_str}"
+                    f"  {code}: {pos.quantity}股, 成本{float(pos.avg_cost):.2f}{change_str}{pnl_str}{suspend_str}"
                 )
         else:
             lines.append(f"\n当前空仓 | 可用资金: {cash:,.0f}元")
@@ -1462,9 +1745,7 @@ class AgentLoop:
             sector_changes[industry].append(change)
 
         if sector_changes:
-            lines.append(
-                f"\n昨日全市场({total_up + total_down}只): 上涨{total_up} 下跌{total_down}"
-            )
+            lines.append(f"\n昨日全市场({total_up + total_down}只): 上涨{total_up} 下跌{total_down}")
             sector_avg = {s: sum(v) / len(v) for s, v in sector_changes.items() if len(v) >= 3}
             sorted_sectors = sorted(sector_avg.items(), key=lambda x: (-x[1], x[0]))
             if sorted_sectors:
@@ -1569,18 +1850,12 @@ class AgentLoop:
 
         if window == "open":
             # 09:30 ~ 10:00
-            start = datetime.combine(ctx.current_date, datetime.min.time()).replace(
-                hour=9, minute=30
-            )
+            start = datetime.combine(ctx.current_date, datetime.min.time()).replace(hour=9, minute=30)
             end = datetime.combine(ctx.current_date, datetime.min.time()).replace(hour=10, minute=0)
         else:
             # 10:00 ~ 14:30
-            start = datetime.combine(ctx.current_date, datetime.min.time()).replace(
-                hour=10, minute=0
-            )
-            end = datetime.combine(ctx.current_date, datetime.min.time()).replace(
-                hour=14, minute=30
-            )
+            start = datetime.combine(ctx.current_date, datetime.min.time()).replace(hour=10, minute=0)
+            end = datetime.combine(ctx.current_date, datetime.min.time()).replace(hour=14, minute=30)
 
         p0, p1 = news_mgr.get_window_news(target_codes, start, end)
 
@@ -1638,9 +1913,7 @@ class AgentLoop:
                     lines.append(f"  {code}: 成交价 {float(price):.2f}")
                 return mask("\n".join(lines))
             return mask(
-                f"=== {title} ===\n"
-                "（当前自选/持仓尚无可见的5分钟窗口数据。"
-                "你仍可对有当日5分钟数据的股票下单。）"
+                f"=== {title} ===\n（当前自选/持仓尚无可见的5分钟窗口数据。你仍可对有当日5分钟数据的股票下单。）"
             )
 
         lines = [f"=== {title} ==="]

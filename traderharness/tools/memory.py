@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 
+from traderharness.tools.contracts import is_current_contract
 from traderharness.tools.registry import ToolContext, ToolDefinition
 
 
@@ -23,12 +24,10 @@ async def handle_remember(params: dict, ctx: ToolContext) -> dict:
         writes_today = sum(
             1
             for event in memory.audit_events()
-            if event.get("event") == "remember"
-            and event.get("date") == today
-            and event.get("source") == "agent"
+            if event.get("event") == "remember" and event.get("date") == today and event.get("source") == "agent"
         )
         if writes_today >= daily_limit:
-            return {
+            result = {
                 "success": False,
                 "error_code": "daily_memory_limit_reached",
                 "error": (
@@ -36,18 +35,53 @@ async def handle_remember(params: dict, ctx: ToolContext) -> dict:
                     "请把日内细节写入 finish_day，只保留可复用结论。"
                 ),
             }
+            if is_current_contract(getattr(ctx, "tool_contract_version", None)):
+                result.update(
+                    {
+                        "retryable": False,
+                        "correction": {
+                            "instruction": ("今日不要再调用 remember；把日内信息压缩进 finish_day。"),
+                            "writes_today": writes_today,
+                            "daily_limit": daily_limit,
+                        },
+                    }
+                )
+            return result
 
     active = memory.active_records(source="agent")
     active_limit = max(0, int(getattr(ctx, "max_active_memories", 0)))
     if active_limit and len(active) >= active_limit and not supersedes_id:
-        return {
+        result = {
             "success": False,
             "error_code": "active_memory_limit_reached",
-            "error": (
-                f"活动记忆已达 {active_limit} 条；请用 supersedes_id 修正旧结论，"
-                "不要继续堆叠。"
-            ),
+            "error": (f"活动记忆已达 {active_limit} 条；请用 supersedes_id 修正旧结论，不要继续堆叠。"),
         }
+        if is_current_contract(getattr(ctx, "tool_contract_version", None)):
+            candidates = [
+                {
+                    "memory_id": record.get("memory_id"),
+                    "memory_type": record.get("memory_type"),
+                    "tags": record.get("tags") or [],
+                    "content_preview": str(record.get("content", ""))[:160],
+                }
+                for record in active[-10:]
+            ]
+            result.update(
+                {
+                    "retryable": True,
+                    "candidate_memories": candidates,
+                    "correction": {
+                        "instruction": (
+                            "从 candidate_memories 选择被修正的活动结论；不确定时先调用 "
+                            "search_memory，再把准确 memory_id 放入 supersedes_id 重试。"
+                        ),
+                        "required_tool_if_uncertain": "search_memory",
+                        "required_argument": "supersedes_id",
+                        "candidate_memory_ids": [item["memory_id"] for item in candidates if item["memory_id"]],
+                    },
+                }
+            )
+        return result
 
     memory_type = params.get("memory_type", "lesson")
     tags = {str(tag).strip() for tag in params.get("tags") or [] if str(tag).strip()}
@@ -55,19 +89,35 @@ async def handle_remember(params: dict, ctx: ToolContext) -> dict:
         conflicts = [
             record["memory_id"]
             for record in active
-            if record.get("memory_type") == memory_type
-            and tags
-            and tags.intersection(record.get("tags") or [])
+            if record.get("memory_type") == memory_type and tags and tags.intersection(record.get("tags") or [])
         ]
         if conflicts:
-            return {
+            result = {
                 "success": False,
                 "error_code": "memory_requires_supersedes",
-                "error": (
-                    "同类型、同标签的活动结论已存在；请读取并通过 supersedes_id 更新。"
-                ),
+                "error": ("同类型、同标签的活动结论已存在；请读取并通过 supersedes_id 更新。"),
                 "candidate_memory_ids": conflicts[:10],
             }
+            if is_current_contract(getattr(ctx, "tool_contract_version", None)):
+                result.update(
+                    {
+                        "retryable": True,
+                        "correction": {
+                            "instruction": (
+                                "读取 candidate_memory_ids 中的旧结论，选择要修正的一条，"
+                                "保持本次 content/type/tags 并补充 supersedes_id 后重试。"
+                            ),
+                            "required_tool_if_uncertain": "get_memory",
+                            "required_argument": "supersedes_id",
+                            "candidate_memory_ids": conflicts[:10],
+                            "retry_arguments": {
+                                **params,
+                                "supersedes_id": conflicts[0],
+                            },
+                        },
+                    }
+                )
+            return result
     record = memory.remember(
         ctx.current_date,
         params.get("content", ""),
@@ -92,9 +142,7 @@ async def handle_search_memory(params: dict, ctx: ToolContext) -> dict:
 
 
 async def handle_get_memory(params: dict, ctx: ToolContext) -> dict:
-    record = _memory(ctx).get(
-        params.get("memory_id", ""), before_date=ctx.current_date + timedelta(days=1)
-    )
+    record = _memory(ctx).get(params.get("memory_id", ""), before_date=ctx.current_date + timedelta(days=1))
     if record is None:
         return {"error": "记忆不存在或在当前时间点尚不可见"}
     return {"memory": record}

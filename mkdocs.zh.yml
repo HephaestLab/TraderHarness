@@ -85,6 +85,7 @@ nav:
   - 核心架构: architecture.md
   - 项目对比: comparison.md
   - 多角色委员会: design/multi-role-agent.md
+  - Agent 工具合同 v5: design/agent-tool-contract-v5.md
   - 强化学习与评测轨迹: training-data.md
   - 数据与许可: data.md
   - CLI 与本地 API: api.md

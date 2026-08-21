@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from traderharness.tools.contracts import is_current_contract
 from traderharness.tools.registry import ToolContext, ToolDefinition
 
 
@@ -23,10 +24,14 @@ async def handle_get_portfolio(params: dict, ctx: ToolContext) -> dict:
     portfolio = ctx.portfolio
     from traderharness.agents.window_context import previous_close_prices
 
+    current_contract = is_current_contract(getattr(ctx, "tool_contract_version", None))
+    price_sources: dict[str, str] = {}
     if ctx.current_phase == "pre_market":
         prices = previous_close_prices(ctx)
+        price_sources.update({code: "previous_daily_close" for code in prices})
     else:
         prices = dict(ctx.execution_price)
+        price_sources.update({code: "current_visible_window" for code in prices})
 
     # A stock can be bought from a research result without first entering the
     # phase focus set. In that case ``execution_price`` has no entry until the
@@ -36,7 +41,9 @@ async def handle_get_portfolio(params: dict, ctx: ToolContext) -> dict:
     for code, pos in portfolio.positions.items():
         if code not in prices and code in previous:
             prices[code] = previous[code]
+            price_sources[code] = "previous_daily_close_fallback"
         prices.setdefault(code, pos.avg_cost)
+        price_sources.setdefault(code, "average_cost_fallback")
 
     total_value = float(portfolio.total_value(prices))
     initial = float(ctx.initial_cash)
@@ -46,30 +53,30 @@ async def handle_get_portfolio(params: dict, ctx: ToolContext) -> dict:
     for code, pos in portfolio.positions.items():
         price = prices.get(code)
         current_price = float(price) if price else float(pos.avg_cost)
-        pnl_pct = (
-            ((current_price - float(pos.avg_cost)) / float(pos.avg_cost) * 100)
-            if pos.avg_cost
-            else 0
-        )
-        positions.append(
-            {
-                "stock_code": code,
-                "quantity": pos.quantity,
-                "avg_cost": float(pos.avg_cost),
-                "current_price": current_price,
-                "pnl_pct": round(pnl_pct, 2),
-                "market_value": round(current_price * pos.quantity, 2),
-                "position_plan": _position_plan(ctx, code),
-            }
-        )
+        pnl_pct = ((current_price - float(pos.avg_cost)) / float(pos.avg_cost) * 100) if pos.avg_cost else 0
+        item = {
+            "stock_code": code,
+            "quantity": pos.quantity,
+            "avg_cost": float(pos.avg_cost),
+            "current_price": current_price,
+            "pnl_pct": round(pnl_pct, 2),
+            "market_value": round(current_price * pos.quantity, 2),
+            "position_plan": _position_plan(ctx, code),
+        }
+        if current_contract:
+            item["price_source"] = price_sources.get(code, "unknown")
+        positions.append(item)
 
-    return {
+    result = {
         "cash": round(float(portfolio.cash), 2),
         "total_value": round(total_value, 2),
         "return_pct": round(return_pct, 2),
         "positions": positions,
         "position_count": len(positions),
     }
+    if current_contract:
+        result["valuation_phase"] = ctx.current_phase
+    return result
 
 
 async def handle_get_position(params: dict, ctx: ToolContext) -> dict:
@@ -78,20 +85,28 @@ async def handle_get_position(params: dict, ctx: ToolContext) -> dict:
     if pos is None:
         return {"error": f"未持有 {code}"}
 
+    current_contract = is_current_contract(getattr(ctx, "tool_contract_version", None))
     if ctx.current_phase == "pre_market":
         from traderharness.agents.window_context import previous_close_prices
 
         price = previous_close_prices(ctx).get(code)
+        price_source = "previous_daily_close"
     else:
         price = ctx.execution_price.get(code)
+        price_source = "current_visible_window"
+        if price is None and current_contract:
+            from traderharness.agents.window_context import previous_close_prices
+
+            price = previous_close_prices(ctx).get(code)
+            price_source = "previous_daily_close_fallback"
     current_price = float(price) if price else float(pos.avg_cost)
-    pnl_pct = (
-        ((current_price - float(pos.avg_cost)) / float(pos.avg_cost) * 100) if pos.avg_cost else 0
-    )
+    if not price:
+        price_source = "average_cost_fallback"
+    pnl_pct = ((current_price - float(pos.avg_cost)) / float(pos.avg_cost) * 100) if pos.avg_cost else 0
     sellable = pos.sellable_quantity(ctx.current_date)
     plan = _position_plan(ctx, code)
 
-    return {
+    result = {
         "stock_code": code,
         "quantity": pos.quantity,
         "avg_cost": float(pos.avg_cost),
@@ -102,6 +117,9 @@ async def handle_get_position(params: dict, ctx: ToolContext) -> dict:
         "holding_trading_days": plan["holding_trading_days"] if plan else None,
         "position_plan": plan,
     }
+    if current_contract:
+        result["price_source"] = price_source
+    return result
 
 
 GET_PORTFOLIO = ToolDefinition(

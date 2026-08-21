@@ -22,14 +22,16 @@ def _make_ctx(positions=None, daily_data=None) -> ToolContext:
         preloaded = daily_data
     else:
         dates = [date(2024, 3, d) for d in range(1, 6)]
-        preloaded["600519"] = pd.DataFrame({
-            "date": dates,
-            "open": [1800 + i for i in range(5)],
-            "high": [1810 + i for i in range(5)],
-            "low": [1790 + i for i in range(5)],
-            "close": [1805 + i for i in range(5)],
-            "volume": [10000] * 5,
-        })
+        preloaded["600519"] = pd.DataFrame(
+            {
+                "date": dates,
+                "open": [1800 + i for i in range(5)],
+                "high": [1810 + i for i in range(5)],
+                "low": [1790 + i for i in range(5)],
+                "close": [1805 + i for i in range(5)],
+                "volume": [10000] * 5,
+            }
+        )
 
     return ToolContext(
         current_date=date(2024, 3, 5),
@@ -213,6 +215,23 @@ class TestExecuteCodeTimeout:
         result = await handle_execute_code({"code": code}, ctx)
         assert result.get("result") == "done"
 
+    @pytest.mark.asyncio
+    async def test_v5_infinite_python_loop_is_terminated_and_returns_repair_contract(self, monkeypatch):
+        import traderharness.tools.sandbox as sandbox_module
+
+        monkeypatch.setattr(sandbox_module, "SANDBOX_TIMEOUT", 0.02)
+        ctx = _make_ctx()
+        ctx.tool_contract_version = "v5"
+        ctx.sandbox_max_calls_per_day = 2
+
+        result = await handle_execute_code({"code": "while True:\n    pass"}, ctx)
+
+        assert result["success"] is False
+        assert result["error_code"] == "sandbox_timeout"
+        assert result["retryable"] is True
+        assert "后台执行已终止" in result["error"]
+        assert result["correction"]["attempts_used_after_call"] == 1
+
 
 class TestExecuteCodeIsolation:
     @pytest.mark.asyncio
@@ -220,5 +239,6 @@ class TestExecuteCodeIsolation:
         ctx = _make_ctx()
         # After execution, traderharness_api should not persist in sys.modules
         import sys
+
         await handle_execute_code({"code": "x = 1"}, ctx)
         assert "traderharness_api" not in sys.modules
