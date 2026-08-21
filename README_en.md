@@ -27,15 +27,11 @@ every model call is recorded at full fidelity, a data synthesizer that turns tho
 **Start with evidence:** [explore the zero-credential Masked vs Unmasked experiment](https://hephaestlab.github.io/TraderHarness/masking-ab-showcase/) · [run the no-key replay](#quick-start) · [compare its scope with TradingAgents,
 StockBench, and Qlib](docs/comparison.md) · [read the LLM-agent backtesting guide](https://hephaestlab.github.io/TraderHarness/guides/agent-stock-backtesting/) · [中文文档](https://hephaestlab.github.io/TraderHarness/zh/)
 
-<p align="center">
-  <a href="https://hephaestlab.github.io/TraderHarness/assets/traderharness-agent-day-promo-v4.mp4">
-    <img src="docs/assets/traderharness-demo.gif" alt="TraderHarness streaming historical replay console" width="920">
-  </a>
-</p>
+<p align="center"><strong>▶ TraderHarness: A Day in the Life of a Trading Agent</strong></p>
 
-<p align="center"><strong><a href="https://hephaestlab.github.io/TraderHarness/assets/traderharness-agent-day-promo-v4.mp4">▶ Watch TraderHarness: A Day in the Life of a Trading Agent</a></strong></p>
+https://github.com/user-attachments/assets/93be886b-525e-4aec-9ca6-69a1dd101904
 
-<p align="center"><sub>Click the demo or link above to watch the full product film. The GIF was captured from the local research console (<code>webui/scripts/capture-demo.mjs</code>).</sub></p>
+<p align="center"><sub>Play it directly in the README, or <a href="https://hephaestlab.github.io/TraderHarness/assets/traderharness-agent-day-promo-v4.mp4">open the 1440×1080 master</a>.</sub></p>
 
 > If leakage control, execution fairness, or reproducible LLM evaluation matters to your work, consider starring the
 > repository. New public benchmarks, replay cassettes, and dataset updates will land here.
