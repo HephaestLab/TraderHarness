@@ -23,12 +23,12 @@ TraderHarness 就是这套规范：一个抗污染的 LLM 交易 Agent 回测执
 **先看证据：** [Agent 炒股如何回测？完整中文指南](https://hephaestlab.github.io/TraderHarness/zh/guides/agent-stock-backtesting/) · [零凭据体验 Masked vs Unmasked 实验](https://hephaestlab.github.io/TraderHarness/zh/masking-ab-showcase/) · [三步运行免 Key 回放](#快速开始) · [看它和 TradingAgents / StockBench / Qlib 的边界](docs/comparison.md) · [English documentation](https://hephaestlab.github.io/TraderHarness/)
 
 <p align="center">
-  <a href="videos/traderharness-agent-day-promo/renders/traderharness-agent-day-promo-v4.mp4">
+  <a href="https://hephaestlab.github.io/TraderHarness/assets/traderharness-agent-day-promo-v4.mp4">
     <img src="docs/assets/traderharness-demo.gif" alt="TraderHarness 流式历史回放控制台" width="920">
   </a>
 </p>
 
-<p align="center"><strong><a href="videos/traderharness-agent-day-promo/renders/traderharness-agent-day-promo-v4.mp4">▶ 观看 TraderHarness：一个交易 Agent 的一天</a></strong></p>
+<p align="center"><strong><a href="https://hephaestlab.github.io/TraderHarness/assets/traderharness-agent-day-promo-v4.mp4">▶ 观看 TraderHarness：一个交易 Agent 的一天</a></strong></p>
 
 <p align="center"><sub>点击上方演示图或链接观看完整宣传视频。GIF 由本地研究控制台截图生成（<code>webui/scripts/capture-demo.mjs</code>）。</sub></p>
 
