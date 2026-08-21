@@ -38,10 +38,14 @@ every model call is recorded at full fidelity, a data synthesizer that turns tho
 StockBench, and Qlib](docs/comparison.md) · [read the LLM-agent backtesting guide](https://hephaestlab.github.io/TraderHarness/guides/agent-stock-backtesting/) · [中文文档](https://hephaestlab.github.io/TraderHarness/zh/)
 
 <p align="center">
-  <img src="docs/assets/traderharness-demo.gif" alt="TraderHarness streaming historical replay console" width="920">
+  <a href="https://hephaestlab.github.io/TraderHarness/assets/traderharness-agent-day-promo-v4.mp4">
+    <img src="docs/assets/traderharness-demo.gif" alt="TraderHarness streaming historical replay console" width="920">
+  </a>
 </p>
 
-<p align="center"><sub>Captured from the local research console (<code>webui/scripts/capture-demo.mjs</code>). Regenerate with <code>npm run capture:demo</code> after any UI change; this GIF will be refreshed alongside the v1.0 acceptance run.</sub></p>
+<p align="center"><strong><a href="https://hephaestlab.github.io/TraderHarness/assets/traderharness-agent-day-promo-v4.mp4">▶ Watch TraderHarness: A Day in the Life of a Trading Agent</a></strong></p>
+
+<p align="center"><sub>Click the demo or link above to watch the full product film. The GIF was captured from the local research console (<code>webui/scripts/capture-demo.mjs</code>).</sub></p>
 
 > If leakage control, execution fairness, or reproducible LLM evaluation matters to your work, consider starring the
 > repository. New public benchmarks, replay cassettes, and dataset updates will land here.
@@ -475,10 +479,14 @@ TraderHarness 就是这套规范：一个抗污染的 LLM 交易 Agent 回测执
 **先看证据：** [Agent 炒股如何回测？完整中文指南](https://hephaestlab.github.io/TraderHarness/zh/guides/agent-stock-backtesting/) · [零凭据体验 Masked vs Unmasked 实验](https://hephaestlab.github.io/TraderHarness/zh/masking-ab-showcase/) · [三步运行免 Key 回放](#快速开始) · [看它和 TradingAgents / StockBench / Qlib 的边界](docs/comparison.md) · [English documentation](https://hephaestlab.github.io/TraderHarness/)
 
 <p align="center">
-  <img src="docs/assets/traderharness-demo.gif" alt="TraderHarness 流式历史回放控制台" width="920">
+  <a href="https://hephaestlab.github.io/TraderHarness/assets/traderharness-agent-day-promo-v4.mp4">
+    <img src="docs/assets/traderharness-demo.gif" alt="TraderHarness 流式历史回放控制台" width="920">
+  </a>
 </p>
 
-<p align="center"><sub>该 GIF 由本地研究控制台截图生成（<code>webui/scripts/capture-demo.mjs</code>）。UI 有变化时执行 <code>npm run capture:demo</code> 重新生成；将随 v1.0 验收跑一并更新。</sub></p>
+<p align="center"><strong><a href="https://hephaestlab.github.io/TraderHarness/assets/traderharness-agent-day-promo-v4.mp4">▶ 观看 TraderHarness：一个交易 Agent 的一天</a></strong></p>
+
+<p align="center"><sub>点击上方演示图或链接观看完整宣传视频。GIF 由本地研究控制台截图生成（<code>webui/scripts/capture-demo.mjs</code>）。</sub></p>
 
 > 如果你也在解决 LLM 交易评测里的数据泄漏、成交公平或结果复现问题，欢迎在仓库右上角点 **Star**。后续公开 benchmark、回放盒带和数据集更新都会在这里发布。
 
@@ -1435,6 +1443,8 @@ Custom agents implement the public protocol in `traderharness.agents.protocol`. 
 - `GET /api/results` — persisted result summaries;
 - `GET /api/results/{file}` — complete artifact;
 - `GET /api/results/{file}/analysis` — normalized research dossier;
+- `GET /api/results/{file}/analysis?detail=summary` — lightweight first-screen dossier; it retains the decisions and order proof linked to each fill while deferring the complete decision, tool, day, and security trajectories; use `detail=full` for all evidence;
+- `GET /api/results/{file}/analysis?reveal_entities=true` — localhost-only entity reveal for masked security codes, names, and related dossier text; the raw result, replay, and downloaded artifact remain unchanged;
 - `POST /api/demo` — start the bundled replay;
 - `GET /api/health` — process health.
 
@@ -2328,6 +2338,8 @@ traderharness data      下载、更新与检查数据集
 - `GET /api/results` — 已落盘结果摘要；
 - `GET /api/results/{file}` — 完整工件；
 - `GET /api/results/{file}/analysis` — 归一化的 UI 研究档案；
+- `GET /api/results/{file}/analysis?detail=summary` — 轻量首屏档案；保留逐笔复盘所需的关联决策和下单证据，但延后完整决策、工具、日期和证券轨迹；`detail=full` 返回全部证据；
+- `GET /api/results/{file}/analysis?reveal_entities=true` — 仅限 localhost，把结果页中的遮罩证券代码、名称及关联文本还原为本地数据集实体；原始结果、回放和下载工件不会被修改；
 - `POST /api/demo` — 启动内置回放；
 - `GET /api/health` — 进程健康检查。
 
