@@ -1,8 +1,10 @@
 """Incremental update orchestration with injectable real-data providers."""
 
+import json
 from datetime import date
 
 import pandas as pd
+import pytest
 
 from traderharness.data.updater import DataUpdater
 
@@ -181,6 +183,21 @@ def test_valuation_update_uses_its_own_watermark(tmp_path):
 
 def test_min5_and_news_use_their_canonical_watermarks(tmp_path):
     _seed_daily(tmp_path)
+    daily = pd.read_parquet(tmp_path / "daily.parquet")
+    pd.concat(
+        [
+            daily,
+            pd.DataFrame(
+                {
+                    "stock_code": ["600519"],
+                    "date": pd.to_datetime(["2024-03-05"]),
+                    "close": [101.0],
+                    "volume": [1000.0],
+                }
+            ),
+        ],
+        ignore_index=True,
+    ).to_parquet(tmp_path / "daily.parquet", index=False)
     year_dir = tmp_path / "5min_clean" / "year=2024"
     year_dir.mkdir(parents=True)
     FakeMin5Provider().fetch(["600519"], date(2024, 3, 1), date(2024, 3, 1)).to_parquet(
@@ -233,10 +250,30 @@ def test_min5_watermark_uses_oldest_active_stock_not_global_max(tmp_path):
             "amount": [100_000.0, 10_000.0],
         }
     ).to_parquet(year_dir / "part.parquet", index=False)
-    provider = FakeMin5Provider()
+    class CompleteMinuteProvider(FakeMin5Provider):
+        def fetch(self, codes, start, end):
+            self.calls.append((codes, start, end))
+            rows = []
+            for code in codes:
+                rows.append(
+                    {
+                        "stock_code": code,
+                        "date": pd.Timestamp(start),
+                        "datetime": pd.Timestamp(f"{start} 09:35:00"),
+                        "open": 10.0,
+                        "high": 10.1,
+                        "low": 9.9,
+                        "close": 10.0,
+                        "volume": 1000.0,
+                        "amount": 10_000.0,
+                    }
+                )
+            return pd.DataFrame(rows)
+
+    provider = CompleteMinuteProvider()
     updater = DataUpdater(tmp_path, min5_provider=provider)
 
-    updater.update(only={"5min"}, end=date(2024, 3, 6))
+    updater.update(only={"5min"}, end=date(2024, 3, 5))
 
     assert provider.calls[0][1] == date(2024, 3, 2)
 
@@ -260,3 +297,91 @@ def test_min5_fetches_only_codes_with_trades_in_update_window(tmp_path):
     )
 
     assert provider.calls[0][0] == ["600519"]
+
+
+def test_daily_is_merged_before_minute_universe_is_discovered(tmp_path):
+    """A newly listed/active code must be visible to the minute update."""
+    _seed_daily(tmp_path)
+
+    class NewDailyProvider:
+        def fetch(self, codes, start, end):
+            return pd.DataFrame(
+                {
+                    "stock_code": ["300750"],
+                    "date": pd.to_datetime([end]),
+                    "close": [200.0],
+                    "volume": [10_000.0],
+                }
+            )
+
+    class NewMinuteProvider(FakeMin5Provider):
+        def fetch(self, codes, start, end):
+            self.calls.append((codes, start, end))
+            frame = super().fetch(codes, start, end)
+            frame["stock_code"] = codes[0]
+            return frame
+
+    minute = NewMinuteProvider()
+    updater = DataUpdater(
+        tmp_path,
+        daily_provider=NewDailyProvider(),
+        min5_provider=minute,
+    )
+
+    updater.update(
+        only={"daily", "5min"},
+        since=date(2024, 3, 5),
+        end=date(2024, 3, 5),
+    )
+
+    assert minute.calls[0][0] == ["300750"]
+
+
+def test_active_minute_universe_cannot_succeed_with_an_empty_delta(tmp_path):
+    _seed_daily(tmp_path)
+
+    class EmptyMinuteProvider:
+        def fetch(self, codes, start, end):
+            assert codes == ["600519"]
+            return pd.DataFrame()
+
+    updater = DataUpdater(tmp_path, min5_provider=EmptyMinuteProvider())
+
+    import pytest
+
+    with pytest.raises(RuntimeError, match="5min provider returned no bars"):
+        updater.update(
+            only={"5min"},
+            since=date(2024, 3, 1),
+            end=date(2024, 3, 1),
+        )
+
+
+def test_minute_update_refuses_a_window_not_yet_covered_by_daily(tmp_path):
+    _seed_daily(tmp_path)
+    updater = DataUpdater(tmp_path, min5_provider=FakeMin5Provider())
+
+    with pytest.raises(RuntimeError, match="daily must be complete before 5min discovery"):
+        updater.update(
+            only={"5min"},
+            since=date(2024, 3, 2),
+            end=date(2024, 3, 5),
+        )
+
+
+def test_failed_pipeline_checkpoint_is_persisted_for_safe_resume(tmp_path):
+    _seed_daily(tmp_path)
+
+    class FailingProvider:
+        def fetch(self, codes, start, end):
+            raise RuntimeError("upstream blocked")
+
+    updater = DataUpdater(tmp_path, daily_provider=FailingProvider())
+
+    with pytest.raises(RuntimeError, match="upstream blocked"):
+        updater.update(only={"daily"}, end=date(2024, 3, 5))
+
+    state = json.loads((tmp_path / ".pipeline" / "latest.json").read_text(encoding="utf-8"))
+    assert state["status"] == "failed"
+    assert state["datasets"]["daily"]["status"] == "failed"
+    assert state["datasets"]["daily"]["error"] == "upstream blocked"

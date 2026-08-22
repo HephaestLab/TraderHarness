@@ -87,3 +87,28 @@ class TestTradingCalendar:
         cal = TradingCalendar()
         days = cal.get_trading_days(date(2024, 3, 9), date(2024, 3, 10))
         assert days == []  # Weekend only
+
+    def test_2026_exchange_holidays_are_not_trading_days(self):
+        cal = TradingCalendar()
+
+        for closed_day in (
+            date(2026, 1, 1),
+            date(2026, 2, 16),
+            date(2026, 2, 23),
+            date(2026, 4, 6),
+            date(2026, 5, 4),
+            date(2026, 6, 19),
+            date(2026, 9, 25),
+            date(2026, 10, 7),
+        ):
+            assert cal.is_trading_day(closed_day) is False
+
+        assert cal.is_trading_day(date(2026, 2, 24)) is True
+
+    def test_unknown_calendar_year_fails_closed_in_strict_mode(self):
+        cal = TradingCalendar(strict=True)
+
+        import pytest
+
+        with pytest.raises(ValueError, match="No authoritative exchange calendar"):
+            cal.is_trading_day(date(2027, 1, 4))

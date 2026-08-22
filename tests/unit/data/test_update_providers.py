@@ -2,16 +2,21 @@
 
 from datetime import date
 
+import httpx
 import pandas as pd
 import pytest
 
 import traderharness.data.update_providers as update_providers
 from traderharness.data.update_providers import (
     BaostockProvider,
+    CascadingMinuteProvider,
     CninfoAnnouncementsProvider,
+    Eastmoney1MinProvider,
     Eastmoney5MinProvider,
     baostock_code,
     cls_sign,
+    parse_baostock_dividends,
+    parse_baostock_fundamentals,
     parse_baostock_rows,
     parse_baostock_valuation_rows,
     parse_cninfo_announcement,
@@ -59,6 +64,64 @@ def test_parse_baostock_valuation_rows():
             "is_st": False,
         }
     ]
+
+
+def test_parse_baostock_fundamentals_preserves_pit_dates_and_cny_units():
+    frame = parse_baostock_fundamentals(
+        "600519",
+        [
+            {
+                "pubDate": "2026-04-20",
+                "statDate": "2026-03-31",
+                "roeAvg": "0.12",
+                "npMargin": "0.33",
+                "gpMargin": "0.90",
+                "netProfit": "123.4",
+                "epsTTM": "5.6",
+                "MBRevenue": "789.0",
+            }
+        ],
+        [
+            {
+                "pubDate": "2026-04-20",
+                "statDate": "2026-03-31",
+                "YOYEquity": "0.1",
+                "YOYAsset": "0.2",
+                "YOYNI": "0.3",
+                "YOYEPSBasic": "0.4",
+                "YOYPNI": "0.5",
+            }
+        ],
+    )
+
+    row = frame.iloc[0]
+    assert row["pub_date"] == "2026-04-20"
+    assert row["stat_date"] == "2026-03-31"
+    assert row["net_profit"] == 123.4
+    assert row["revenue"] == 789.0
+    assert row["yoy_net_profit"] == 0.3
+
+
+def test_parse_baostock_dividends_converts_per_share_to_per_ten_shares():
+    frame = parse_baostock_dividends(
+        "000001",
+        [
+            {
+                "dividPlanAnnounceDate": "2026-03-01",
+                "dividOperateDate": "2026-05-20",
+                "dividRegistDate": "2026-05-19",
+                "dividCashPsBeforeTax": "0.228",
+                "dividStocksPs": "0.2",
+                "dividReserveToStockPs": "0.3",
+                "dividProgress": "实施",
+            }
+        ],
+    )
+
+    row = frame.iloc[0]
+    assert row["cash_dividend"] == pytest.approx(2.28)
+    assert row["bonus_shares"] == pytest.approx(2.0)
+    assert row["transfer_shares"] == pytest.approx(3.0)
 
 
 def test_parse_eastmoney_5min_converts_lots_to_canonical_shares():
@@ -300,3 +363,138 @@ def test_eastmoney_5min_provider_retries_failed_codes_in_a_fresh_pass(tmp_path, 
     assert calls == ["600519", "600519"]
     assert result["stock_code"].tolist() == ["600519"]
     assert provider.last_failed == []
+
+
+def test_eastmoney_one_minute_provider_uses_recent_trends_endpoint(tmp_path):
+    provider = Eastmoney1MinProvider(
+        cache_dir=tmp_path,
+        workers=1,
+        max_attempts=1,
+        request_delay=0,
+        max_passes=1,
+    )
+
+    class Client:
+        def __init__(self):
+            self.params = None
+
+        def request(self, method, url, **kwargs):
+            self.params = kwargs["params"]
+            assert url.endswith("/stock/trends2/get")
+            request = httpx.Request(method, url)
+            return httpx.Response(
+                200,
+                json={
+                    "rc": 0,
+                    "data": {
+                        "trends": [
+                            "2026-08-21 09:31,1500,1499,1501,1498,100,150000,0"
+                        ]
+                    },
+                },
+                request=request,
+            )
+
+    client = Client()
+    frame = provider._fetch_one(client, "600519", date(2026, 8, 21), date(2026, 8, 21))
+
+    assert client.params["ndays"] == "5"
+    assert frame.iloc[0]["close"] == 1500
+    assert frame.iloc[0]["volume"] == 10_000
+
+
+def test_cascading_minute_provider_backfills_only_uncached_codes():
+    cached = parse_eastmoney_5min_klines(
+        "600519",
+        ["2026-08-21 09:35,10,10.1,10.2,9.9,100,100000,0,0,0,0"],
+    )
+
+    class Primary:
+        request_gate = type("Gate", (), {"stats": {"requests": 1}})()
+
+        def fetch(self, codes, start, end):
+            raise RuntimeError("disconnected")
+
+        def cached(self, codes, start, end):
+            return cached
+
+    class Fallback:
+        def __init__(self):
+            self.codes = None
+
+        def fetch(self, codes, start, end):
+            self.codes = codes
+            frame = cached.copy()
+            frame["stock_code"] = "000001"
+            return frame
+
+    fallback = Fallback()
+    provider = CascadingMinuteProvider(Primary(), fallback)
+
+    result = provider.fetch(
+        ["600519", "000001"],
+        date(2026, 8, 21),
+        date(2026, 8, 21),
+    )
+
+    assert fallback.codes == ["000001"]
+    assert sorted(result["stock_code"].unique()) == ["000001", "600519"]
+    assert provider.metrics["selected"] == "fallback"
+
+
+def test_resilient_request_honors_retry_after_without_reapplying_pressure():
+    from traderharness.data.network import AdaptiveRequestGate, RequestPolicy, resilient_request
+
+    sleeps = []
+    responses = [
+        httpx.Response(429, headers={"Retry-After": "3"}, request=httpx.Request("GET", "https://x")),
+        httpx.Response(200, json={"ok": True}, request=httpx.Request("GET", "https://x")),
+    ]
+
+    class Client:
+        def request(self, method, url, **kwargs):
+            return responses.pop(0)
+
+    gate = AdaptiveRequestGate(
+        min_interval=0,
+        sleeper=sleeps.append,
+        monotonic=lambda: 0.0,
+    )
+    response = resilient_request(
+        Client(),
+        "GET",
+        "https://x",
+        gate=gate,
+        policy=RequestPolicy(max_attempts=2, base_backoff=1, jitter=0),
+    )
+
+    assert response.status_code == 200
+    assert sleeps == [3.0]
+    assert gate.stats["rate_limited"] == 1
+
+
+def test_resilient_request_opens_circuit_on_forbidden_response():
+    from traderharness.data.network import (
+        AdaptiveRequestGate,
+        ProviderBlockedError,
+        RequestPolicy,
+        resilient_request,
+    )
+
+    class Client:
+        def request(self, method, url, **kwargs):
+            return httpx.Response(403, request=httpx.Request("GET", url))
+
+    gate = AdaptiveRequestGate(min_interval=0, sleeper=lambda _: None, monotonic=lambda: 10.0)
+
+    with pytest.raises(ProviderBlockedError, match="circuit opened"):
+        resilient_request(
+            Client(),
+            "GET",
+            "https://x",
+            gate=gate,
+            policy=RequestPolicy(max_attempts=4, forbidden_cooldown=300, jitter=0),
+        )
+
+    assert gate.stats["blocked"] == 1
+    assert gate.blocked_until == 310.0

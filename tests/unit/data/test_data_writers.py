@@ -49,6 +49,19 @@ def test_generic_table_writer_is_idempotent(tmp_path):
     assert len(pd.read_parquet(path)) == 1
 
 
+def test_table_writer_aligns_mixed_provider_key_types_to_existing_schema(tmp_path):
+    path = tmp_path / "news.parquet"
+    pd.DataFrame({"id": ["1"], "content": ["old"]}).to_parquet(path, index=False)
+    writer = TableWriter(path, ["id"])
+
+    result = writer.merge(pd.DataFrame({"id": [1, 2], "content": ["new", "second"]}))
+
+    merged = pd.read_parquet(path)
+    assert result.rows_after == 2
+    assert merged["id"].tolist() == ["1", "2"]
+    assert merged["content"].tolist() == ["new", "second"]
+
+
 def _min5(day: str, close: float, raw_time: bool = False) -> pd.DataFrame:
     timestamp = pd.Timestamp(f"{day} 09:35:00")
     return pd.DataFrame(

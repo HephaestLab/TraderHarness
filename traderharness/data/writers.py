@@ -34,6 +34,8 @@ class TableWriter:
     def merge(self, delta: pd.DataFrame) -> WriteResult:
         existing = pd.read_parquet(self.path) if self.path.exists() else pd.DataFrame()
         rows_before = len(existing)
+        if not existing.empty and not delta.empty:
+            delta = self._align_delta_schema(existing, delta)
         combined = pd.concat([existing, delta], ignore_index=True)
         if not combined.empty:
             combined = combined.drop_duplicates(self.dedup_keys, keep="last")
@@ -43,6 +45,28 @@ class TableWriter:
         combined.to_parquet(temporary, index=False, compression="zstd")
         temporary.replace(self.path)
         return WriteResult(rows_before, len(combined))
+
+    @staticmethod
+    def _align_delta_schema(existing: pd.DataFrame, delta: pd.DataFrame) -> pd.DataFrame:
+        """Coerce provider drift to the installed canonical table schema."""
+        aligned = delta.copy()
+        for column in existing.columns.intersection(aligned.columns):
+            target = existing[column].dtype
+            if pd.api.types.is_datetime64_any_dtype(target):
+                aligned[column] = pd.to_datetime(aligned[column], errors="coerce")
+            elif pd.api.types.is_integer_dtype(target):
+                numeric = pd.to_numeric(aligned[column], errors="coerce")
+                if numeric.notna().all():
+                    aligned[column] = numeric.astype(target)
+            elif pd.api.types.is_float_dtype(target):
+                aligned[column] = pd.to_numeric(aligned[column], errors="coerce").astype(target)
+            elif pd.api.types.is_bool_dtype(target):
+                aligned[column] = aligned[column].astype(target)
+            elif existing[column].dropna().map(lambda value: isinstance(value, str)).all():
+                aligned[column] = aligned[column].map(
+                    lambda value: str(value) if pd.notna(value) else value
+                )
+        return aligned
 
 
 class DailyWriter(TableWriter):

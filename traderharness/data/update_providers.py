@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import socket
 import time
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, ThreadPoolExecutor, as_completed, wait
@@ -17,6 +18,13 @@ import httpx
 import pandas as pd
 import pyarrow.parquet as pq
 
+from traderharness.data.network import (
+    AdaptiveRequestGate,
+    ProviderBlockedError,
+    ProviderCircuitOpenError,
+    RequestPolicy,
+    resilient_request,
+)
 from traderharness.data.stock_registry_loader import is_a_share_stock_code
 
 logger = logging.getLogger(__name__)
@@ -71,24 +79,37 @@ class Eastmoney5MinProvider:
         self,
         *,
         cache_dir: str | Path,
-        workers: int = 1,
+        workers: int = 4,
         timeout: float = 20,
         max_attempts: int = 4,
         retry_delay: float = 1,
-        request_delay: float = 0.15,
+        request_delay: float | None = None,
         max_passes: int = 6,
         pass_delay: float = 30,
+        interval_minutes: int = 5,
     ) -> None:
+        if interval_minutes not in {1, 5}:
+            raise ValueError("Eastmoney minute interval must be 1 or 5")
         self.cache_dir = Path(cache_dir)
         self.workers = workers
         self.timeout = timeout
         self.max_attempts = max_attempts
         self.retry_delay = retry_delay
+        if request_delay is None:
+            max_rps = max(0.1, float(os.environ.get("TRADERHARNESS_EASTMONEY_RPS", "2.5")))
+            request_delay = 1.0 / max_rps
         self.request_delay = request_delay
         self.max_passes = max_passes
         self.pass_delay = pass_delay
+        self.interval_minutes = interval_minutes
         self.last_failed: list[str] = []
         self.progress_path: Path | None = None
+        self.request_gate = AdaptiveRequestGate(min_interval=request_delay)
+        self._request_policy = RequestPolicy(
+            max_attempts=max_attempts,
+            base_backoff=retry_delay,
+            max_backoff=max(30.0, retry_delay * 8),
+        )
 
     @staticmethod
     def _market(code: str) -> int:
@@ -103,7 +124,7 @@ class Eastmoney5MinProvider:
     ) -> pd.DataFrame:
         params = {
             "secid": f"{self._market(code)}.{str(code).zfill(6)}",
-            "klt": "5",
+            "klt": str(self.interval_minutes),
             "fqt": "0",
             "beg": start.strftime("%Y%m%d"),
             "end": end.strftime("%Y%m%d"),
@@ -112,29 +133,28 @@ class Eastmoney5MinProvider:
             "fields2": self._FIELDS2,
             "ut": "7eea3edcaed734bea9cbfc24409ed989",
         }
-        last_error: Exception | None = None
-        for attempt in range(1, self.max_attempts + 1):
-            try:
-                if self.request_delay:
-                    time.sleep(self.request_delay)
-                response = client.get(self._URL, params=params)
-                response.raise_for_status()
-                payload = response.json()
-                if payload.get("rc") not in (None, 0):
-                    raise RuntimeError(f"Eastmoney rc={payload.get('rc')}")
-                data = payload.get("data")
-                if data is None:
-                    return pd.DataFrame(columns=EASTMONEY_5MIN_COLUMNS)
-                frame = parse_eastmoney_5min_klines(code, data.get("klines") or [])
-                if not frame.empty:
-                    dates = frame["datetime"].dt.date
-                    frame = frame[(dates >= start) & (dates <= end)].reset_index(drop=True)
-                return frame
-            except Exception as exc:  # noqa: BLE001 - retry network and malformed payloads
-                last_error = exc
-                if attempt < self.max_attempts:
-                    time.sleep(self.retry_delay * attempt)
-        raise RuntimeError(f"Eastmoney 5min failed for {code}: {last_error}") from last_error
+        response = resilient_request(
+            client,
+            "GET",
+            self._URL,
+            params=params,
+            gate=self.request_gate,
+            policy=self._request_policy,
+        )
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise RuntimeError(f"Eastmoney 5min returned malformed JSON for {code}") from exc
+        if payload.get("rc") not in (None, 0):
+            raise RuntimeError(f"Eastmoney rc={payload.get('rc')} for {code}")
+        data = payload.get("data")
+        if data is None:
+            return pd.DataFrame(columns=EASTMONEY_5MIN_COLUMNS)
+        frame = parse_eastmoney_5min_klines(code, data.get("klines") or [])
+        if not frame.empty:
+            dates = frame["datetime"].dt.date
+            frame = frame[(dates >= start) & (dates <= end)].reset_index(drop=True)
+        return frame
 
     @staticmethod
     def _cache_file(window: Path, code: str) -> Path:
@@ -178,6 +198,8 @@ class Eastmoney5MinProvider:
             "failed_codes": len(failed),
             "failed_preview": failed[:20],
             "pass": pass_number,
+            "request_metrics": dict(self.request_gate.stats),
+            "circuit_blocked_until_monotonic": self.request_gate.blocked_until,
             "updated_at": datetime.now().isoformat(timespec="seconds"),
         }
         temporary = self.progress_path.with_suffix(".json.tmp")
@@ -207,13 +229,13 @@ class Eastmoney5MinProvider:
         headers = {
             "User-Agent": "Mozilla/5.0",
             "Referer": "https://quote.eastmoney.com/",
-            "Connection": "close",
         }
         limits = httpx.Limits(max_connections=self.workers, max_keepalive_connections=self.workers)
         pass_number = 0
         while pending and pass_number < self.max_passes:
             pass_number += 1
             failed = []
+            blocked_error: BaseException | None = None
             with httpx.Client(timeout=self.timeout, headers=headers, limits=limits) as client:
                 with ThreadPoolExecutor(max_workers=self.workers) as executor:
                     futures = {
@@ -228,6 +250,10 @@ class Eastmoney5MinProvider:
                             self._write_cache(self._cache_file(window, code), frame)
                             completed += 1
                             rows_downloaded += len(frame)
+                        except (ProviderBlockedError, ProviderCircuitOpenError) as exc:
+                            blocked_error = exc
+                            logger.error("Eastmoney request circuit opened: %s", exc)
+                            failed.append(code)
                         except Exception:
                             logger.exception("Eastmoney 5min failed for %s", code)
                             failed.append(code)
@@ -248,6 +274,23 @@ class Eastmoney5MinProvider:
                 failed=pending,
                 pass_number=pass_number,
             )
+            if blocked_error is not None:
+                self.last_failed = sorted(
+                    code
+                    for code in normalized_codes
+                    if not self._valid_cache(self._cache_file(window, code))
+                )
+                self._write_progress(
+                    total=len(normalized_codes),
+                    completed=completed,
+                    rows=rows_downloaded,
+                    failed=self.last_failed,
+                    pass_number=pass_number,
+                )
+                raise RuntimeError(
+                    "Eastmoney 5min provider circuit opened; no further requests were sent. "
+                    f"Resume from {window} after the cooldown. Root cause: {blocked_error}"
+                ) from blocked_error
             if pending and pass_number < self.max_passes:
                 time.sleep(self.pass_delay * pass_number)
 
@@ -276,6 +319,155 @@ class Eastmoney5MinProvider:
             if nonempty
             else pd.DataFrame(columns=EASTMONEY_5MIN_COLUMNS)
         )
+
+    def cached(self, codes: list[str], start: date, end: date) -> pd.DataFrame:
+        """Load only validated per-code checkpoints for fallback composition."""
+        window = self.cache_dir / f"{start.isoformat()}_{end.isoformat()}"
+        frames = [
+            pd.read_parquet(path)
+            for code in codes
+            if self._valid_cache(path := self._cache_file(window, code))
+        ]
+        nonempty = [frame for frame in frames if not frame.empty]
+        return (
+            pd.concat(nonempty, ignore_index=True)
+            if nonempty
+            else pd.DataFrame(columns=EASTMONEY_5MIN_COLUMNS)
+        )
+
+
+class Eastmoney1MinProvider(Eastmoney5MinProvider):
+    """Rate-limited recent one-minute trends for a small paper watch universe."""
+
+    _TRENDS_URL = "https://push2his.eastmoney.com/api/qt/stock/trends2/get"
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(interval_minutes=1, **kwargs)
+
+    def _fetch_one(
+        self,
+        client: httpx.Client,
+        code: str,
+        start: date,
+        end: date,
+    ) -> pd.DataFrame:
+        params = {
+            "secid": f"{self._market(code)}.{str(code).zfill(6)}",
+            "fields1": "f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13",
+            "fields2": "f51,f52,f53,f54,f55,f56,f57,f58",
+            "ut": "7eea3edcaed734bea9cbfc24409ed989",
+            "ndays": "5",
+            "iscr": "0",
+        }
+        response = resilient_request(
+            client,
+            "GET",
+            self._TRENDS_URL,
+            params=params,
+            gate=self.request_gate,
+            policy=self._request_policy,
+        )
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise RuntimeError(f"Eastmoney 1min returned malformed JSON for {code}") from exc
+        if payload.get("rc") not in (None, 0):
+            raise RuntimeError(f"Eastmoney 1min rc={payload.get('rc')} for {code}")
+        trends = (payload.get("data") or {}).get("trends") or []
+        return parse_eastmoney_1min_trends(code, trends, start=start, end=end)
+
+
+def parse_eastmoney_1min_trends(
+    code: str,
+    trends: list[str],
+    *,
+    start: date,
+    end: date,
+) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+    previous_close: float | None = None
+    previous_day: date | None = None
+    for item in trends:
+        values = item.split(",")
+        if len(values) < 7:
+            continue
+        timestamp = pd.to_datetime(values[0], errors="coerce")
+        if pd.isna(timestamp) or not (start <= timestamp.date() <= end):
+            continue
+        price = pd.to_numeric(values[1], errors="coerce")
+        average = pd.to_numeric(values[2], errors="coerce")
+        close = float(price if pd.notna(price) and float(price) > 0 else average)
+        if close <= 0:
+            continue
+        if previous_day != timestamp.date():
+            previous_close = None
+            previous_day = timestamp.date()
+        open_price = previous_close if previous_close is not None else close
+        raw_high = pd.to_numeric(values[3], errors="coerce")
+        raw_low = pd.to_numeric(values[4], errors="coerce")
+        high = max(open_price, close, float(raw_high) if pd.notna(raw_high) else close)
+        low = min(open_price, close, float(raw_low) if pd.notna(raw_low) else close)
+        volume = pd.to_numeric(values[5], errors="coerce")
+        amount = pd.to_numeric(values[6], errors="coerce")
+        rows.append(
+            {
+                "stock_code": str(code).zfill(6),
+                "date": timestamp.normalize(),
+                "datetime": timestamp,
+                "open": open_price,
+                "high": high,
+                "low": low,
+                "close": close,
+                # Real A-share responses encode volume in board lots; the
+                # canonical minute schema uses shares, matching 5-minute data.
+                "volume": float(volume) * 100 if pd.notna(volume) else 0.0,
+                "amount": float(amount) if pd.notna(amount) else 0.0,
+            }
+        )
+        previous_close = close
+    return pd.DataFrame(rows, columns=EASTMONEY_5MIN_COLUMNS)
+
+
+class CascadingMinuteProvider:
+    """Use a resumable primary source and only backfill missing codes elsewhere."""
+
+    def __init__(self, primary: Eastmoney5MinProvider, fallback: Any) -> None:
+        self.primary = primary
+        self.fallback = fallback
+        self.last_provider = "primary"
+        self.last_error: str | None = None
+
+    def fetch(self, codes: list[str], start: date, end: date) -> pd.DataFrame:
+        try:
+            frame = self.primary.fetch(codes, start, end)
+            self.last_provider = "primary"
+            return frame
+        except Exception as exc:  # noqa: BLE001 - fallback is the recovery boundary
+            self.last_error = f"{type(exc).__name__}: {exc}"
+            logger.warning("Primary minute provider failed; using BaoStock fallback: %s", exc)
+        cached = self.primary.cached(codes, start, end)
+        cached_codes = (
+            set(cached["stock_code"].astype(str).str.zfill(6))
+            if not cached.empty
+            else set()
+        )
+        missing = [str(code).zfill(6) for code in codes if str(code).zfill(6) not in cached_codes]
+        fallback = self.fallback.fetch(missing, start, end) if missing else pd.DataFrame()
+        frames = [frame for frame in (cached, fallback) if not frame.empty]
+        self.last_provider = "fallback" if missing else "primary_cache"
+        return (
+            pd.concat(frames, ignore_index=True)
+            if frames
+            else pd.DataFrame(columns=EASTMONEY_5MIN_COLUMNS)
+        )
+
+    @property
+    def metrics(self) -> dict[str, Any]:
+        return {
+            "selected": self.last_provider,
+            "primary_error": self.last_error,
+            "primary_requests": dict(self.primary.request_gate.stats),
+        }
 
 
 def parse_baostock_rows(code: str, rows: list[list[str]], *, frequency: str) -> pd.DataFrame:
@@ -340,8 +532,178 @@ def parse_baostock_valuation_rows(
     ]
 
 
+FUNDAMENTAL_COLUMNS = [
+    "stock_code",
+    "pub_date",
+    "stat_date",
+    "roe",
+    "net_profit_margin",
+    "gross_margin",
+    "net_profit",
+    "eps_ttm",
+    "revenue",
+    "yoy_equity",
+    "yoy_asset",
+    "yoy_net_profit",
+    "yoy_eps",
+    "yoy_pni",
+]
+
+DIVIDEND_COLUMNS = [
+    "stock_code",
+    "ann_date",
+    "bonus_shares",
+    "transfer_shares",
+    "cash_dividend",
+    "ex_date",
+    "record_date",
+    "progress",
+]
+
+
+def _result_records(result) -> list[dict[str, str]]:
+    fields = list(getattr(result, "fields", []) or [])
+    rows: list[dict[str, str]] = []
+    while result.next():
+        values = result.get_row_data()
+        rows.append(dict(zip(fields, values, strict=False)))
+    return rows
+
+
+def parse_baostock_fundamentals(
+    code: str,
+    profit_records: list[dict[str, str]],
+    growth_records: list[dict[str, str]],
+) -> pd.DataFrame:
+    """Merge BaoStock profit/growth records into the canonical PIT schema."""
+
+    growth = {
+        (row.get("pubDate", ""), row.get("statDate", "")): row
+        for row in growth_records
+    }
+    records: list[dict[str, Any]] = []
+    for row in profit_records:
+        key = (row.get("pubDate", ""), row.get("statDate", ""))
+        growth_row = growth.get(key, {})
+
+        def number(source: dict[str, str], name: str, *, scale: float = 1.0):
+            value = pd.to_numeric(source.get(name), errors="coerce")
+            return float(value) * scale if pd.notna(value) else None
+
+        records.append(
+            {
+                "stock_code": str(code).zfill(6),
+                "pub_date": row.get("pubDate", ""),
+                "stat_date": row.get("statDate", ""),
+                "roe": number(row, "roeAvg"),
+                "net_profit_margin": number(row, "npMargin"),
+                "gross_margin": number(row, "gpMargin"),
+                # The current BaoStock Python client emits these as CNY even
+                # though older third-party tables describe ten-thousand CNY.
+                # Real-response acceptance tests anchor the canonical unit.
+                "net_profit": number(row, "netProfit"),
+                "eps_ttm": number(row, "epsTTM"),
+                "revenue": number(row, "MBRevenue"),
+                "yoy_equity": number(growth_row, "YOYEquity"),
+                "yoy_asset": number(growth_row, "YOYAsset"),
+                "yoy_net_profit": number(growth_row, "YOYNI"),
+                "yoy_eps": number(growth_row, "YOYEPSBasic"),
+                "yoy_pni": number(growth_row, "YOYPNI"),
+            }
+        )
+    return pd.DataFrame(records, columns=FUNDAMENTAL_COLUMNS)
+
+
+def parse_baostock_dividends(code: str, records: list[dict[str, str]]) -> pd.DataFrame:
+    """Normalize per-share BaoStock corporate actions to per-ten-share units."""
+
+    rows: list[dict[str, Any]] = []
+    for record in records:
+        ex_date = record.get("dividOperateDate", "")
+        ann_date = (
+            record.get("dividPlanAnnounceDate")
+            or record.get("dividPreNoticeDate")
+            or record.get("dividAgmPumDate")
+            or ex_date
+        )
+        if not ann_date and not ex_date:
+            continue
+
+        def per_ten(name: str) -> float:
+            value = pd.to_numeric(record.get(name), errors="coerce")
+            return float(value) * 10 if pd.notna(value) else 0.0
+
+        rows.append(
+            {
+                "stock_code": str(code).zfill(6),
+                "ann_date": ann_date,
+                "bonus_shares": per_ten("dividStocksPs"),
+                "transfer_shares": per_ten("dividReserveToStockPs"),
+                "cash_dividend": per_ten("dividCashPsBeforeTax"),
+                "ex_date": ex_date,
+                "record_date": record.get("dividRegistDate", ""),
+                "progress": record.get("dividProgress") or ("实施" if ex_date else "预案"),
+            }
+        )
+    return pd.DataFrame(rows, columns=DIVIDEND_COLUMNS)
+
+
+def _fetch_baostock_fundamentals(bs, code: str, start: date, end: date, delay: float) -> pd.DataFrame:
+    profit_records: list[dict[str, str]] = []
+    growth_records: list[dict[str, str]] = []
+    for year in range(start.year - 1, end.year + 1):
+        for quarter in range(1, 5):
+            if quarter == 1:
+                publish_start, publish_end = date(year, 4, 1), date(year, 5, 15)
+            elif quarter == 2:
+                publish_start, publish_end = date(year, 7, 1), date(year, 8, 31)
+            elif quarter == 3:
+                publish_start, publish_end = date(year, 10, 1), date(year, 11, 15)
+            else:
+                publish_start, publish_end = date(year + 1, 1, 1), date(year + 1, 5, 15)
+            if publish_end < start or publish_start > end:
+                continue
+            if delay:
+                time.sleep(delay)
+            profit = bs.query_profit_data(baostock_code(code), year=year, quarter=quarter)
+            if profit.error_code != "0":
+                raise RuntimeError(profit.error_msg)
+            profit_records.extend(_result_records(profit))
+            if delay:
+                time.sleep(delay)
+            growth = bs.query_growth_data(baostock_code(code), year=year, quarter=quarter)
+            if growth.error_code != "0":
+                raise RuntimeError(growth.error_msg)
+            growth_records.extend(_result_records(growth))
+    frame = parse_baostock_fundamentals(code, profit_records, growth_records)
+    if frame.empty:
+        return frame
+    visible = pd.to_datetime(frame["pub_date"], errors="coerce").dt.date
+    return frame[(visible >= start) & (visible <= end)].reset_index(drop=True)
+
+
+def _fetch_baostock_dividends(bs, code: str, start: date, end: date, delay: float) -> pd.DataFrame:
+    records: list[dict[str, str]] = []
+    for year in range(start.year - 1, end.year + 1):
+        if delay:
+            time.sleep(delay)
+        result = bs.query_dividend_data(baostock_code(code), year=str(year), yearType="report")
+        if result.error_code != "0":
+            raise RuntimeError(result.error_msg)
+        records.extend(_result_records(result))
+    frame = parse_baostock_dividends(code, records)
+    if frame.empty:
+        return frame
+    announced = pd.to_datetime(frame["ann_date"], errors="coerce").dt.date
+    operated = pd.to_datetime(frame["ex_date"], errors="coerce").dt.date
+    relevant = ((announced >= start) & (announced <= end)) | (
+        (operated >= start) & (operated <= end)
+    )
+    return frame[relevant].reset_index(drop=True)
+
+
 def _fetch_baostock_batch(args) -> tuple[pd.DataFrame, list[str]]:
-    codes, start, end, frequency, socket_timeout = args
+    codes, start, end, frequency, socket_timeout, request_interval = args
     import baostock as bs
 
     socket.setdefaulttimeout(socket_timeout)
@@ -351,6 +713,25 @@ def _fetch_baostock_batch(args) -> tuple[pd.DataFrame, list[str]]:
         login = bs.login()
         if login.error_code != "0":
             return pd.DataFrame(), list(codes)
+        if frequency in {"fundamentals", "dividends"}:
+            for code in codes:
+                try:
+                    if frequency == "fundamentals":
+                        frame = _fetch_baostock_fundamentals(
+                            bs, code, start, end, request_interval
+                        )
+                    else:
+                        frame = _fetch_baostock_dividends(
+                            bs, code, start, end, request_interval
+                        )
+                    if not frame.empty:
+                        frames.append(frame)
+                except Exception:
+                    failed.append(code)
+            return (
+                pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(),
+                failed,
+            )
         if frequency == "valuation":
             fields = "date,code,turn,peTTM,pbMRQ,psTTM,isST"
             query_frequency = "d"
@@ -362,6 +743,8 @@ def _fetch_baostock_batch(args) -> tuple[pd.DataFrame, list[str]]:
             query_frequency = frequency
         for code in codes:
             try:
+                if request_interval:
+                    time.sleep(request_interval)
                 result = bs.query_history_k_data_plus(
                     baostock_code(code),
                     fields,
@@ -433,6 +816,7 @@ class BaostockProvider:
         stall_timeout: float = 120,
         max_attempts: int = 3,
         retry_delay: float = 10,
+        request_interval: float | None = None,
     ) -> None:
         self.frequency = frequency
         self.workers = workers
@@ -441,6 +825,10 @@ class BaostockProvider:
         self.stall_timeout = stall_timeout
         self.max_attempts = max_attempts
         self.retry_delay = retry_delay
+        if request_interval is None:
+            max_rps = max(0.1, float(os.environ.get("TRADERHARNESS_BAOSTOCK_RPS", "4")))
+            request_interval = max(0.0, workers / max_rps)
+        self.request_interval = request_interval
         self.last_failed: list[str] = []
 
     def fetch(self, codes: list[str], start: date, end: date) -> pd.DataFrame:
@@ -491,7 +879,10 @@ class BaostockProvider:
         ]
         frames: list[pd.DataFrame] = []
         failed: list[str] = []
-        jobs = [(batch, start, end, self.frequency, self.socket_timeout) for batch in batches]
+        jobs = [
+            (batch, start, end, self.frequency, self.socket_timeout, self.request_interval)
+            for batch in batches
+        ]
         executor = ProcessPoolExecutor(max_workers=self.workers)
         future_batches = {
             executor.submit(_fetch_baostock_batch, job): batch
@@ -568,36 +959,57 @@ class BaostockValuationProvider(BaostockProvider):
         super().__init__(frequency="valuation", batch_size=20, **kwargs)
 
 
+class BaostockFundamentalsProvider(BaostockProvider):
+    def __init__(self, **kwargs) -> None:
+        super().__init__(frequency="fundamentals", batch_size=5, **kwargs)
+
+
+class BaostockDividendsProvider(BaostockProvider):
+    def __init__(self, **kwargs) -> None:
+        super().__init__(frequency="dividends", batch_size=10, **kwargs)
+
+
 class BaostockCsi300Provider:
     """Fetch the real CSI 300 index (sh.000300), unadjusted."""
+
+    def __init__(self, *, max_attempts: int = 3, retry_delay: float = 5.0) -> None:
+        self.max_attempts = max_attempts
+        self.retry_delay = retry_delay
 
     def fetch(self, start: date, end: date) -> pd.DataFrame:
         import baostock as bs
 
-        try:
-            login = bs.login()
-            if login.error_code != "0":
-                raise RuntimeError(f"BaoStock login failed: {login.error_msg}")
-            result = bs.query_history_k_data_plus(
-                "sh.000300",
-                "date,code,open,high,low,close,volume,amount",
-                start_date=start.isoformat(),
-                end_date=end.isoformat(),
-                frequency="d",
-                adjustflag="3",
-            )
-            if result.error_code != "0":
-                raise RuntimeError(f"CSI 300 fetch failed: {result.error_msg}")
-            rows = []
-            while result.next():
-                rows.append(result.get_row_data())
-            frame = parse_baostock_rows("000300", rows, frequency="d")
-            return frame.drop(columns=["stock_code"])
-        finally:
+        last_error: Exception | None = None
+        for attempt in range(1, self.max_attempts + 1):
             try:
-                bs.logout()
-            except Exception:
-                pass
+                login = bs.login()
+                if login.error_code != "0":
+                    raise RuntimeError(f"BaoStock login failed: {login.error_msg}")
+                result = bs.query_history_k_data_plus(
+                    "sh.000300",
+                    "date,code,open,high,low,close,volume,amount",
+                    start_date=start.isoformat(),
+                    end_date=end.isoformat(),
+                    frequency="d",
+                    adjustflag="3",
+                )
+                if result.error_code != "0":
+                    raise RuntimeError(f"CSI 300 fetch failed: {result.error_msg}")
+                rows = []
+                while result.next():
+                    rows.append(result.get_row_data())
+                frame = parse_baostock_rows("000300", rows, frequency="d")
+                return frame.drop(columns=["stock_code"])
+            except Exception as exc:  # noqa: BLE001 - socket client exposes generic errors
+                last_error = exc
+                if attempt < self.max_attempts:
+                    time.sleep(self.retry_delay * attempt)
+            finally:
+                try:
+                    bs.logout()
+                except Exception:
+                    pass
+        raise RuntimeError(f"CSI 300 update failed after {self.max_attempts} attempts: {last_error}") from last_error
 
 
 CNINFO_URL = "http://www.cninfo.com.cn/new/hisAnnouncement/query"
@@ -622,6 +1034,13 @@ def parse_cninfo_announcement(item: dict[str, Any]) -> dict:
 
 
 class CninfoAnnouncementsProvider:
+    def __init__(self, *, request_interval: float | None = None) -> None:
+        if request_interval is None:
+            max_rps = max(0.1, float(os.environ.get("TRADERHARNESS_CNINFO_RPS", "1")))
+            request_interval = 1.0 / max_rps
+        self.request_gate = AdaptiveRequestGate(min_interval=request_interval)
+        self._request_policy = RequestPolicy(max_attempts=3, base_backoff=1, max_backoff=30)
+
     def fetch(self, start: date, end: date) -> pd.DataFrame:
         records: list[dict] = []
         with httpx.Client(headers=CNINFO_HEADERS, timeout=30) as client:
@@ -649,8 +1068,7 @@ class CninfoAnnouncementsProvider:
         parsed = [parse_cninfo_announcement(item) for item in items]
         return [record for record in parsed if is_a_share_stock_code(record["stock_code"])]
 
-    @staticmethod
-    def _page(client: httpx.Client, se_date: str, page: int) -> dict:
+    def _page(self, client: httpx.Client, se_date: str, page: int) -> dict:
         data = {
             "pageNum": str(page),
             "pageSize": "30",
@@ -658,21 +1076,20 @@ class CninfoAnnouncementsProvider:
             "seDate": se_date,
             "isHLtitle": "true",
         }
-        for attempt in range(3):
-            try:
-                response = client.post(CNINFO_URL, data=data)
-                response.raise_for_status()
-                payload = response.json()
-                total = int(payload.get("totalAnnouncement", 0))
-                return {
-                    "items": payload.get("announcements") or [],
-                    "pages": (total + 29) // 30,
-                }
-            except (httpx.HTTPError, ValueError):
-                if attempt == 2:
-                    raise
-                time.sleep(2**attempt)
-        return {"items": [], "pages": 0}
+        response = resilient_request(
+            client,
+            "POST",
+            CNINFO_URL,
+            data=data,
+            gate=self.request_gate,
+            policy=self._request_policy,
+        )
+        payload = response.json()
+        total = int(payload.get("totalAnnouncement", 0))
+        return {
+            "items": payload.get("announcements") or [],
+            "pages": (total + 29) // 30,
+        }
 
 
 CLS_URL = "https://www.cls.cn/v1/roll/get_roll_list"
@@ -688,8 +1105,13 @@ def cls_sign(params: dict) -> str:
 
 
 class ClsNewsProvider:
-    def __init__(self, delay: float = 0.3) -> None:
+    def __init__(self, delay: float | None = None) -> None:
+        if delay is None:
+            max_rps = max(0.1, float(os.environ.get("TRADERHARNESS_CLS_RPS", "1.4")))
+            delay = 1.0 / max_rps
         self.delay = delay
+        self.request_gate = AdaptiveRequestGate(min_interval=delay)
+        self._request_policy = RequestPolicy(max_attempts=3, base_backoff=1, max_backoff=30)
 
     def fetch(self, start: date, end: date) -> pd.DataFrame:
         lower = int(datetime.combine(start, datetime_time.min).timestamp())
@@ -735,8 +1157,7 @@ class ClsNewsProvider:
                 time.sleep(self.delay)
         return pd.DataFrame(records)
 
-    @staticmethod
-    def _page(client: httpx.Client, last_time: int) -> list[dict]:
+    def _page(self, client: httpx.Client, last_time: int) -> list[dict]:
         params = {
             "app": "CailianpressWeb",
             "os": "web",
@@ -746,13 +1167,12 @@ class ClsNewsProvider:
             "refresh_type": "1",
         }
         params["sign"] = cls_sign(params)
-        for attempt in range(3):
-            try:
-                response = client.get(CLS_URL, params=params)
-                response.raise_for_status()
-                return response.json().get("data", {}).get("roll_data", [])
-            except (httpx.HTTPError, ValueError):
-                if attempt == 2:
-                    raise
-                time.sleep(2**attempt)
-        return []
+        response = resilient_request(
+            client,
+            "GET",
+            CLS_URL,
+            params=params,
+            gate=self.request_gate,
+            policy=self._request_policy,
+        )
+        return response.json().get("data", {}).get("roll_data", [])

@@ -123,6 +123,40 @@ _CALENDAR_DATA: dict[int, tuple[set[date], set[date]]] = {
             date(2025, 10, 11),  # 国庆调休
         },
     ),
+    # Shanghai Stock Exchange notice [2025] No. 45, published 2025-12-22.
+    # Weekend dates are already excluded by weekday checks; they are included
+    # in the second set where the notice explicitly names make-up workdays.
+    2026: (
+        {
+            date(2026, 1, 1),
+            date(2026, 1, 2),
+            date(2026, 2, 16),
+            date(2026, 2, 17),
+            date(2026, 2, 18),
+            date(2026, 2, 19),
+            date(2026, 2, 20),
+            date(2026, 2, 23),
+            date(2026, 4, 6),
+            date(2026, 5, 1),
+            date(2026, 5, 4),
+            date(2026, 5, 5),
+            date(2026, 6, 19),
+            date(2026, 9, 25),
+            date(2026, 10, 1),
+            date(2026, 10, 2),
+            date(2026, 10, 5),
+            date(2026, 10, 6),
+            date(2026, 10, 7),
+        },
+        {
+            date(2026, 1, 4),
+            date(2026, 2, 14),
+            date(2026, 2, 28),
+            date(2026, 5, 9),
+            date(2026, 9, 20),
+            date(2026, 10, 10),
+        },
+    ),
 }
 
 
@@ -133,13 +167,19 @@ class TradingCalendar:
     exchange holiday. Government weekend make-up workdays remain closed.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, strict: bool = False) -> None:
+        self.strict = strict
         self._holidays: set[date] = set()
         for _year, (holidays, weekend_closures) in _CALENDAR_DATA.items():
             self._holidays.update(holidays)
             self._holidays.update(weekend_closures)
 
     def is_trading_day(self, d: date) -> bool:
+        if self.strict and d.year not in _CALENDAR_DATA:
+            raise ValueError(
+                f"No authoritative exchange calendar is bundled for {d.year}; "
+                "update TraderHarness before running or downloading that year."
+            )
         if d in self._holidays:
             return False
         return d.weekday() < 5

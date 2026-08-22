@@ -1011,8 +1011,11 @@ def data_download(dataset: str | None, full_dataset: bool, force: bool):
 @data.command("update")
 @click.option(
     "--only",
-    default="daily,5min,valuation,announcements,news,benchmark",
-    help="Comma-separated: daily,5min,valuation,announcements,news,benchmark",
+    default="daily,5min,valuation,fundamentals,dividends,announcements,news,benchmark",
+    help=(
+        "Comma-separated: daily,5min,valuation,fundamentals,dividends,"
+        "announcements,news,benchmark"
+    ),
 )
 @click.option("--since", type=click.DateTime(formats=["%Y-%m-%d"]), default=None)
 @click.option("--end", type=click.DateTime(formats=["%Y-%m-%d"]), default=None)
@@ -1020,9 +1023,13 @@ def data_download(dataset: str | None, full_dataset: bool, force: bool):
 def data_update(only: str, since, end, dry_run: bool):
     """Incrementally update canonical local datasets from upstream sources."""
     from traderharness.data.update_providers import (
+        Baostock5MinProvider,
         BaostockCsi300Provider,
         BaostockDailyProvider,
+        BaostockDividendsProvider,
+        BaostockFundamentalsProvider,
         BaostockValuationProvider,
+        CascadingMinuteProvider,
         ClsNewsProvider,
         CninfoAnnouncementsProvider,
         Eastmoney5MinProvider,
@@ -1034,8 +1041,13 @@ def data_update(only: str, since, end, dry_run: bool):
     updater = DataUpdater(
         dataset_dir(),
         daily_provider=BaostockDailyProvider(),
-        min5_provider=Eastmoney5MinProvider(cache_dir=dataset_dir() / ".update_cache" / "eastmoney_5min"),
+        min5_provider=CascadingMinuteProvider(
+            Eastmoney5MinProvider(cache_dir=dataset_dir() / ".update_cache" / "eastmoney_5min"),
+            Baostock5MinProvider(),
+        ),
         valuation_provider=BaostockValuationProvider(),
+        fundamentals_provider=BaostockFundamentalsProvider(),
+        dividends_provider=BaostockDividendsProvider(),
         announcements_provider=CninfoAnnouncementsProvider(),
         news_provider=ClsNewsProvider(),
         benchmark_provider=BaostockCsi300Provider(),
@@ -1051,6 +1063,52 @@ def data_update(only: str, since, end, dry_run: bool):
             click.echo(f"{name}: {value.start} -> {value.end}")
         else:
             click.echo(f"{name}: rows {value.rows_before:,} -> {value.rows_after:,} (+{value.rows_added:,})")
+
+
+@data.command("status")
+def data_status():
+    """Show canonical watermarks and the latest resumable pipeline state."""
+    from traderharness.data.coverage import DatasetCoverage
+    from traderharness.paths import dataset_dir
+
+    status = DatasetCoverage(dataset_dir()).status()
+    click.echo(f"Dataset: {status['root']}")
+    for name, watermark in status["watermarks"].items():
+        click.echo(f"  {name:13} {watermark or 'missing'}")
+    pipeline = status.get("pipeline") or {}
+    if pipeline:
+        click.echo(
+            f"Latest pipeline: {pipeline.get('status', 'unknown')} "
+            f"({pipeline.get('run_id', 'unknown')})"
+        )
+
+
+@data.command("doctor")
+@click.option("--start", type=click.DateTime(formats=["%Y-%m-%d"]), default=None)
+@click.option("--end", type=click.DateTime(formats=["%Y-%m-%d"]), default=None)
+@click.option("--daily-only", is_flag=True, help="Do not require minute-bar coverage")
+def data_doctor(start, end, daily_only: bool):
+    """Fail closed unless the requested backtest interval is fully covered."""
+    from datetime import date as date_type
+
+    from traderharness.data.coverage import DataCoverageError, DatasetCoverage
+    from traderharness.paths import dataset_dir
+
+    end_date = end.date() if end else date_type.today()
+    start_date = start.date() if start else end_date
+    try:
+        report = DatasetCoverage(dataset_dir()).assert_backtest_ready(
+            start_date,
+            end_date,
+            require_minute=not daily_only,
+        )
+    except DataCoverageError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo("Dataset coverage: READY")
+    click.echo(f"  requested: {report['start']} -> {report['end']}")
+    click.echo(f"  target session: {report['target_session']}")
+    for name, watermark in report["watermarks"].items():
+        click.echo(f"  {name:13} {watermark}")
 
 
 @main.command()

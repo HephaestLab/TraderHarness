@@ -104,3 +104,37 @@ def test_full_download_is_verified_and_installed_atomically(tmp_path):
     assert installed == target
     assert (target / "daily.parquet").read_bytes() == b"daily"
     assert not (tmp_path / "dataset.download").exists()
+    assert not (tmp_path / "dataset.download.lock").exists()
+
+
+def test_full_download_reuses_incomplete_staging_for_resume(tmp_path):
+    target = tmp_path / "dataset"
+    staging = tmp_path / "dataset.download"
+    staging.mkdir()
+    (staging / "partial.chunk").write_bytes(b"keep")
+
+    def fake_snapshot_download(*, repo_id, local_dir, repo_type):
+        assert (staging / "partial.chunk").read_bytes() == b"keep"
+        payload = staging / "daily.parquet"
+        payload.write_bytes(b"daily")
+        manifest = {
+            "schema_version": 1,
+            "files": [
+                {
+                    "path": "daily.parquet",
+                    "bytes": 5,
+                    "sha256": hashlib.sha256(b"daily").hexdigest(),
+                },
+                {
+                    "path": "partial.chunk",
+                    "bytes": 4,
+                    "sha256": hashlib.sha256(b"keep").hexdigest(),
+                },
+            ],
+        }
+        (staging / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        return str(staging)
+
+    download_full_dataset(target, snapshot_downloader=fake_snapshot_download)
+
+    assert (target / "partial.chunk").read_bytes() == b"keep"

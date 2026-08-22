@@ -763,6 +763,25 @@ class BacktestEngine:
     ) -> EngineResult:
         breakpoints_set = set(breakpoints) if breakpoints else set()
 
+        # Local production runs fail closed before loading hundreds of
+        # millions of rows. Test/replay providers remain injectable and are
+        # responsible for their own bounded fixtures.
+        if self._data_provider is None:
+            from traderharness.data.coverage import DatasetCoverage
+            from traderharness.paths import dataset_dir as default_dataset_dir
+
+            coverage_root = (
+                Path(self._config.dataset_dir)
+                if self._config.dataset_dir
+                else default_dataset_dir()
+            )
+            require_minute = (coverage_root / "5min_clean").is_dir()
+            DatasetCoverage(coverage_root).assert_backtest_ready(
+                start_date,
+                end_date,
+                require_minute=require_minute,
+            )
+
         if warmup_days > 0:
             warmup_start = start_date - timedelta(days=int(warmup_days * 1.5))
             all_days = self._calendar.get_trading_days(warmup_start, end_date)
@@ -798,8 +817,6 @@ class BacktestEngine:
             pass
 
         # Load fundamentals, business segments, valuation
-        from pathlib import Path
-
         from traderharness.paths import dataset_dir as default_dataset_dir
 
         if self._config.dataset_dir:

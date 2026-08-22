@@ -138,10 +138,7 @@ def download_full_dataset(
         )
     staging = destination.with_name(destination.name + ".download")
     backup = destination.with_name(destination.name + ".backup")
-    if staging.exists():
-        shutil.rmtree(staging)
     staging.parent.mkdir(parents=True, exist_ok=True)
-
     if snapshot_downloader is None:
         try:
             from huggingface_hub import snapshot_download
@@ -149,26 +146,42 @@ def download_full_dataset(
             raise ImportError("huggingface_hub is required. Install traderharness[data].") from exc
         snapshot_downloader = snapshot_download
 
-    snapshot_downloader(
-        repo_id=repo_id,
-        local_dir=str(staging),
-        repo_type="dataset",
-    )
-    verify_manifest(staging)
-
-    if backup.exists():
-        shutil.rmtree(backup)
+    # Keep an incomplete staging directory: huggingface_hub can resume its
+    # content-addressed downloads. A lock prevents two installers from
+    # mutating the same staging tree concurrently.
+    lock = destination.with_name(destination.name + ".download.lock")
     try:
-        if destination.exists():
-            destination.replace(backup)
-        staging.replace(destination)
-    except Exception:
-        if not destination.exists() and backup.exists():
-            backup.replace(destination)
-        raise
-    if backup.exists():
-        shutil.rmtree(backup)
-    return destination
+        descriptor = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError as exc:
+        raise RuntimeError(
+            f"Another full-dataset download is already using {lock}. "
+            "Wait for it to finish or remove the stale lock after verifying no downloader is running."
+        ) from exc
+    os.close(descriptor)
+
+    try:
+        snapshot_downloader(
+            repo_id=repo_id,
+            local_dir=str(staging),
+            repo_type="dataset",
+        )
+        verify_manifest(staging)
+
+        if backup.exists():
+            shutil.rmtree(backup)
+        try:
+            if destination.exists():
+                destination.replace(backup)
+            staging.replace(destination)
+        except Exception:
+            if not destination.exists() and backup.exists():
+                backup.replace(destination)
+            raise
+        if backup.exists():
+            shutil.rmtree(backup)
+        return destination
+    finally:
+        lock.unlink(missing_ok=True)
 
 
 def _link_or_copy(source: Path, destination: Path) -> None:
