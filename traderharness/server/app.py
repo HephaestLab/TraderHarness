@@ -56,6 +56,20 @@ class RunManagerProtocol(Protocol):
     def events(self, run_id: str): ...
 
 
+class PaperManagerProtocol(Protocol):
+    def start(self, request: PaperSessionRequest) -> dict[str, Any]: ...
+
+    def get(self, session_id: str) -> dict[str, Any] | None: ...
+
+    def list(self) -> list[dict[str, Any]]: ...
+
+    def cancel(self, session_id: str) -> bool: ...
+
+    def events(self, session_id: str): ...
+
+    def artifact_path(self, session_id: str, name: str) -> Path | None: ...
+
+
 class AgentCardPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -102,6 +116,33 @@ class RunRequest(BaseModel):
     def valid_range(self) -> RunRequest:
         if self.start_date > self.end_date:
             raise ValueError("开始日期不能晚于结束日期")
+        return self
+
+
+class PaperSessionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    agent_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{1,63}$")
+    session_date: str
+    initial_cash: int = Field(default=1_000_000, gt=0)
+    mode: Literal["live", "accelerated"] = "live"
+    poll_seconds: int = Field(default=60, ge=15, le=300)
+    max_attention_codes: int = Field(default=8, ge=1, le=20)
+
+    @field_validator("session_date")
+    @classmethod
+    def valid_session_date(cls, value: str) -> str:
+        parsed = date.fromisoformat(value)
+        from traderharness.core.calendar import TradingCalendar
+
+        if not TradingCalendar(strict=True).is_trading_day(parsed):
+            raise ValueError("模拟盘日期必须是上交所/深交所交易日")
+        return value
+
+    @model_validator(mode="after")
+    def live_is_not_historical(self) -> PaperSessionRequest:
+        if self.mode == "live" and date.fromisoformat(self.session_date) < date.today():
+            raise ValueError("实时模式不能选择过去日期；历史验收请使用 accelerated 模式")
         return self
 
 
@@ -213,6 +254,7 @@ def _require_loopback(request: Request) -> None:
 def create_app(
     *,
     run_manager: RunManagerProtocol | None = None,
+    paper_manager: PaperManagerProtocol | None = None,
     dataset_path: Path | None = None,
     results_path: Path | None = None,
     agents_path: Path | None = None,
@@ -228,6 +270,15 @@ def create_app(
     use_builtin_agents = agents_path is None
     result_root.mkdir(parents=True, exist_ok=True)
     agent_root.mkdir(parents=True, exist_ok=True)
+    if paper_manager is None:
+        from traderharness.paths import paper_dir
+        from traderharness.server.paper_manager import PaperSessionManager
+
+        paper_manager = PaperSessionManager(
+            storage_root=paper_dir() if dataset_path is None else data_root.parent / "paper",
+            dataset_root=data_root,
+            agent_root=agent_root,
+        )
 
     app = FastAPI(
         title="TraderHarness API",
@@ -270,6 +321,7 @@ def create_app(
             "providers": {
                 "deepseek_configured": bool(os.environ.get("DEEPSEEK_API_KEY")),
                 "llm_source": llm_config_status()["source"],
+                "paper_one_minute": True,
             },
             "security": {
                 "scope": "local-only",
@@ -570,6 +622,52 @@ def create_app(
         await websocket.accept()
         try:
             async for event in run_manager.events(run_id):
+                await websocket.send_json(event)
+        except WebSocketDisconnect:
+            return
+
+    @app.post("/api/paper/sessions", status_code=202)
+    def start_paper_session(request: PaperSessionRequest) -> dict[str, Any]:
+        try:
+            return paper_manager.start(request)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @app.get("/api/paper/sessions")
+    def list_paper_sessions() -> list[dict[str, Any]]:
+        return paper_manager.list()
+
+    @app.get("/api/paper/sessions/{session_id}")
+    def get_paper_session(session_id: str) -> dict[str, Any]:
+        state = paper_manager.get(session_id)
+        if state is None:
+            raise HTTPException(404, "未找到模拟盘")
+        return state
+
+    @app.delete("/api/paper/sessions/{session_id}", status_code=202)
+    def cancel_paper_session(session_id: str) -> dict[str, str]:
+        if not paper_manager.cancel(session_id):
+            raise HTTPException(404, "未找到模拟盘，或该模拟盘已经结束")
+        return {"id": session_id, "status": "cancelling"}
+
+    @app.get("/api/paper/sessions/{session_id}/artifacts/{name}")
+    def get_paper_artifact(session_id: str, name: str) -> FileResponse:
+        if name not in {"events.jsonl", "trajectory.jsonl", "state.json"}:
+            raise HTTPException(400, "不支持的模拟盘审计文件")
+        path = paper_manager.artifact_path(session_id, name)
+        if path is None:
+            raise HTTPException(404, "模拟盘审计文件尚未生成")
+        media_type = "application/x-ndjson" if name.endswith(".jsonl") else "application/json"
+        return FileResponse(path, media_type=media_type, filename=f"{session_id}-{name}")
+
+    @app.websocket("/api/paper/sessions/{session_id}/events")
+    async def paper_events(websocket: WebSocket, session_id: str) -> None:
+        if paper_manager.get(session_id) is None:
+            await websocket.close(code=4404, reason="Paper session not found")
+            return
+        await websocket.accept()
+        try:
+            async for event in paper_manager.events(session_id):
                 await websocket.send_json(event)
         except WebSocketDisconnect:
             return

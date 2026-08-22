@@ -582,6 +582,9 @@ class ToolAgent:
         self._position_plans: dict[str, dict] = {}
 
         self.day_results: list[DayResult] = []
+        # Paper trading may pause the normal daily loop at each market window
+        # while new minute bars are appended to the in-memory market.
+        self.phase_barrier = None
 
     @property
     def trajectory(self) -> TrajectoryCollector:
@@ -702,7 +705,11 @@ class ToolAgent:
         self._loop.remaining_trading_days = bus._total_days - bus._day_index - 1
         self._loop.total_trading_days = bus._total_days
 
-        result = await self._loop.run_day(current_date, ctx)
+        result = await self._loop.run_day(
+            current_date,
+            ctx,
+            phase_barrier=self.phase_barrier,
+        )
         self.day_results.append(result)
 
         # 持久化自选股（含清空：键存在即回写，允许空集）

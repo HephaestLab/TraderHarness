@@ -22,9 +22,9 @@ lang: zh-CN
 
 逐项发布说明见 [`CHANGELOG.md`](https://github.com/HephaestLab/TraderHarness/blob/main/CHANGELOG.md)。
 
-## 🚧 下一步：模拟实盘（paper trading）
+## ✅ v1.1 已交付：模拟盘（paper trading）
 
-一种模拟的实时前推模式：复用现有引擎、掩码与工具契约，但数据源从全量预加载改为流式推送，从而无需改动代码就能对一张 Agent 卡片做面向未来的评估。该功能在设计中，**目前不可用**，仓库中任何内容都不应被解读为相反 claim。
+模拟盘复用现有 Agent 循环、工具契约、条件单与唯一撮合路径，并用实时 1 分钟小型关注池驱动四个决策窗口。它支持选择 Agent、虚拟资金、交易日与实时/历史加速时钟，持久化状态和事件审计日志。详见[每日模拟盘](paper-trading.md)。
 
 从回测引擎继承的约束：
 
@@ -34,7 +34,7 @@ lang: zh-CN
 
 ## 📋 规划：实盘券商适配器 {#live-broker-adapter}
 
-一个适配器边界，让模拟实盘或研究 Agent 可以对接真实券商 API。它依赖模拟实盘先落地，并需要与项目整体安全姿态相匹配的凭据与下单授权威胁模型（见
+一个适配器边界，让模拟盘或研究 Agent 可以对接真实券商 API。它仍需要与项目整体安全姿态相匹配的凭据与下单授权威胁模型（见
 [`SECURITY.md`](https://github.com/HephaestLab/TraderHarness/blob/main/SECURITY.md)）。目前没有任何券商集成。
 
 ## 📋 规划：沙箱加固 {#hardened-sandbox}

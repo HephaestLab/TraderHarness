@@ -88,6 +88,7 @@ nav:
   - Agent 工具合同 v5: design/agent-tool-contract-v5.md
   - 强化学习与评测轨迹: training-data.md
   - 数据与许可: data.md
+  - 每日模拟盘: paper-trading.md
   - CLI 与本地 API: api.md
   - 扩展开发: extensions.md
   - 路线图: roadmap.md

@@ -303,6 +303,51 @@ export interface LiveEvent {
   data: Record<string, unknown>;
 }
 
+export interface PaperAccount {
+  cash: number;
+  equity: number;
+  return_pct: number;
+}
+
+export interface PaperPosition {
+  stock_code: string;
+  quantity: number;
+  available_quantity?: number;
+  avg_cost?: number;
+  last_price?: number;
+  market_value?: number;
+  unrealized_pnl?: number;
+}
+
+export interface PaperSession {
+  id: string;
+  status: "running" | "cancelling" | "cancelled" | "done" | "failed";
+  created_at: string;
+  agent_id: string;
+  agent_name: string;
+  session_date: string;
+  mode: "live" | "accelerated";
+  initial_cash: number;
+  clock_state: string;
+  phase: string;
+  error?: string | null;
+  event_count: number;
+  account: PaperAccount;
+  positions: PaperPosition[];
+  trades: Trade[];
+  equity_curve: Array<[string, number]>;
+  quote_health: {
+    source?: string;
+    granularity?: string;
+    missing_codes?: string[];
+    attention_codes?: string[];
+    one_minute_bars?: number;
+    as_of?: string;
+    request_metrics?: Record<string, unknown>;
+  };
+  last_event?: LiveEvent | null;
+}
+
 export interface MaskingShowcaseMetrics {
   total_return_pct?: number;
   alpha_pct?: number;

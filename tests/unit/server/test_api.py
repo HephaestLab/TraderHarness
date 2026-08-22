@@ -45,6 +45,50 @@ class FakeRunManager:
         yield {"sequence": 2, "type": "run_end", "data": {"trading_days": 1}}
 
 
+class FakePaperManager:
+    def __init__(self):
+        self.started = []
+        self.cancelled = []
+        self.artifacts = {}
+
+    def start(self, request):
+        self.started.append(request)
+        return {
+            "id": "paper-1",
+            "status": "running",
+            "agent_id": request.agent_id,
+            "session_date": request.session_date,
+        }
+
+    def get(self, session_id):
+        if session_id != "paper-1":
+            return None
+        return {
+            "id": "paper-1",
+            "status": "running",
+            "agent_id": "momentum-dragon",
+            "session_date": "2026-08-21",
+        }
+
+    def list(self):
+        return [self.get("paper-1")]
+
+    def cancel(self, session_id):
+        if session_id != "paper-1":
+            return False
+        self.cancelled.append(session_id)
+        return True
+
+    async def events(self, session_id):
+        if session_id != "paper-1":
+            return
+        yield {"sequence": 1, "type": "paper_clock", "data": {"phase": "open_1"}}
+        yield {"sequence": 2, "type": "run_end", "data": {"trading_days": 1}}
+
+    def artifact_path(self, session_id, name):
+        return self.artifacts.get((session_id, name))
+
+
 def _client(tmp_path: Path) -> TestClient:
     dataset = tmp_path / "dataset"
     dataset.mkdir()
@@ -677,6 +721,66 @@ def test_start_cancel_and_websocket_event_stream(tmp_path):
 
         assert client.delete("/api/runs/run-1").status_code == 202
         assert client.get("/api/runs/missing").status_code == 404
+
+
+def test_paper_session_crud_validation_and_event_stream(tmp_path):
+    paper = FakePaperManager()
+    audit = tmp_path / "events.jsonl"
+    audit.write_text('{"sequence":1}\n', encoding="utf-8")
+    paper.artifacts[("paper-1", "events.jsonl")] = audit
+    app = create_app(
+        run_manager=FakeRunManager(),
+        paper_manager=paper,
+        dataset_path=tmp_path / "dataset",
+        results_path=tmp_path / "results",
+        agents_path=tmp_path / "agents",
+    )
+    with TestClient(app) as client:
+        started = client.post(
+            "/api/paper/sessions",
+            json={
+                "agent_id": "momentum-dragon",
+                "session_date": "2026-08-21",
+                "initial_cash": 1000000,
+                "mode": "accelerated",
+            },
+        )
+        invalid_day = client.post(
+            "/api/paper/sessions",
+            json={
+                "agent_id": "momentum-dragon",
+                "session_date": "2026-08-22",
+                "mode": "accelerated",
+            },
+        )
+        historical_live = client.post(
+            "/api/paper/sessions",
+            json={
+                "agent_id": "momentum-dragon",
+                "session_date": "2026-08-21",
+                "mode": "live",
+            },
+        )
+
+        assert started.status_code == 202
+        assert client.get("/api/paper/sessions").json()[0]["id"] == "paper-1"
+        assert client.get("/api/paper/sessions/paper-1").status_code == 200
+        with client.websocket_connect("/api/paper/sessions/paper-1/events") as websocket:
+            assert websocket.receive_json()["type"] == "paper_clock"
+            assert websocket.receive_json()["type"] == "run_end"
+        artifact = client.get(
+            "/api/paper/sessions/paper-1/artifacts/events.jsonl"
+        )
+        assert artifact.status_code == 200
+        assert artifact.text.strip() == '{"sequence":1}'
+        assert client.get(
+            "/api/paper/sessions/paper-1/artifacts/secret.txt"
+        ).status_code == 400
+        assert client.delete("/api/paper/sessions/paper-1").status_code == 202
+
+    assert paper.started[0].poll_seconds == 60
+    assert invalid_day.status_code == 422
+    assert historical_live.status_code == 422
 
 
 def test_demo_endpoint_starts_fixed_masked_replay(tmp_path):

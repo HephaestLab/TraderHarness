@@ -22,15 +22,15 @@ This page distinguishes delivered capability from planned work. It is not a date
 
 See the [changelog](https://github.com/HephaestLab/TraderHarness/blob/main/CHANGELOG.md) for release-level details.
 
-## 🚧 Next: forward paper trading
+## ✅ Delivered in v1.1: daily paper trading
 
-A simulated forward mode would reuse the current engine, masks, and tools while replacing full preload with a streaming feed. This feature is in design and **is not currently available**.
+A daily paper session reuses the Agent loop, tool contract, conditional orders, and single execution path while a small live one-minute attention set drives the four decision windows. It supports Agent, virtual-capital, session-date, and live/accelerated-clock selection with persistent state and an event audit journal. See [Daily paper trading](paper-trading.md).
 
-It must retain the same order path and risk checks, apply masking to every agent-facing outlet, and prevent tools or sandbox code from reading beyond the simulated clock.
+It retains the same order path and risk checks and prevents tools or sandbox code from reading beyond the simulated clock.
 
 ## 📋 Planned: broker adapter {#live-broker-adapter}
 
-A future adapter boundary may connect a research agent to a real brokerage API, after paper trading exists and a credential, authorization, and order-risk threat model matches the project’s [security policy](https://github.com/HephaestLab/TraderHarness/blob/main/SECURITY.md). There is no broker integration today.
+A future adapter boundary may connect a research agent to a real brokerage API after a credential, authorization, and order-risk threat model matches the project’s [security policy](https://github.com/HephaestLab/TraderHarness/blob/main/SECURITY.md). There is no broker integration today.
 
 ## 📋 Planned: hardened sandbox {#hardened-sandbox}
 

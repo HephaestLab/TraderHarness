@@ -22,6 +22,7 @@ Dataset: https://huggingface.co/datasets/ANTICH/traderharness-ashare-5y
 - [Multi-role committees](https://hephaestlab.github.io/TraderHarness/design/multi-role-agent/): Concurrent read-only advisors with one trading executor
 - [Training data](https://hephaestlab.github.io/TraderHarness/training-data/): Full-fidelity trajectory and trajectory export
 - [Data](https://hephaestlab.github.io/TraderHarness/data/): Dataset contents, integrity, and licensing
+- [Daily paper trading](https://hephaestlab.github.io/TraderHarness/paper-trading/): Rate-limited one-minute quotes, Agent work traces, simulated A-share execution, and downloadable audit journals
 - [CLI and local API](https://hephaestlab.github.io/TraderHarness/api/): Commands, agent protocol, REST, and WebSocket endpoints
 - [Extending TraderHarness](https://hephaestlab.github.io/TraderHarness/extensions/): Contracts for data adapters, tools, sandbox backends, metrics, broker adapters, and the frontend
 - [Roadmap](https://hephaestlab.github.io/TraderHarness/roadmap/): Delivered v1.0 scope, paper trading, live broker adapter, sandbox hardening, and explicit non-goals

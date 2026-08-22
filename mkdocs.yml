@@ -78,6 +78,7 @@ nav:
   - Agent Tool Contract v5: design/agent-tool-contract-v5.md
   - Trajectories for RL and Evaluation: training-data.md
   - Data and Licensing: data.md
+  - Daily Paper Trading: paper-trading.md
   - CLI and Local API: api.md
   - Extensions: extensions.md
   - Roadmap: roadmap.md

@@ -399,7 +399,7 @@ A short version — see [`docs/roadmap.md`](docs/roadmap.md) for the full pictur
 | Status | Item |
 |---|---|
 | ✅ Delivered in v1.0 | Backtest engine, masking, replay/trajectory export, comparison, committees, research console |
-| 🚧 Next | Paper trading (simulated live-forward mode on the same engine and masking contract) |
+| ✅ Delivered in v1.1 | Daily paper trading (live one-minute attention set, shared execution path, persistent audit journal) |
 | 📋 Planned | Live broker adapter |
 | 📋 Planned | A hardened sandbox for untrusted or third-party agent cards |
 | ❌ Non-goal | A public leaderboard, hosted multi-tenant service, or market-impact modeling |
@@ -407,7 +407,7 @@ A short version — see [`docs/roadmap.md`](docs/roadmap.md) for the full pictur
 ## Scope and limitations
 
 - The maintained production dataset currently covers China A-shares; adapters for other markets are welcome.
-- There is no paper-trading or live-broker mode yet; see [Roadmap](docs/roadmap.md). Historical simulation cannot model market impact or guarantee live performance.
+- Paper trading uses virtual capital only; there is no live-broker adapter yet. Simulated fills do not model market impact or guarantee live performance. See [Daily paper trading](docs/en/paper-trading.md).
 - Provider terms may restrict redistribution of some source fields.
 - TraderHarness is research infrastructure, not investment advice or a brokerage system.
 

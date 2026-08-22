@@ -9,6 +9,7 @@ from __future__ import annotations
 import copy
 import json
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import date
 from typing import TYPE_CHECKING
@@ -32,6 +33,15 @@ if TYPE_CHECKING:
     from traderharness.trajectory.collector import TrajectoryCollector
 
 MAX_TOOL_RESULT_CHARS = 3000
+MAX_LIVE_EVENT_TEXT_CHARS = 4000
+
+
+def _live_event_text(value: object) -> tuple[str, bool]:
+    """Keep WebSocket/state payloads responsive; full text stays in trajectory."""
+    text = str(value or "")
+    if len(text) <= MAX_LIVE_EVENT_TEXT_CHARS:
+        return text, False
+    return text[:MAX_LIVE_EVENT_TEXT_CHARS] + "…", True
 
 
 class PhaseProtocolError(RuntimeError):
@@ -389,8 +399,17 @@ class AgentLoop:
         self.trajectory: TrajectoryCollector | None = None
         self.remaining_trading_days: int | None = None
         self.total_trading_days: int | None = None
+        # Optional cooperative cancellation used by long-running live/paper
+        # sessions. Backtests and replay leave this unset, preserving their
+        # historical request/action sequence exactly.
+        self.cancel_check: Callable[[], bool] | None = None
 
-    async def run_day(self, current_date: date, ctx: ToolContext) -> DayResult:
+    async def run_day(
+        self,
+        current_date: date,
+        ctx: ToolContext,
+        phase_barrier: Callable[[str, ToolContext], Awaitable[None]] | None = None,
+    ) -> DayResult:
         """执行一个完整交易日的三阶段循环。"""
         self._context.reset()
         self._total_tokens = 0
@@ -471,6 +490,8 @@ class AgentLoop:
 
         from traderharness.agents.window_context import refresh_trading_window
 
+        if phase_barrier is not None:
+            await phase_barrier("open_1", ctx)
         # Rebuild focus set after pre-market watchlist mutations.
         refresh_trading_window(ctx, window="open")
 
@@ -505,6 +526,9 @@ class AgentLoop:
         )
 
         # Round 2: 9:50-10:00 (后3根bar)
+        if phase_barrier is not None:
+            await phase_barrier("open_2", ctx)
+            refresh_trading_window(ctx, window="open")
         ctx._current_sub_window = "open_2"
         self._process_conditional_orders(ctx, "open_2")
         half2 = self._filter_window_bars(ctx.window_minutes, 9 * 60 + 55, 10 * 60)
@@ -527,6 +551,8 @@ class AgentLoop:
 
         # === Phase 3: 尾盘窗口 (分两轮推进) ===
         # Include same-day buys and watchlist adds that happened in the open window.
+        if phase_barrier is not None:
+            await phase_barrier("close_1", ctx)
         refresh_trading_window(ctx, window="close")
 
         ctx.current_phase = "close_window"
@@ -560,6 +586,9 @@ class AgentLoop:
         )
 
         # Round 2: 14:50-15:00 (后3根bar)
+        if phase_barrier is not None:
+            await phase_barrier("close_2", ctx)
+            refresh_trading_window(ctx, window="close")
         ctx._current_sub_window = "close_2"
         self._process_conditional_orders(ctx, "close_2")
         half2 = self._filter_window_bars(ctx.window_minutes, 14 * 60 + 55, 15 * 60)
@@ -728,6 +757,9 @@ class AgentLoop:
                 )
 
         for iteration_index in range(iteration_limit):
+            if self.cancel_check is not None and self.cancel_check():
+                logger.info("Agent phase cancelled before LLM iteration")
+                return
             is_correction_retry = correction_retry_pending
             if not phase_protocol:
                 correction_retry_pending = False
@@ -852,6 +884,12 @@ class AgentLoop:
                 messages=request_messages,
                 tools=tools_schema,
             )
+            # A cancellation may arrive while the remote model request is in
+            # flight. Preserve the returned response in the audit trail, but do
+            # not execute tool calls (especially orders) after a safe stop.
+            discarded_after_cancel = bool(
+                self.cancel_check is not None and self.cancel_check()
+            )
             # Cassette outputs are already date/entity-sanitized at record time.
             # Re-sanitizing during replay is not idempotent (alias / code rewrites
             # drift) and poisons subsequent request fingerprints.
@@ -901,8 +939,13 @@ class AgentLoop:
                         "messages": copy.deepcopy(request_messages),
                         "tools": copy.deepcopy(tools_schema),
                         "response": copy.deepcopy(response),
+                        "discarded_after_cancel": discarded_after_cancel,
                     },
                 )
+            live_content, content_truncated = _live_event_text(response.get("content"))
+            live_reasoning, reasoning_truncated = _live_event_text(
+                response.get("reasoning_content")
+            )
             self._emit(
                 "llm_response",
                 date=ctx.current_date,
@@ -910,7 +953,20 @@ class AgentLoop:
                 phase=ctx.current_phase,
                 has_tool_calls=bool(response.get("tool_calls")),
                 tokens=response.get("_usage", {}).get("total_tokens", 0),
+                content=live_content,
+                reasoning_content=live_reasoning,
+                content_truncated=content_truncated,
+                reasoning_truncated=reasoning_truncated,
+                discarded_after_cancel=discarded_after_cancel,
             )
+            if discarded_after_cancel:
+                usage = response.get("_usage", {})
+                tokens = usage.get("total_tokens", 0) if usage else 0
+                self._total_tokens += tokens
+                if self._budget and tokens:
+                    self._budget.consume(tokens)
+                logger.info("Agent phase cancelled after LLM response; output audited and discarded")
+                return
 
             assistant_content = response.get("content", "") or ""
             assistant_dict = {"role": "assistant", "content": assistant_content}
@@ -1163,6 +1219,8 @@ class AgentLoop:
                     tool=tool_name,
                     args=arguments,
                     success="error" not in result,
+                    error=result.get("error"),
+                    error_code=result.get("error_code"),
                 )
                 if self.trajectory:
                     self.trajectory.record_step(

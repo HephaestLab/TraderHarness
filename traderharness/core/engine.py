@@ -90,6 +90,15 @@ class MarketData:
         """
         from pathlib import Path
 
+        # Paper trading supplies a point-in-time snapshot directly so it can
+        # preload daily history without reading a completed intraday session.
+        # Live minute bars are appended only at explicit phase barriers.
+        if hasattr(provider, "load_market_snapshot"):
+            daily, minute = await provider.load_market_snapshot(start, end)
+            self._ingest_combined_df(daily, is_5min=False)
+            self._ingest_combined_df(minute, is_5min=True)
+            return
+
         # 路径1：测试/自定义目录（多文件模式）
         if hasattr(provider, "_data_dir"):
             data_dir = Path(provider._data_dir)

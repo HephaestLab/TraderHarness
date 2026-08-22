@@ -409,7 +409,7 @@ A short version — see [`docs/roadmap.md`](docs/roadmap.md) for the full pictur
 | Status | Item |
 |---|---|
 | ✅ Delivered in v1.0 | Backtest engine, masking, replay/trajectory export, comparison, committees, research console |
-| 🚧 Next | Paper trading (simulated live-forward mode on the same engine and masking contract) |
+| ✅ Delivered in v1.1 | Daily paper trading (live one-minute attention set, shared execution path, persistent audit journal) |
 | 📋 Planned | Live broker adapter |
 | 📋 Planned | A hardened sandbox for untrusted or third-party agent cards |
 | ❌ Non-goal | A public leaderboard, hosted multi-tenant service, or market-impact modeling |
@@ -417,7 +417,7 @@ A short version — see [`docs/roadmap.md`](docs/roadmap.md) for the full pictur
 ## Scope and limitations
 
 - The maintained production dataset currently covers China A-shares; adapters for other markets are welcome.
-- There is no paper-trading or live-broker mode yet; see [Roadmap](docs/roadmap.md). Historical simulation cannot model market impact or guarantee live performance.
+- Paper trading uses virtual capital only; there is no live-broker adapter yet. Simulated fills do not model market impact or guarantee live performance. See [Daily paper trading](docs/en/paper-trading.md).
 - Provider terms may restrict redistribution of some source fields.
 - TraderHarness is research infrastructure, not investment advice or a brokerage system.
 
@@ -795,7 +795,7 @@ npm run test:e2e
 | 状态 | 事项 |
 |---|---|
 | ✅ v1.0 已交付 | 回测引擎、遮罩、replay/轨迹导出、多 Agent 对比、委员会、研究控制台 |
-| 🚧 下一阶段 | 模拟盘（Paper Trading，复用同一引擎和遮罩契约的前向仿真模式） |
+| ✅ v1.1 已交付 | 每日模拟盘（实时 1 分钟小型关注池、同一撮合路径、持久化审计轨迹） |
 | 📋 规划中 | 实盘 Broker adapter |
 | 📋 规划中 | 面向不可信/第三方 Agent 卡片的强化沙盒 |
 | ❌ 非目标 | 公开排行榜、多租户托管服务、市场冲击建模 |
@@ -803,7 +803,7 @@ npm run test:e2e
 ## 边界与限制
 
 - 目前维护的生产数据集覆盖中国 A 股；欢迎为其他市场提供适配器。
-- 目前没有模拟盘或实盘接口，参见[路线图](docs/roadmap.md)。历史仿真不模拟市场冲击，也不保证实盘表现。
+- 模拟盘只使用虚拟资金；目前没有实盘 Broker 接口。模拟成交不建模市场冲击，也不保证实盘表现。详见[每日模拟盘](docs/paper-trading.md)。
 - 部分上游字段的再分发可能受供应商条款限制。
 - TraderHarness 是研究基础设施，不是投资建议，也不是券商系统。
 
@@ -1367,6 +1367,31 @@ The canonical A-share release contains five years of full-market daily and 5-min
 
 `traderharness data download --full` verifies every object against the release manifest before atomically replacing the local dataset. `traderharness data update` uses watermarks, deterministic deduplication, and atomic writes.
 
+Incremental updates follow an explicit dependency graph: daily bars are merged before the active minute universe is discovered. Fundamentals and dividends are incremental as well. `business_segments.parquet` remains a versioned release snapshot because no current free source provides a stable, structured, clearly licensed incremental contract.
+
+```bash
+traderharness data status
+traderharness data update --end 2026-08-21
+traderharness data doctor --start 2026-03-01 --end 2026-08-21
+```
+
+The same coverage gate runs before a local backtest. A run fails closed if daily, CSI 300, or an installed 5-minute dataset does not reach the requested exchange session.
+
+### Cooperative request budgets
+
+HTTP providers share thread-safe pacing, `Retry-After` handling, exponential backoff, 429 metrics, and a 403 circuit breaker. Pipeline progress is persisted in `.pipeline/latest.json`; Eastmoney minute downloads checkpoint each symbol and resume only missing work.
+
+| Environment variable | Default | Source |
+|---|---:|---|
+| `TRADERHARNESS_EASTMONEY_RPS` | 2.5 requests/s | 5-minute and paper watch-universe 1-minute bars |
+| `TRADERHARNESS_BAOSTOCK_RPS` | 4 requests/s | daily, valuation, fundamentals, dividends, benchmark |
+| `TRADERHARNESS_CNINFO_RPS` | 1 request/s | announcements |
+| `TRADERHARNESS_CLS_RPS` | 1.4 requests/s | news |
+
+These budgets guarantee that TraderHarness does not exceed its configured pace. A third party may still throttle a shared IP or change an undocumented quota. TraderHarness obeys 429 cooldowns, stops pressure on 403, and keeps resumable state; it does not rotate IPs to evade an upstream restriction.
+
+Paper trading retrieves recent one-minute trends only for positions, watchlist entries, and the current candidate set. Broad-market state uses lower-frequency snapshots, so request pressure scales with the Agent's attention set rather than the roughly five-thousand-stock universe every minute.
+
 The data doctor checks required schemas and date ranges, natural-key duplicates, annual intraday coverage, stale symbols, non-A-share announcement codes, and metadata consistency.
 
 The v1.0 canonical build contains 284,219,844 deduplicated 5-minute records. Release audits reported complete annual symbol coverage for the active daily universe, no stale symbol at the final 5-minute watermark, and zero natural-key duplicates in the verification sample.
@@ -1391,6 +1416,70 @@ Public news tables retain templated titles and omit licensed full text. Company 
 ```
 
 Market-data licensing varies by provider and jurisdiction. Review upstream terms before redistribution or commercial deployment.
+
+---
+
+<!-- source: docs/en/paper-trading.md -->
+
+---
+seo_title: TraderHarness Daily Paper Trading for LLM Agents
+description: Run a selected LLM trading Agent each market day with rate-limited one-minute quotes, A-share execution rules, conditional orders, safe stop, and downloadable full trajectories.
+lang: en
+---
+
+# Daily paper trading
+
+TraderHarness paper sessions reuse the same `ToolAgent`, phase protocol, conditional orders, and
+`TradingBus.place_order()` execution path as backtests. Pre-market research, the two open windows,
+the two close windows, tool corrections, and Agent memory therefore remain auditable.
+
+## Clock modes
+
+- **Live one-minute** is for today or a future exchange session. From market open, TraderHarness
+  polls only the small attention set formed by positions, watchlist entries, and active conditional
+  orders. It pauses during the lunch break. Each Agent window receives only five-minute bars that
+  were complete at that point in time.
+- **Accelerated acceptance** advances the four decision windows immediately. Recent sessions prefer
+  the public one-minute snapshot; when unavailable, the UI explicitly reports a fallback to the local
+  canonical five-minute dataset. This is a development acceptance mode, not a live quote claim.
+
+The default attention set is eight securities at a 60-second interval, or roughly 0.13 requests per
+second. Even the allowed maximum of 20 securities every 15 seconds is roughly 1.33 requests per
+second, below the default Eastmoney cooperative budget of 2.5 requests per second. If Eastmoney
+disconnects, it enters a five-minute cooldown and Sina fetches only the missing symbols under its own
+two-request-per-second budget; the two sources are not redundantly hammered. Each provider still uses
+a shared minimum interval, `Retry-After`, exponential backoff, and 403/429 circuit breaking.
+TraderHarness does not rotate proxies to bypass an upstream limit.
+
+## Use
+
+Start the local console and open `/paper`:
+
+1. select an Agent, session date, clock mode, and virtual capital;
+2. start the daily paper session;
+3. inspect account equity, positions, fills, tool/phase trajectory, and model messages;
+4. use **Safe stop** to cancel cooperatively.
+
+State is stored at `~/.traderharness/paper/<session-id>/state.json`; ordered UI events are appended to
+`events.jsonl`, while full model requests/responses and tool arguments/results are written to
+`trajectory.jsonl`. Both journals can be downloaded from the paper page. A service restart marks an
+interrupted session as failed instead of pretending that it continued, while preserving the audit
+journal. Cooperative safe-stop also drops any order tool returned by an in-flight model request after
+cancellation and closes the session as `cancelled`.
+
+## Quote-integrity rules
+
+- Missing one-minute quotes for a held security stop execution; stale prices are never substituted.
+- Missing non-held watchlist quotes produce a visible degraded state while verified symbols continue.
+- One-minute observations only form completed five-minute decision windows. A-share limits, board
+  lots, T+1, fees, and the single execution path remain in force.
+- Broad-market research continues to use local point-in-time-safe daily, announcement, news,
+  fundamental, and valuation data; the system never scans the entire market every minute.
+
+!!! warning "Research only"
+    Paper sessions use virtual capital for Agent evaluation and software research. They are not a live
+    brokerage connection and do not constitute investment advice. Public displays should disclose
+    quote latency, simulated fills, fees, and failures.
 
 ---
 
@@ -1525,15 +1614,15 @@ This page distinguishes delivered capability from planned work. It is not a date
 
 See the [changelog](https://github.com/HephaestLab/TraderHarness/blob/main/CHANGELOG.md) for release-level details.
 
-## 🚧 Next: forward paper trading
+## ✅ Delivered in v1.1: daily paper trading
 
-A simulated forward mode would reuse the current engine, masks, and tools while replacing full preload with a streaming feed. This feature is in design and **is not currently available**.
+A daily paper session reuses the Agent loop, tool contract, conditional orders, and single execution path while a small live one-minute attention set drives the four decision windows. It supports Agent, virtual-capital, session-date, and live/accelerated-clock selection with persistent state and an event audit journal. See [Daily paper trading](paper-trading.md).
 
-It must retain the same order path and risk checks, apply masking to every agent-facing outlet, and prevent tools or sandbox code from reading beyond the simulated clock.
+It retains the same order path and risk checks and prevents tools or sandbox code from reading beyond the simulated clock.
 
 ## 📋 Planned: broker adapter {#live-broker-adapter}
 
-A future adapter boundary may connect a research agent to a real brokerage API, after paper trading exists and a credential, authorization, and order-risk threat model matches the project’s [security policy](https://github.com/HephaestLab/TraderHarness/blob/main/SECURITY.md). There is no broker integration today.
+A future adapter boundary may connect a research agent to a real brokerage API after a credential, authorization, and order-risk threat model matches the project’s [security policy](https://github.com/HephaestLab/TraderHarness/blob/main/SECURITY.md). There is no broker integration today.
 
 ## 📋 Planned: hardened sandbox {#hardened-sandbox}
 
@@ -2255,6 +2344,31 @@ lang: zh-CN
 
 `traderharness data download --full` 会按发布清单逐项校验后才原子替换本地数据集；`traderharness data update` 使用水位线、确定性去重与原子写入。
 
+增量更新按依赖拓扑执行：日线先合并，随后才根据新区间的正成交量日线发现分钟股票池。基本面和分红也参与增量更新；`business_segments.parquet` 仍是发布快照，因为当前免费源没有稳定、结构化且许可清晰的主营构成增量接口。
+
+```bash
+traderharness data status
+traderharness data update --end 2026-08-21
+traderharness data doctor --start 2026-03-01 --end 2026-08-21
+```
+
+回测启动前会执行同一覆盖门禁。日线、沪深 300 或已安装的 5 分钟数据只要没有覆盖目标交易日，运行就会直接失败，不再以空行情继续生成结果。
+
+### 免费源的请求预算
+
+所有 HTTP 提供方共用线程安全的请求门：固定请求预算、`Retry-After`、指数退避、429 统计和 403 熔断。失败进度写入 `.pipeline/latest.json`；东方财富分钟数据按股票持久缓存，恢复时只请求未完成股票。默认预算可向下调整：
+
+| 环境变量 | 默认预算 | 用途 |
+|---|---:|---|
+| `TRADERHARNESS_EASTMONEY_RPS` | 2.5 请求/秒 | 5 分钟和模拟盘关注池 1 分钟 |
+| `TRADERHARNESS_BAOSTOCK_RPS` | 4 请求/秒 | 日线、估值、基本面、分红、基准 |
+| `TRADERHARNESS_CNINFO_RPS` | 1 请求/秒 | 公告 |
+| `TRADERHARNESS_CLS_RPS` | 1.4 请求/秒 | 新闻 |
+
+这些预算保证 TraderHarness 自己不会超过配置速率；第三方仍可能因共享出口、隐性配额或规则变化返回限流。遇到 429 会服从上游等待时间，遇到 403 会停止继续施压并保留断点，而不是切换 IP 绕过限制。
+
+模拟盘的 1 分钟数据使用最近五日分时接口，只查询持仓、自选股和当次候选的小集合；市场宽度仍使用低频全市场快照。因此请求量随 Agent 关注集合增长，而不是随全市场约五千只股票每分钟增长。
+
 仓库自带的数据医生（data doctor）检查：
 
 - 必需 schema 与日期范围
@@ -2286,6 +2400,62 @@ v1.0 规范构建包含 284,219,844 条去重后的 5 分钟记录。发布审�
 ```
 
 行情数据许可因供应商与司法辖区而异。再分发或商用部署前请核实上游条款。
+
+---
+
+<!-- source: docs/paper-trading.md -->
+
+---
+seo_title: TraderHarness 每日模拟盘：LLM Agent 一分钟行情、条件单与完整交易轨迹
+description: TraderHarness 每日模拟盘使用虚拟资金、受限的一分钟行情关注池、A 股交易规则、条件单、协作式停止和完整模型工具审计轨迹。
+lang: zh-CN
+---
+
+# 每日模拟盘
+
+TraderHarness 的每日模拟盘复用回测中的同一个 `ToolAgent`、阶段协议、条件单与
+`TradingBus.place_order()` 撮合路径。它不是另一套简化策略执行器，因此盘前研究、开盘两段、
+尾盘两段、工具纠错和 Agent 记忆都保持可审计。
+
+## 两种时钟
+
+- **实时 1 分钟**：用于当天或未来交易日。开市后每 60 秒拉取持仓、观察清单和活动条件单涉及的
+  小型关注池；11:30–13:00 午休停止请求。每个 Agent 决策窗口只会看到当时已经完成的 5 分钟聚合
+  bar，不能看到未来数据。
+- **历史加速验收**：立即推进四个决策窗口。最近五个交易日优先使用公开 1 分钟快照；不可用时明确
+  标记并降级到本地 canonical 5 分钟数据。此模式用于开发验收，不冒充实时行情。
+
+默认关注池上限为 8 只，轮询周期 60 秒，相当于约 0.13 请求/秒。即使把上限调到 20、轮询缩短到
+允许的 15 秒，理论值也约为 1.33 请求/秒，仍低于默认 Eastmoney 协作预算 2.5 请求/秒。Eastmoney
+断线时会进入五分钟冷却，Sina 只补拉缺失代码，不会同时向两个源重复请求；其独立预算为 2 请求/秒。
+每个供应商的请求继续经过共享的最小间隔、`Retry-After`、指数退避和 403/429 熔断；系统不会使用
+代理池绕过上游限制。
+
+## 使用
+
+启动本地研究台后打开 `/paper`：
+
+1. 选择 Agent、交易日、时钟模式和虚拟资金；
+2. 启动每日模拟盘；
+3. 查看账户净值、持仓、交割、Agent 工具/阶段轨迹和模型判断；
+4. 需要终止时使用“安全停止”，不会强杀正在写入的审计状态。
+
+模拟盘状态写入 `~/.traderharness/paper/<session-id>/state.json`，所有界面事件顺序追加到
+`events.jsonl`，完整模型请求、响应、工具参数和工具返回写入 `trajectory.jsonl`。页面底部可以直接
+下载事件审计和完整轨迹。服务重启不会伪装成继续运行：中断会标记为失败，已产生的审计日志仍然保留。
+“安全停止”采用协作式取消；正在途中的模型响应返回后不会再执行其中的订单工具，并以
+`cancelled` 正常收口。
+
+## 行情完整性规则
+
+- 持仓股票的 1 分钟行情缺失时停止撮合，绝不使用陈旧价格替代；
+- 观察清单中非持仓股票缺失时显示降级状态，并继续保留其他可验证标的；
+- 1 分钟数据只用于形成已经完成的 5 分钟窗口，撮合仍遵循 A 股涨跌停、手数、T+1 和费用规则；
+- 全市场研究继续使用本地点时安全的日线、公告、新闻、基本面和估值数据；不会每分钟扫描全市场。
+
+!!! warning "研究用途"
+    模拟盘使用虚拟资金，仅用于 Agent 评估和软件研究，不是实盘交易接口，也不构成证券投资建议。
+    公开展示时应同时披露数据延迟、虚拟成交、费用模型和失败记录。
 
 ---
 
@@ -2447,9 +2617,9 @@ lang: zh-CN
 
 逐项发布说明见 [`CHANGELOG.md`](https://github.com/HephaestLab/TraderHarness/blob/main/CHANGELOG.md)。
 
-## 🚧 下一步：模拟实盘（paper trading）
+## ✅ v1.1 已交付：模拟盘（paper trading）
 
-一种模拟的实时前推模式：复用现有引擎、掩码与工具契约，但数据源从全量预加载改为流式推送，从而无需改动代码就能对一张 Agent 卡片做面向未来的评估。该功能在设计中，**目前不可用**，仓库中任何内容都不应被解读为相反 claim。
+模拟盘复用现有 Agent 循环、工具契约、条件单与唯一撮合路径，并用实时 1 分钟小型关注池驱动四个决策窗口。它支持选择 Agent、虚拟资金、交易日与实时/历史加速时钟，持久化状态和事件审计日志。详见[每日模拟盘](paper-trading.md)。
 
 从回测引擎继承的约束：
 
@@ -2459,7 +2629,7 @@ lang: zh-CN
 
 ## 📋 规划：实盘券商适配器 {#live-broker-adapter}
 
-一个适配器边界，让模拟实盘或研究 Agent 可以对接真实券商 API。它依赖模拟实盘先落地，并需要与项目整体安全姿态相匹配的凭据与下单授权威胁模型（见
+一个适配器边界，让模拟盘或研究 Agent 可以对接真实券商 API。它仍需要与项目整体安全姿态相匹配的凭据与下单授权威胁模型（见
 [`SECURITY.md`](https://github.com/HephaestLab/TraderHarness/blob/main/SECURITY.md)）。目前没有任何券商集成。
 
 ## 📋 规划：沙箱加固 {#hardened-sandbox}

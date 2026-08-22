@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import socket
+import tempfile
 import time
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, ThreadPoolExecutor, as_completed, wait
 from datetime import date, datetime, timedelta
@@ -341,8 +342,14 @@ class Eastmoney1MinProvider(Eastmoney5MinProvider):
 
     _TRENDS_URL = "https://push2his.eastmoney.com/api/qt/stock/trends2/get"
 
-    def __init__(self, **kwargs) -> None:
-        super().__init__(interval_minutes=1, **kwargs)
+    def __init__(self, *, cache_dir: str | Path | None = None, **kwargs) -> None:
+        # ``fetch_latest`` is intentionally cache-free, but the parent keeps a
+        # cache path for its resumable historical API. Give live callers a
+        # harmless process-temporary default so constructor hardening on the
+        # historical provider cannot break the paper quote path.
+        if cache_dir is None:
+            cache_dir = Path(tempfile.gettempdir()) / "traderharness-eastmoney-1m"
+        super().__init__(cache_dir=cache_dir, interval_minutes=1, **kwargs)
 
     def _fetch_one(
         self,
@@ -375,6 +382,292 @@ class Eastmoney1MinProvider(Eastmoney5MinProvider):
             raise RuntimeError(f"Eastmoney 1min rc={payload.get('rc')} for {code}")
         trends = (payload.get("data") or {}).get("trends") or []
         return parse_eastmoney_1min_trends(code, trends, start=start, end=end)
+
+    def fetch_latest(self, codes: list[str], target_date: date) -> pd.DataFrame:
+        """Fetch a fresh intraday snapshot without using the update cache.
+
+        Paper sessions call this at most once per configured polling interval
+        for a small attention set. Requests still share the provider gate,
+        Retry-After handling, and circuit breaker.
+        """
+        normalized = sorted({str(code).zfill(6) for code in codes if code})
+        if not normalized:
+            return pd.DataFrame(columns=EASTMONEY_5MIN_COLUMNS)
+        headers = {
+            "User-Agent": "Mozilla/5.0",
+            "Referer": "https://quote.eastmoney.com/",
+        }
+        frames: list[pd.DataFrame] = []
+        failures: list[str] = []
+        limits = httpx.Limits(
+            max_connections=min(self.workers, len(normalized)),
+            max_keepalive_connections=min(self.workers, len(normalized)),
+        )
+        with httpx.Client(timeout=self.timeout, headers=headers, limits=limits) as client:
+            with ThreadPoolExecutor(max_workers=min(self.workers, len(normalized))) as executor:
+                futures = {
+                    executor.submit(
+                        self._fetch_one,
+                        client,
+                        code,
+                        target_date,
+                        target_date,
+                    ): code
+                    for code in normalized
+                }
+                for future in as_completed(futures):
+                    code = futures[future]
+                    try:
+                        frame = future.result()
+                    except (ProviderBlockedError, ProviderCircuitOpenError):
+                        raise
+                    except Exception as exc:  # noqa: BLE001 - report all missing symbols together
+                        logger.warning("Eastmoney 1min snapshot failed for %s: %s", code, exc)
+                        failures.append(code)
+                        continue
+                    if not frame.empty:
+                        frames.append(frame)
+                    else:
+                        failures.append(code)
+        self.last_failed = failures
+        if failures and not frames:
+            raise RuntimeError(
+                "Eastmoney 1min live snapshot returned no usable symbols: "
+                + ", ".join(failures[:10])
+            )
+        return (
+            pd.concat(frames, ignore_index=True)
+            if frames
+            else pd.DataFrame(columns=EASTMONEY_5MIN_COLUMNS)
+        )
+
+
+class Sina1MinProvider:
+    """Recent one-minute bars used only as a cooperative live fallback."""
+
+    _URL = "https://quotes.sina.cn/cn/api/json_v2.php/CN_MarketData.getKLineData"
+
+    def __init__(
+        self,
+        *,
+        workers: int = 2,
+        timeout: float = 20,
+        max_attempts: int = 3,
+        request_delay: float | None = None,
+    ) -> None:
+        self.workers = workers
+        self.timeout = timeout
+        self.last_failed: list[str] = []
+        if request_delay is None:
+            max_rps = max(0.1, float(os.environ.get("TRADERHARNESS_SINA_RPS", "2")))
+            request_delay = 1.0 / max_rps
+        self.request_gate = AdaptiveRequestGate(min_interval=request_delay)
+        self._request_policy = RequestPolicy(
+            max_attempts=max_attempts,
+            base_backoff=1,
+            max_backoff=30,
+        )
+
+    @staticmethod
+    def _symbol(code: str) -> str:
+        normalized = str(code).zfill(6)
+        return ("sh" if normalized.startswith("6") else "sz") + normalized
+
+    def _fetch_one(
+        self,
+        client: httpx.Client,
+        code: str,
+        target_date: date,
+    ) -> pd.DataFrame:
+        response = resilient_request(
+            client,
+            "GET",
+            self._URL,
+            params={
+                "symbol": self._symbol(code),
+                "scale": "1",
+                "ma": "no",
+                # One A-share session has about 240 observations. A small
+                # cushion retains the complete latest session without turning
+                # the fallback into a historical bulk downloader.
+                "datalen": "300",
+            },
+            gate=self.request_gate,
+            policy=self._request_policy,
+        )
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise RuntimeError(f"Sina 1min returned malformed JSON for {code}") from exc
+        if not isinstance(payload, list):
+            raise RuntimeError(f"Sina 1min returned an unexpected payload for {code}")
+        return parse_sina_1min_rows(code, payload, target_date=target_date)
+
+    def fetch_latest(self, codes: list[str], target_date: date) -> pd.DataFrame:
+        normalized = sorted({str(code).zfill(6) for code in codes if code})
+        if not normalized:
+            return pd.DataFrame(columns=EASTMONEY_5MIN_COLUMNS)
+        headers = {
+            "User-Agent": "Mozilla/5.0",
+            "Referer": "https://finance.sina.com.cn/",
+        }
+        frames: list[pd.DataFrame] = []
+        failures: list[str] = []
+        limits = httpx.Limits(
+            max_connections=min(self.workers, len(normalized)),
+            max_keepalive_connections=min(self.workers, len(normalized)),
+        )
+        with httpx.Client(timeout=self.timeout, headers=headers, limits=limits) as client:
+            with ThreadPoolExecutor(max_workers=min(self.workers, len(normalized))) as executor:
+                futures = {
+                    executor.submit(self._fetch_one, client, code, target_date): code
+                    for code in normalized
+                }
+                for future in as_completed(futures):
+                    code = futures[future]
+                    try:
+                        frame = future.result()
+                    except (ProviderBlockedError, ProviderCircuitOpenError):
+                        raise
+                    except Exception as exc:  # noqa: BLE001 - fallback reports missing codes together
+                        logger.warning("Sina 1min snapshot failed for %s: %s", code, exc)
+                        failures.append(code)
+                        continue
+                    if frame.empty:
+                        failures.append(code)
+                    else:
+                        frames.append(frame)
+        self.last_failed = sorted(failures)
+        if failures and not frames:
+            raise RuntimeError(
+                "Sina 1min live snapshot returned no usable symbols: "
+                + ", ".join(self.last_failed[:10])
+            )
+        return (
+            pd.concat(frames, ignore_index=True)
+            if frames
+            else pd.DataFrame(columns=EASTMONEY_5MIN_COLUMNS)
+        )
+
+
+def parse_sina_1min_rows(
+    code: str,
+    rows: list[dict[str, Any]],
+    *,
+    target_date: date,
+) -> pd.DataFrame:
+    frame = pd.DataFrame(rows)
+    if frame.empty or "day" not in frame.columns:
+        return pd.DataFrame(columns=EASTMONEY_5MIN_COLUMNS)
+    frame["datetime"] = pd.to_datetime(frame["day"], errors="coerce")
+    frame = frame[frame["datetime"].dt.date == target_date].copy()
+    if frame.empty:
+        return pd.DataFrame(columns=EASTMONEY_5MIN_COLUMNS)
+    frame["stock_code"] = str(code).zfill(6)
+    frame["date"] = frame["datetime"].dt.normalize()
+    for column in ("open", "high", "low", "close", "volume", "amount"):
+        frame[column] = pd.to_numeric(frame.get(column), errors="coerce")
+    frame = frame.dropna(subset=["datetime", "open", "high", "low", "close"])
+    return frame[EASTMONEY_5MIN_COLUMNS].sort_values("datetime").reset_index(drop=True)
+
+
+class CascadingLiveMinuteProvider:
+    """Use one live source at a time and only send missing codes to fallback."""
+
+    def __init__(
+        self,
+        primary: Any,
+        fallback: Any,
+        *,
+        primary_cooldown: float = 300,
+    ) -> None:
+        self.primary = primary
+        self.fallback = fallback
+        self.primary_cooldown = primary_cooldown
+        self.primary_blocked_until = 0.0
+        self.last_provider = "pending"
+        self.last_error: str | None = None
+        self.last_failed: list[str] = []
+
+    def fetch_latest(self, codes: list[str], target_date: date) -> pd.DataFrame:
+        normalized = sorted({str(code).zfill(6) for code in codes if code})
+        frames: list[pd.DataFrame] = []
+        primary_codes: set[str] = set()
+        now = time.monotonic()
+        if now >= self.primary_blocked_until:
+            try:
+                primary_frame = self.primary.fetch_latest(normalized, target_date)
+            except Exception as exc:  # noqa: BLE001 - fallback is the recovery boundary
+                self.last_error = f"{type(exc).__name__}: {exc}"
+                self.primary_blocked_until = now + self.primary_cooldown
+                logger.warning(
+                    "Primary live minute provider failed; cooling down and using fallback: %s",
+                    exc,
+                )
+            else:
+                if not primary_frame.empty:
+                    frames.append(primary_frame)
+                    primary_codes = set(primary_frame["stock_code"].astype(str).str.zfill(6))
+        missing = [code for code in normalized if code not in primary_codes]
+        if missing:
+            try:
+                fallback_frame = self.fallback.fetch_latest(missing, target_date)
+            except Exception as exc:  # noqa: BLE001 - preserve a usable partial primary snapshot
+                detail = f"{type(exc).__name__}: {exc}"
+                self.last_error = (
+                    f"{self.last_error}; fallback={detail}"
+                    if self.last_error
+                    else f"fallback={detail}"
+                )
+                if not primary_codes:
+                    raise RuntimeError(
+                        "All live minute providers failed; " + self.last_error
+                    ) from exc
+                logger.warning(
+                    "Fallback live minute provider failed for missing symbols; "
+                    "retaining the primary partial snapshot: %s",
+                    exc,
+                )
+                fallback_codes = set()
+            else:
+                if not fallback_frame.empty:
+                    frames.append(fallback_frame)
+                fallback_codes = (
+                    set(fallback_frame["stock_code"].astype(str).str.zfill(6))
+                    if not fallback_frame.empty
+                    else set()
+                )
+        else:
+            fallback_codes = set()
+        self.last_failed = sorted(set(normalized) - primary_codes - fallback_codes)
+        if primary_codes and fallback_codes:
+            self.last_provider = "eastmoney_1m+sina_1m"
+        elif primary_codes:
+            self.last_provider = "eastmoney_1m"
+        else:
+            self.last_provider = "sina_1m"
+        nonempty = [frame for frame in frames if not frame.empty]
+        return (
+            pd.concat(nonempty, ignore_index=True)
+            .drop_duplicates(["stock_code", "datetime"], keep="first")
+            .sort_values(["stock_code", "datetime"])
+            .reset_index(drop=True)
+            if nonempty
+            else pd.DataFrame(columns=EASTMONEY_5MIN_COLUMNS)
+        )
+
+    @property
+    def metrics(self) -> dict[str, Any]:
+        return {
+            "selected": self.last_provider,
+            "primary_error": self.last_error,
+            "primary": dict(self.primary.request_gate.stats),
+            "fallback": dict(self.fallback.request_gate.stats),
+            "rate_limited": (
+                int(self.primary.request_gate.stats.get("rate_limited", 0))
+                + int(self.fallback.request_gate.stats.get("rate_limited", 0))
+            ),
+        }
 
 
 def parse_eastmoney_1min_trends(

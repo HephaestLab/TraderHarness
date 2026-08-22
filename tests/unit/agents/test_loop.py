@@ -12,6 +12,7 @@ import pytest
 
 from traderharness.agents.loop import (
     AgentLoop,
+    _live_event_text,
     _semantic_premarket_allowed_tools,
     _serialize_tool_result,
 )
@@ -324,6 +325,62 @@ class TestTruncatedOutputHandling:
         assert "Output truncated" in caplog.text
 
 
+class TestCooperativeCancellation:
+    @pytest.mark.asyncio
+    async def test_cancelled_before_iteration_skips_llm_request(self):
+        client = StubClient([{"content": "must not be consumed"}])
+        loop = AgentLoop(client, ToolRegistry(), "system")
+        loop.cancel_check = lambda: True
+        loop._context.add_message({"role": "user", "content": "brief"})
+
+        await loop._run_phase(_ctx(), max_iter=1, exclude_tools=set())
+
+        assert client.calls == []
+
+    @pytest.mark.asyncio
+    async def test_cancelled_during_llm_request_drops_returned_order(self):
+        cancelled = False
+        executed = []
+
+        class CancellingClient:
+            async def chat(self, messages, tools=None, temperature=None):
+                nonlocal cancelled
+                cancelled = True
+                return {
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "late-order",
+                            "type": "function",
+                            "function": {"name": "place_order", "arguments": "{}"},
+                        }
+                    ],
+                }
+
+        from traderharness.tools.registry import ToolDefinition
+
+        async def handler(params, ctx):
+            executed.append(params)
+            return {"success": True}
+
+        registry = ToolRegistry()
+        registry.register(
+            ToolDefinition(
+                name="place_order",
+                description="order",
+                parameters={"type": "object", "properties": {}},
+                handler=handler,
+            )
+        )
+        loop = AgentLoop(CancellingClient(), registry, "system")
+        loop.cancel_check = lambda: cancelled
+        loop._context.add_message({"role": "user", "content": "trade"})
+
+        await loop._run_phase(_ctx(), max_iter=1, exclude_tools=set())
+
+        assert executed == []
+
+
 class TestExplicitPhaseProtocol:
     @staticmethod
     def _call(call_id, name, arguments=None):
@@ -577,6 +634,14 @@ class TestSerializeToolResult:
             {"revenue": float("nan"), "eps": float("inf"), "ok": 1.5}
         )
         assert text == '{"revenue": null, "eps": null, "ok": 1.5}'
+
+
+def test_live_event_text_is_bounded_without_changing_full_trajectory_payload():
+    text, truncated = _live_event_text("x" * 5000)
+
+    assert truncated is True
+    assert len(text) == 4001
+    assert text.endswith("…")
 
 
 def test_semantic_premarket_stages_constrain_research_workflow_not_verdict():

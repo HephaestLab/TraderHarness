@@ -9,10 +9,12 @@ import pytest
 import traderharness.data.update_providers as update_providers
 from traderharness.data.update_providers import (
     BaostockProvider,
+    CascadingLiveMinuteProvider,
     CascadingMinuteProvider,
     CninfoAnnouncementsProvider,
     Eastmoney1MinProvider,
     Eastmoney5MinProvider,
+    Sina1MinProvider,
     baostock_code,
     cls_sign,
     parse_baostock_dividends,
@@ -20,6 +22,7 @@ from traderharness.data.update_providers import (
     parse_baostock_rows,
     parse_baostock_valuation_rows,
     parse_cninfo_announcement,
+    parse_eastmoney_1min_trends,
     parse_eastmoney_5min_klines,
     retry_failed_batches,
 )
@@ -401,6 +404,119 @@ def test_eastmoney_one_minute_provider_uses_recent_trends_endpoint(tmp_path):
     assert client.params["ndays"] == "5"
     assert frame.iloc[0]["close"] == 1500
     assert frame.iloc[0]["volume"] == 10_000
+
+
+def test_eastmoney_one_minute_live_constructor_does_not_require_staging_path():
+    provider = Eastmoney1MinProvider(workers=1, max_attempts=1)
+
+    assert provider.interval_minutes == 1
+    assert provider.cache_dir.name == "traderharness-eastmoney-1m"
+
+
+def test_sina_one_minute_provider_normalizes_recent_rows(tmp_path):
+    provider = Sina1MinProvider(
+        workers=1,
+        max_attempts=1,
+        request_delay=0,
+    )
+
+    class Client:
+        def request(self, method, url, **kwargs):
+            assert kwargs["params"]["symbol"] == "sh600519"
+            assert kwargs["params"]["datalen"] == "300"
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "day": "2026-08-21 09:31:00",
+                        "open": "10",
+                        "high": "10.2",
+                        "low": "9.9",
+                        "close": "10.1",
+                        "volume": "1200",
+                        "amount": "12120",
+                    },
+                    {
+                        "day": "2026-08-20 15:00:00",
+                        "open": "9",
+                        "high": "9",
+                        "low": "9",
+                        "close": "9",
+                        "volume": "1",
+                        "amount": "9",
+                    },
+                ],
+                request=httpx.Request(method, url),
+            )
+
+    frame = provider._fetch_one(Client(), "600519", date(2026, 8, 21))
+
+    assert frame["stock_code"].tolist() == ["600519"]
+    assert frame.iloc[0]["volume"] == 1200
+
+
+def test_live_minute_cascade_cools_failed_primary_and_backfills_only_missing():
+    class Provider:
+        def __init__(self, *, frame=None, error=None):
+            self.frame = frame
+            self.error = error
+            self.calls = []
+            self.request_gate = type("Gate", (), {"stats": {"rate_limited": 0}})()
+
+        def fetch_latest(self, codes, target_date):
+            self.calls.append(list(codes))
+            if self.error:
+                raise self.error
+            return self.frame.copy()
+
+    fallback_frame = parse_eastmoney_1min_trends(
+        "600519",
+        ["2026-08-21 09:31,10,10,10.1,9.9,100,1000,0"],
+        start=date(2026, 8, 21),
+        end=date(2026, 8, 21),
+    )
+    primary = Provider(error=RuntimeError("disconnected"))
+    fallback = Provider(frame=fallback_frame)
+    cascade = CascadingLiveMinuteProvider(primary, fallback, primary_cooldown=300)
+
+    first = cascade.fetch_latest(["600519"], date(2026, 8, 21))
+    second = cascade.fetch_latest(["600519"], date(2026, 8, 21))
+
+    assert not first.empty and not second.empty
+    assert primary.calls == [["600519"]]
+    assert fallback.calls == [["600519"], ["600519"]]
+    assert cascade.last_provider == "sina_1m"
+
+
+def test_live_minute_cascade_retains_partial_primary_when_fallback_fails():
+    class Provider:
+        def __init__(self, *, frame=None, error=None):
+            self.frame = frame
+            self.error = error
+            self.request_gate = type("Gate", (), {"stats": {"rate_limited": 0}})()
+
+        def fetch_latest(self, codes, target_date):
+            if self.error:
+                raise self.error
+            return self.frame.copy()
+
+    primary_frame = parse_eastmoney_1min_trends(
+        "600519",
+        ["2026-08-21 09:31,10,10,10.1,9.9,100,1000,0"],
+        start=date(2026, 8, 21),
+        end=date(2026, 8, 21),
+    )
+    cascade = CascadingLiveMinuteProvider(
+        Provider(frame=primary_frame),
+        Provider(error=RuntimeError("fallback unavailable")),
+    )
+
+    result = cascade.fetch_latest(["000001", "600519"], date(2026, 8, 21))
+
+    assert result["stock_code"].tolist() == ["600519"]
+    assert cascade.last_failed == ["000001"]
+    assert cascade.last_provider == "eastmoney_1m"
+    assert "fallback unavailable" in str(cascade.last_error)
 
 
 def test_cascading_minute_provider_backfills_only_uncached_codes():

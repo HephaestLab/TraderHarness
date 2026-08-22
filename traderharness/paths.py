@@ -39,6 +39,10 @@ def agents_dir() -> Path:
     return get_home() / "agents"
 
 
+def paper_dir() -> Path:
+    return get_home() / "paper"
+
+
 def llm_cache_dir() -> Path:
     return get_home() / "llm_cache"
 

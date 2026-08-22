@@ -3,6 +3,7 @@ import type {
   LLMConfig,
   LLMTestResult,
   MaskingShowcase,
+  PaperSession,
   ResultAnalysis,
   ResultDocument,
   ResultSummary,
@@ -78,6 +79,25 @@ export const api = {
   run: (id: string) => request<RunState>(`/api/runs/${encodeURIComponent(id)}`),
   cancelRun: (id: string) =>
     request<RunState>(`/api/runs/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  startPaper: (payload: {
+    agent_id: string;
+    session_date: string;
+    initial_cash: number;
+    mode: "live" | "accelerated";
+    poll_seconds?: number;
+    max_attention_codes?: number;
+  }) =>
+    request<PaperSession>("/api/paper/sessions", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  paperSessions: () => request<PaperSession[]>("/api/paper/sessions"),
+  paperSession: (id: string) =>
+    request<PaperSession>(`/api/paper/sessions/${encodeURIComponent(id)}`),
+  cancelPaper: (id: string) =>
+    request<{ id: string; status: string }>(`/api/paper/sessions/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
   getLLMConfig: () => request<LLMConfig>("/api/config/llm"),
   saveLLMConfig: (payload: { api_key?: string; base_url?: string; clear?: boolean }) =>
     request<LLMConfig>("/api/config/llm", {
@@ -94,4 +114,9 @@ export const api = {
 export function eventSocketUrl(runId: string): string {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   return `${protocol}//${window.location.host}/api/runs/${encodeURIComponent(runId)}/events`;
+}
+
+export function paperEventSocketUrl(sessionId: string): string {
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${protocol}//${window.location.host}/api/paper/sessions/${encodeURIComponent(sessionId)}/events`;
 }

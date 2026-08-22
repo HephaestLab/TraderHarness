@@ -62,6 +62,9 @@ class LiveFeed:
             "tool_call",
             "order_placed",
             "breakpoint_hit",
+            "paper_clock",
+            "paper_quote",
+            "paper_snapshot",
         ):
             self._event_bus.on(event_name, self._make_handler(event_name))
 

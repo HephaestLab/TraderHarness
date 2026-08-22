@@ -7,6 +7,7 @@ import {
   GitCompareArrows,
   LayoutDashboard,
   Radio,
+  WalletCards,
 } from "lucide-react";
 import { NavLink, Outlet } from "react-router-dom";
 
@@ -14,6 +15,7 @@ const navigation = [
   { to: "/", label: "工作台", icon: LayoutDashboard },
   { to: "/agents", label: "智能体", icon: Bot },
   { to: "/live", label: "实时运行", icon: Radio },
+  { to: "/paper", label: "每日模拟盘", icon: WalletCards },
   { to: "/results", label: "回测结果", icon: ChartNoAxesCombined },
   { to: "/compare", label: "智能体对比", icon: GitCompareArrows },
   { to: "/showcase", label: "Masking A/B", icon: FlaskConical },
