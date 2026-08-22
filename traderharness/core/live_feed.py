@@ -65,6 +65,8 @@ class LiveFeed:
             "paper_clock",
             "paper_quote",
             "paper_snapshot",
+            "paper_market_pulse",
+            "paper_news",
         ):
             self._event_bus.on(event_name, self._make_handler(event_name))
 

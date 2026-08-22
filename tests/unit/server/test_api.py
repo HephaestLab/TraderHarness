@@ -56,7 +56,8 @@ class FakePaperManager:
         return {
             "id": "paper-1",
             "status": "running",
-            "agent_id": request.agent_id,
+            "agent_id": request.agent_ids[0],
+            "agent_ids": request.agent_ids,
             "session_date": request.session_date,
         }
 
@@ -739,7 +740,7 @@ def test_paper_session_crud_validation_and_event_stream(tmp_path):
         started = client.post(
             "/api/paper/sessions",
             json={
-                "agent_id": "momentum-dragon",
+                "agent_ids": ["momentum-dragon", "value-sage"],
                 "session_date": "2026-08-21",
                 "initial_cash": 1000000,
                 "mode": "accelerated",
@@ -763,6 +764,7 @@ def test_paper_session_crud_validation_and_event_stream(tmp_path):
         )
 
         assert started.status_code == 202
+        assert started.json()["agent_ids"] == ["momentum-dragon", "value-sage"]
         assert client.get("/api/paper/sessions").json()[0]["id"] == "paper-1"
         assert client.get("/api/paper/sessions/paper-1").status_code == 200
         with client.websocket_connect("/api/paper/sessions/paper-1/events") as websocket:
@@ -779,6 +781,7 @@ def test_paper_session_crud_validation_and_event_stream(tmp_path):
         assert client.delete("/api/paper/sessions/paper-1").status_code == 202
 
     assert paper.started[0].poll_seconds == 60
+    assert paper.started[0].agent_ids == ["momentum-dragon", "value-sage"]
     assert invalid_day.status_code == 422
     assert historical_live.status_code == 422
 

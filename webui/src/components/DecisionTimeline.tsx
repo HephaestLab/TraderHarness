@@ -2,10 +2,21 @@ import { BrainCircuit, Search, Wrench } from "lucide-react";
 import { useMemo, useState } from "react";
 import { formatDate, phaseLabel, toolLabel, windowLabel } from "../locale";
 import type { AnalysisDay, AnalyzedAgent, DecisionEvidence, ToolEvidence } from "../types";
+import { ExpandableText, StructuredPayload } from "./StructuredPayload";
 
-function json(value: unknown) {
-  if (typeof value === "string") return value;
-  return JSON.stringify(value, null, 2) ?? "";
+function searchPreview(value: unknown, budget = 12_000, depth = 0): string {
+  if (budget <= 0 || depth > 4 || value == null) return "";
+  if (typeof value !== "object") return String(value).slice(0, budget);
+  const entries = Array.isArray(value)
+    ? value.slice(0, 80).map((item, index) => [String(index), item] as const)
+    : Object.entries(value as Record<string, unknown>).slice(0, 80);
+  let result = "";
+  for (const [key, item] of entries) {
+    const chunk = `${key} ${searchPreview(item, budget - result.length, depth + 1)} `;
+    result += chunk.slice(0, budget - result.length);
+    if (result.length >= budget) break;
+  }
+  return result;
 }
 
 function DaySummary({ day }: { day: AnalysisDay }) {
@@ -33,17 +44,17 @@ function DecisionCard({ decision, index }: { decision: DecisionEvidence; index: 
         {decision.reasoning ? (
           <section className="reasoning-block">
             <span>模型推理记录</span>
-            <p>{decision.reasoning}</p>
+            <ExpandableText text={decision.reasoning} />
           </section>
         ) : null}
         <section className="response-block">
           <span>智能体回复</span>
-          <p>{decision.content || "未记录文本回复。"}</p>
+          <ExpandableText text={decision.content || "未记录文本回复。"} />
         </section>
         {decision.tool_calls.length ? (
           <details>
             <summary>请求了 {decision.tool_calls.length} 次工具调用</summary>
-            <pre>{json(decision.tool_calls)}</pre>
+            <StructuredPayload value={decision.tool_calls} />
           </details>
         ) : null}
       </div>
@@ -62,11 +73,11 @@ function ToolCard({ tool }: { tool: ToolEvidence }) {
         </header>
         <details>
           <summary>调用参数</summary>
-          <pre>{json(tool.args)}</pre>
+          <StructuredPayload value={tool.args} />
         </details>
         <details>
           <summary>完整结果</summary>
-          <pre>{json(tool.result)}</pre>
+          <StructuredPayload value={tool.result} />
         </details>
       </div>
     </article>
@@ -91,9 +102,10 @@ export function DecisionTimeline({ agent }: { agent: AnalyzedAgent }) {
       const corpus = `${item.content} ${item.reasoning}`.toLowerCase();
       return matchesPhase && corpus.includes(query.toLowerCase());
     });
+  const normalizedQuery = query.trim().toLowerCase();
   const tools = current.tool_indices
     .map((index) => agent.tools[index])
-    .filter((tool) => `${tool.name} ${json(tool.args)} ${json(tool.result)}`.toLowerCase().includes(query.toLowerCase()));
+    .filter((tool) => !normalizedQuery || `${tool.name} ${searchPreview(tool.args)} ${searchPreview(tool.result)}`.toLowerCase().includes(normalizedQuery));
 
   return (
     <div className="decision-workbench">

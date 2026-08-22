@@ -319,12 +319,29 @@ export interface PaperPosition {
   unrealized_pnl?: number;
 }
 
+export interface PaperAgentState {
+  agent_id: string;
+  agent_name: string;
+  model?: string;
+  status: "queued" | "running" | "cancelling" | "cancelled" | "done" | "failed";
+  phase: string;
+  account: PaperAccount;
+  positions: PaperPosition[];
+  trades: Trade[];
+  equity_curve: Array<[string, number]>;
+  quote_health?: PaperSession["quote_health"];
+  last_event?: LiveEvent | null;
+  error?: string | null;
+}
+
 export interface PaperSession {
   id: string;
   status: "running" | "cancelling" | "cancelled" | "done" | "failed";
   created_at: string;
   agent_id: string;
   agent_name: string;
+  agent_ids?: string[];
+  agents?: PaperAgentState[];
   session_date: string;
   mode: "live" | "accelerated";
   initial_cash: number;
@@ -345,6 +362,7 @@ export interface PaperSession {
     as_of?: string;
     request_metrics?: Record<string, unknown>;
   };
+  broadcasts?: LiveEvent[];
   last_event?: LiveEvent | null;
 }
 

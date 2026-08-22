@@ -1,6 +1,6 @@
 """Parsing and signing contracts for production incremental providers."""
 
-from datetime import date
+from datetime import date, datetime
 
 import httpx
 import pandas as pd
@@ -11,6 +11,7 @@ from traderharness.data.update_providers import (
     BaostockProvider,
     CascadingLiveMinuteProvider,
     CascadingMinuteProvider,
+    ClsNewsProvider,
     CninfoAnnouncementsProvider,
     Eastmoney1MinProvider,
     Eastmoney5MinProvider,
@@ -152,6 +153,39 @@ def test_parse_eastmoney_5min_converts_lots_to_canonical_shares():
 
 def test_cls_signature_is_order_independent():
     assert cls_sign({"b": "2", "a": "1"}) == cls_sign({"a": "1", "b": "2"})
+
+
+def test_cls_latest_flash_fetch_uses_one_page_and_filters_window(monkeypatch):
+    provider = ClsNewsProvider(delay=0)
+    calls = []
+
+    def page(client, last_time):
+        calls.append(last_time)
+        return [
+            {
+                "id": "inside",
+                "ctime": int(datetime(2026, 8, 21, 9, 45).timestamp()),
+                "content": "盘中重要快讯",
+                "level": "A",
+                "tags": [{"name": "宏观"}],
+                "stock_list": [],
+            },
+            {
+                "id": "outside",
+                "ctime": int(datetime(2026, 8, 21, 9, 20).timestamp()),
+                "content": "窗口外快讯",
+            },
+        ]
+
+    monkeypatch.setattr(provider, "_page", page)
+    frame = provider.fetch_latest(
+        datetime(2026, 8, 21, 9, 30),
+        datetime(2026, 8, 21, 9, 50),
+    )
+
+    assert len(calls) == 1
+    assert frame["id"].tolist() == ["inside"]
+    assert frame.iloc[0]["tags"] == "宏观"
 
 
 def test_parse_cninfo_record():

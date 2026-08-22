@@ -10,6 +10,31 @@ TraderHarness paper sessions reuse the same `ToolAgent`, phase protocol, conditi
 `TradingBus.place_order()` execution path as backtests. Pre-market research, the two open windows,
 the two close windows, tool corrections, and Agent memory therefore remain auditable.
 
+## Multi-Agent arena
+
+A paper session can host one to four Agents. Every Agent has isolated cash, positions, conditional
+orders, fills, equity, and error state while sharing the same session date, initial capital, market
+cutoffs, matching rules, and fee model. The arena overlays their equity curves and live ranking; an
+Agent selector focuses positions, fills, model decisions, and the complete work trace.
+
+Agents execute sequentially within a trading day to preserve deterministic results and avoid races on
+shared in-memory market frames. Each isolated portfolio still receives only the snapshot visible at
+the relevant cutoff. This is a fair strategy/Agent comparison, not a concurrent latency benchmark.
+
+## Minute market and news broadcast
+
+The arena turns attention-set quotes into a compact market pulse with last price, intraday change,
+and recent minute-volume ratio. Material price or volume moves receive higher visual priority. Its
+news desk presents point-in-time-safe items that matter to the current work:
+
+- announcements related to positions, watchlists, or active conditional orders;
+- high-impact policy flashes from major Chinese financial and government authorities;
+- provider-classified high-priority market flashes.
+
+The live flash adapter fetches at most one page per polling interval and inherits the data pipeline's
+rate gate, backoff, and circuit breaker. Broadcast items are deduplicated for presentation; Agents
+continue to access the complete point-in-time-safe stores through their normal tools.
+
 ## Clock modes
 
 - **Live one-minute** is for today or a future exchange session. From market open, TraderHarness
@@ -32,9 +57,10 @@ TraderHarness does not rotate proxies to bypass an upstream limit.
 
 Start the local console and open `/paper`:
 
-1. select an Agent, session date, clock mode, and virtual capital;
+1. select one to four Agents, session date, clock mode, and virtual capital per account;
 2. start the daily paper session;
-3. inspect account equity, positions, fills, tool/phase trajectory, and model messages;
+3. compare equity and ranking, then inspect important broadcasts, positions, fills, tool/phase
+   trajectory, and model messages;
 4. use **Safe stop** to cancel cooperatively.
 
 State is stored at `~/.traderharness/paper/<session-id>/state.json`; ordered UI events are appended to
@@ -43,6 +69,11 @@ State is stored at `~/.traderharness/paper/<session-id>/state.json`; ordered UI 
 interrupted session as failed instead of pretending that it continued, while preserving the audit
 journal. Cooperative safe-stop also drops any order tool returned by an in-flight model request after
 cancellation and closes the session as `cancelled`.
+
+The audit workbench parses tool arguments and bounded result previews into readable fields. Python
+submitted through tools such as `execute_code` is rendered with line numbers, its own scrolling area,
+and a copy action instead of an escaped JSON string. The Results page reuses the same structured
+renderer, so backtest and paper-session traces have a consistent reading model.
 
 ## Quote-integrity rules
 

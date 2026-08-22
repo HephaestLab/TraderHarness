@@ -422,6 +422,7 @@ class ToolAgent:
         memory_dir: str | None = None,
         workspace_root: str | None = None,
         live_file: str | None = None,
+        live_file_reset: bool = True,
         event_bus: EventBus | None = None,
         mask_dates: bool = True,
         committee=None,
@@ -562,7 +563,11 @@ class ToolAgent:
 
         from traderharness.trajectory.collector import TrajectoryCollector
 
-        self._trajectory = TrajectoryCollector(agent_id=agent_id, live_file=live_file)
+        self._trajectory = TrajectoryCollector(
+            agent_id=agent_id,
+            live_file=live_file,
+            reset_live_file=live_file_reset,
+        )
 
         self._loop = AgentLoop(
             llm_client=llm_client,

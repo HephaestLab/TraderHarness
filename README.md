@@ -84,6 +84,8 @@ traderharness export sft result.json --output training.jsonl
 
 内置的本地控制台（FastAPI + React）让回测变成可以围观的现场：像素风办公区实时直播回放过程，绩效、逐笔档案和跨 run 对比在同一个窗口里联动更新。它是本地研究工具——请保持只监听 localhost，不要暴露到公网。
 
+每日模拟盘现在支持 1–4 个 Agent 同场：独立账户叠加净值曲线与实时排名，分钟量价异动、持仓公告和重要政策快讯进入统一播报台。审计工作台把模型判断、工具参数/返回、Python 代码和订单组织成可筛选时间线；完整 JSONL 仍可下载核验。详见[每日模拟盘](docs/paper-trading.md)。
+
 <p align="center">
   <img src="docs/assets/live-control-room.png" alt="TraderHarness 实时控制室正在直播历史回放" width="920">
 </p>
@@ -343,7 +345,7 @@ npm run test:e2e
 | 状态 | 事项 |
 |---|---|
 | ✅ v1.0 已交付 | 回测引擎、遮罩、replay/轨迹导出、多 Agent 对比、委员会、研究控制台 |
-| ✅ v1.1 已交付 | 每日模拟盘（实时 1 分钟小型关注池、同一撮合路径、持久化审计轨迹） |
+| ✅ v1.1 已交付 | 多 Agent 每日模拟盘（分钟关注池、重要信息播报、同一撮合路径、结构化审计轨迹） |
 | 📋 规划中 | 实盘 Broker adapter |
 | 📋 规划中 | 面向不可信/第三方 Agent 卡片的强化沙盒 |
 | ❌ 非目标 | 公开排行榜、多租户托管服务、市场冲击建模 |

@@ -63,3 +63,33 @@ test("one-click masking showcase remains usable on a narrow viewport", async ({ 
   await page.getByRole("tab", { name: "Unmasked control" }).click();
   await expect(page.locator(".showcase-condition")).toBeVisible();
 });
+
+test("paper arena supports multi-agent selection and responsive audit navigation", async ({ page }) => {
+  await page.goto("/paper");
+  await expect(page.getByRole("heading", { name: "多 Agent 每日模拟盘" })).toBeVisible();
+  await expect(page.getByText("市场播报台")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "可解释工作轨迹" })).toBeVisible();
+
+  const candidates = page.locator(".arena-agent-options button");
+  await expect(candidates.first()).toBeVisible();
+  expect(await candidates.count()).toBeGreaterThanOrEqual(2);
+  for (let index = 2; index < await candidates.count(); index += 1) {
+    if (await candidates.nth(index).getAttribute("aria-pressed") === "true") {
+      await candidates.nth(index).click();
+    }
+  }
+  for (let index = 0; index < 2; index += 1) {
+    if (await candidates.nth(index).getAttribute("aria-pressed") !== "true") {
+      await candidates.nth(index).click();
+    }
+  }
+  await expect(candidates.nth(0)).toHaveAttribute("aria-pressed", "true");
+  await expect(candidates.nth(1)).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("button", { name: /启动 [2-4] 个 Agent/ })).toBeVisible();
+  await page.getByRole("button", { name: /工具与代码/ }).click();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByRole("heading", { name: "多 Agent 每日模拟盘" })).toBeVisible();
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+  expect(overflow).toBeLessThanOrEqual(1);
+});

@@ -80,7 +80,7 @@ export const api = {
   cancelRun: (id: string) =>
     request<RunState>(`/api/runs/${encodeURIComponent(id)}`, { method: "DELETE" }),
   startPaper: (payload: {
-    agent_id: string;
+    agent_ids: string[];
     session_date: string;
     initial_cash: number;
     mode: "live" | "accelerated";

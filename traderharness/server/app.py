@@ -6,6 +6,7 @@ import asyncio
 import copy
 import json
 import os
+import re
 from datetime import date, timedelta
 from ipaddress import ip_address
 from pathlib import Path
@@ -122,12 +123,36 @@ class RunRequest(BaseModel):
 class PaperSessionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    agent_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{1,63}$")
+    agent_ids: list[str] = Field(default_factory=list, max_length=6)
+    agent_id: str | None = None
     session_date: str
     initial_cash: int = Field(default=1_000_000, gt=0)
     mode: Literal["live", "accelerated"] = "live"
     poll_seconds: int = Field(default=60, ge=15, le=300)
     max_attention_codes: int = Field(default=8, ge=1, le=20)
+
+    @field_validator("agent_ids")
+    @classmethod
+    def valid_agent_ids(cls, values: list[str]) -> list[str]:
+        pattern = re.compile(r"^[a-z0-9][a-z0-9-]{1,63}$")
+        if any(not pattern.fullmatch(value) for value in values):
+            raise ValueError("Agent ID 只能包含小写字母、数字和连字符")
+        if len(set(values)) != len(values):
+            raise ValueError("同一个 Agent 不能在模拟盘中重复选择")
+        return values
+
+    @model_validator(mode="after")
+    def normalize_agent_selection(self) -> PaperSessionRequest:
+        if self.agent_id and not self.agent_ids:
+            self.agent_ids = [self.agent_id]
+        elif self.agent_id and self.agent_ids and self.agent_id not in self.agent_ids:
+            raise ValueError("agent_id 与 agent_ids 冲突")
+        if not self.agent_ids:
+            raise ValueError("至少选择一个 Agent")
+        pattern = re.compile(r"^[a-z0-9][a-z0-9-]{1,63}$")
+        if any(not pattern.fullmatch(value) for value in self.agent_ids):
+            raise ValueError("Agent ID 只能包含小写字母、数字和连字符")
+        return self
 
     @field_validator("session_date")
     @classmethod

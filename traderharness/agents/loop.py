@@ -1221,6 +1221,7 @@ class AgentLoop:
                     success="error" not in result,
                     error=result.get("error"),
                     error_code=result.get("error_code"),
+                    result_preview=_serialize_tool_result(result),
                 )
                 if self.trajectory:
                     self.trajectory.record_step(

@@ -1450,6 +1450,47 @@ class ClsNewsProvider:
                 time.sleep(self.delay)
         return pd.DataFrame(records)
 
+    def fetch_latest(
+        self,
+        since: datetime,
+        until: datetime | None = None,
+    ) -> pd.DataFrame:
+        """Fetch one latest flash page for paper-trading broadcast.
+
+        This deliberately performs one rate-gated request instead of walking
+        historical pages. The caller de-duplicates IDs across minute polls.
+        """
+        upper = until or datetime.now()
+        with httpx.Client(headers=CLS_HEADERS, timeout=20) as client:
+            items = self._page(client, int(upper.timestamp()) + 1)
+        records = []
+        for item in items:
+            ctime = int(item.get("ctime", 0))
+            displayed = datetime.fromtimestamp(ctime) if ctime else None
+            if displayed is None or displayed < since or displayed > upper:
+                continue
+            records.append(
+                {
+                    "id": item.get("id", ""),
+                    "title": item.get("title", ""),
+                    "content": item.get("content", ""),
+                    "ctime": ctime,
+                    "display_time": displayed,
+                    "level": item.get("level", ""),
+                    "tags": ",".join(
+                        tag.get("name", "")
+                        for tag in item.get("tags", [])
+                        if isinstance(tag, dict)
+                    ),
+                    "stock_list": ",".join(
+                        stock.get("name", "")
+                        for stock in item.get("stock_list", [])
+                        if isinstance(stock, dict)
+                    ),
+                }
+            )
+        return pd.DataFrame(records)
+
     def _page(self, client: httpx.Client, last_time: int) -> list[dict]:
         params = {
             "app": "CailianpressWeb",

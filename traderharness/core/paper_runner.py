@@ -6,7 +6,7 @@ import asyncio
 import logging
 import threading
 from dataclasses import dataclass
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -25,6 +25,165 @@ PHASE_CUTOFFS = {
     "close_1": time(14, 50),
     "close_2": time(15, 0),
 }
+
+PHASE_WINDOWS = {
+    "open_1": (time(9, 30), time(9, 50)),
+    "open_2": (time(9, 50), time(10, 0)),
+    "close_1": (time(10, 0), time(14, 50)),
+    "close_2": (time(14, 50), time(15, 0)),
+}
+
+
+class _AgentEventBus:
+    """Inject Agent identity into loop/tool events before the shared live feed."""
+
+    def __init__(self, target, *, agent_id: str, agent_name: str) -> None:
+        self._target = target
+        self._agent_id = agent_id
+        self._agent_name = agent_name
+
+    def emit(self, event: str, **kwargs: Any) -> None:
+        payload = dict(kwargs)
+        payload.setdefault("agent_id", self._agent_id)
+        payload.setdefault("agent_name", self._agent_name)
+        self._target.emit(event, **payload)
+
+
+def build_market_pulse(
+    frame: pd.DataFrame,
+    *,
+    cutoff: datetime,
+    codes: list[str],
+    names: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Summarize visible minute bars into a compact human-facing market pulse."""
+    names = names or {}
+    if frame.empty or "datetime" not in frame.columns:
+        return {"advancers": 0, "decliners": 0, "unchanged": 0, "items": []}
+    work = frame.copy()
+    work["stock_code"] = work["stock_code"].astype(str).str.zfill(6)
+    work["datetime"] = pd.to_datetime(work["datetime"], errors="coerce")
+    work = work[
+        work["stock_code"].isin({str(code).zfill(6) for code in codes})
+        & (work["datetime"] <= pd.Timestamp(cutoff).tz_localize(None))
+    ].sort_values(["stock_code", "datetime"])
+    items: list[dict[str, Any]] = []
+    for code, bars in work.groupby("stock_code", sort=True):
+        bars = bars.dropna(subset=["open", "close"])
+        if bars.empty:
+            continue
+        first_open = float(bars.iloc[0]["open"])
+        last = bars.iloc[-1]
+        last_price = float(last["close"])
+        change_pct = (last_price / first_open - 1) * 100 if first_open else 0.0
+        volumes = pd.to_numeric(bars.get("volume"), errors="coerce").fillna(0)
+        baseline = float(volumes.iloc[:-1].tail(5).median()) if len(volumes) > 1 else 0.0
+        volume_ratio = float(volumes.iloc[-1] / baseline) if baseline > 0 else 0.0
+        importance = "high" if abs(change_pct) >= 3 or volume_ratio >= 3 else (
+            "medium" if abs(change_pct) >= 1.5 or volume_ratio >= 1.8 else "normal"
+        )
+        items.append(
+            {
+                "stock_code": code,
+                "stock_name": names.get(code, code),
+                "last_price": round(last_price, 3),
+                "change_pct": round(change_pct, 2),
+                "volume_ratio": round(volume_ratio, 2),
+                "importance": importance,
+                "as_of": str(last["datetime"]),
+            }
+        )
+    items.sort(
+        key=lambda item: (
+            item["importance"] == "high",
+            abs(item["change_pct"]),
+            item["volume_ratio"],
+        ),
+        reverse=True,
+    )
+    return {
+        "advancers": sum(item["change_pct"] > 0 for item in items),
+        "decliners": sum(item["change_pct"] < 0 for item in items),
+        "unchanged": sum(item["change_pct"] == 0 for item in items),
+        "items": items[:8],
+    }
+
+
+def select_news_broadcasts(
+    news: pd.DataFrame,
+    announcements: pd.DataFrame,
+    *,
+    target_codes: set[str],
+    window_start: datetime,
+    window_end: datetime,
+    max_items: int = 8,
+) -> list[dict[str, Any]]:
+    """Select related announcements and important flashes for the arena tape."""
+    candidates: list[tuple[int, datetime, dict[str, Any]]] = []
+    if not announcements.empty and {
+        "stock_code",
+        "title",
+        "announcement_time",
+    }.issubset(announcements.columns):
+        times = pd.to_datetime(announcements["announcement_time"], errors="coerce")
+        codes = announcements["stock_code"].astype(str).str.zfill(6)
+        mask = codes.isin({str(code).zfill(6) for code in target_codes}) & times.between(
+            window_start, window_end, inclusive="left"
+        )
+        for index, row in announcements[mask].iterrows():
+            when = pd.Timestamp(times.loc[index]).to_pydatetime()
+            code = str(row["stock_code"]).zfill(6)
+            candidates.append(
+                (
+                    3,
+                    when,
+                    {
+                        "source_id": f"announcement:{code}:{when.isoformat()}:{row['title']}",
+                        "kind": "announcement",
+                        "importance": "high",
+                        "time": when.isoformat(),
+                        "title": str(row["title"]),
+                        "content": str(row["title"]),
+                        "stock_code": code,
+                        "tags": ["自选/持仓公告"],
+                    },
+                )
+            )
+    if not news.empty and {"display_time", "content"}.issubset(news.columns):
+        times = pd.to_datetime(news["display_time"], errors="coerce")
+        mask = times.between(window_start, window_end, inclusive="left")
+        for index, row in news[mask].iterrows():
+            when = pd.Timestamp(times.loc[index]).to_pydatetime()
+            content = str(row.get("content") or row.get("title") or "").strip()
+            if not content:
+                continue
+            level = str(row.get("level") or "").upper()
+            policy = any(
+                keyword in content
+                for keyword in ("央行", "证监会", "国务院", "财政部", "发改委", "人民银行")
+            )
+            score = 2 if level in {"A", "B", "P0", "P1", "1", "2"} or policy else 1
+            importance = "high" if score == 2 else "normal"
+            source_id = str(row.get("id") or f"flash:{when.isoformat()}:{content[:40]}")
+            tags = [tag for tag in str(row.get("tags") or "").split(",") if tag]
+            candidates.append(
+                (
+                    score,
+                    when,
+                    {
+                        "source_id": source_id,
+                        "kind": "flash",
+                        "importance": importance,
+                        "time": when.isoformat(),
+                        "title": str(row.get("title") or content[:46]),
+                        "content": content[:240],
+                        "stock_code": None,
+                        "tags": tags[:4],
+                    },
+                )
+            )
+    candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    return [item for _, _, item in candidates[:max_items]]
 
 
 def aggregate_one_minute_to_five(frame: pd.DataFrame, cutoff: datetime) -> pd.DataFrame:
@@ -83,7 +242,7 @@ def aggregate_one_minute_to_five(frame: pd.DataFrame, cutoff: datetime) -> pd.Da
 @dataclass(frozen=True)
 class PaperRunConfig:
     session_id: str
-    agent: dict[str, Any]
+    agents: list[dict[str, Any]]
     session_date: date
     initial_cash: float = 1_000_000
     mode: str = "live"
@@ -126,9 +285,14 @@ class PaperTradingRunner:
         self._quote_provider = quote_provider
         self._raw_minutes = pd.DataFrame()
         self._historical_five = pd.DataFrame()
-        self._last_ctx = None
+        self._last_contexts: dict[str, Any] = {}
         self._last_source = "pending"
         self._last_missing: list[str] = []
+        self._last_missing_by_agent: dict[str, list[str]] = {}
+        self._seen_news: set[str] = set()
+        self._raw_live_news = pd.DataFrame()
+        self._news_provider = None
+        self._last_news_poll: datetime | None = None
 
     @property
     def running(self) -> bool:
@@ -182,9 +346,7 @@ class PaperTradingRunner:
                 )
 
     async def _async_run(self):
-        agent = self._build_agent()
-        agent.phase_barrier = self._phase_barrier
-        agent._loop.cancel_check = self._cancel.is_set
+        agents = self._build_agents()
         provider = PaperSnapshotProvider(self.dataset_root)
         engine = BacktestEngine(
             config=EngineConfig(
@@ -204,65 +366,86 @@ class PaperTradingRunner:
             mode=self.config.mode,
         )
         result = await engine.run(
-            agents=[agent],
+            agents=agents,
             start_date=self.config.session_date,
             end_date=self.config.session_date,
         )
-        if self._last_ctx is not None:
-            self._emit_snapshot(self._last_ctx, "complete")
+        for agent_id, ctx in self._last_contexts.items():
+            self._emit_snapshot(agent_id, ctx, "complete")
         return result
 
-    def _build_agent(self):
+    def _build_agents(self):
         from traderharness.agents.llm_client import LLMClient
         from traderharness.agents.tool_agent import ToolAgent
         from traderharness.config.llm_settings import resolve_llm_credentials
 
-        cfg = self.config.agent
-        model = cfg.get("model") or "deepseek-chat"
-        api_key, base_url = resolve_llm_credentials(model)
-        client = LLMClient(
-            model=model,
-            api_key=api_key,
-            base_url=base_url,
-            cache_enabled=False,
+        built = []
+        live_file = (
+            str(Path(self.config.artifact_root) / "trajectory.jsonl")
+            if self.config.artifact_root is not None
+            else None
         )
-        return ToolAgent(
-            agent_id=cfg.get("id", "paper-agent"),
-            name=cfg.get("name", "Paper Agent"),
-            llm_client=client,
-            persona=cfg.get("persona", "你是一位经验丰富的主观交易员。"),
-            initial_cash=Decimal(str(self.config.initial_cash)),
-            max_positions=cfg.get("max_positions", 4),
-            max_position_pct=cfg.get("max_position_pct", 25.0),
-            max_pre_iterations=cfg.get("max_pre_iterations", 10),
-            max_window_iterations=cfg.get("max_window_iterations", 3),
-            require_structured_plan=cfg.get("require_structured_plan", False),
-            require_decision_card=cfg.get("require_decision_card", False),
-            require_phase_completion=cfg.get("require_phase_completion", False),
-            minimum_holding_days=cfg.get("minimum_holding_days", 0),
-            research_interval_days=cfg.get("research_interval_days", 0),
-            sandbox_pre_market_only=cfg.get("sandbox_pre_market_only", False),
-            sandbox_max_calls_per_day=cfg.get("sandbox_max_calls_per_day", 0),
-            watchlist_ttl_days=cfg.get("watchlist_ttl_days", 0),
-            max_active_memories=cfg.get("max_active_memories", 0),
-            max_daily_memories=cfg.get("max_daily_memories", 0),
-            allowed_tools=cfg.get("allowed_tools"),
-            event_bus=self.feed.event_bus,
-            mask_dates=False,
-            live_file=(
-                str(Path(self.config.artifact_root) / "trajectory.jsonl")
-                if self.config.artifact_root is not None
-                else None
-            ),
-        )
+        for index, cfg in enumerate(self.config.agents):
+            agent_id = cfg.get("id", f"paper-agent-{index + 1}")
+            agent_name = cfg.get("name", f"Paper Agent {index + 1}")
+            model = cfg.get("model") or "deepseek-chat"
+            api_key, base_url = resolve_llm_credentials(model)
+            client = LLMClient(
+                model=model,
+                api_key=api_key,
+                base_url=base_url,
+                cache_enabled=False,
+            )
+            agent = ToolAgent(
+                agent_id=agent_id,
+                name=agent_name,
+                llm_client=client,
+                persona=cfg.get("persona", "你是一位经验丰富的主观交易员。"),
+                initial_cash=Decimal(str(self.config.initial_cash)),
+                max_positions=cfg.get("max_positions", 4),
+                max_position_pct=cfg.get("max_position_pct", 25.0),
+                max_pre_iterations=cfg.get("max_pre_iterations", 10),
+                max_window_iterations=cfg.get("max_window_iterations", 3),
+                require_structured_plan=cfg.get("require_structured_plan", False),
+                require_decision_card=cfg.get("require_decision_card", False),
+                require_phase_completion=cfg.get("require_phase_completion", False),
+                minimum_holding_days=cfg.get("minimum_holding_days", 0),
+                research_interval_days=cfg.get("research_interval_days", 0),
+                sandbox_pre_market_only=cfg.get("sandbox_pre_market_only", False),
+                sandbox_max_calls_per_day=cfg.get("sandbox_max_calls_per_day", 0),
+                watchlist_ttl_days=cfg.get("watchlist_ttl_days", 0),
+                max_active_memories=cfg.get("max_active_memories", 0),
+                max_daily_memories=cfg.get("max_daily_memories", 0),
+                allowed_tools=cfg.get("allowed_tools"),
+                event_bus=_AgentEventBus(
+                    self.feed.event_bus,
+                    agent_id=agent_id,
+                    agent_name=agent_name,
+                ),
+                mask_dates=False,
+                live_file=live_file,
+                live_file_reset=index == 0,
+            )
+            agent.phase_barrier = self._barrier_for(agent.agent_id, agent.name)
+            agent._loop.cancel_check = self._cancel.is_set
+            built.append(agent)
+        return built
 
-    async def _phase_barrier(self, phase: str, ctx) -> None:
+    def _barrier_for(self, agent_id: str, agent_name: str):
+        async def barrier(phase: str, ctx) -> None:
+            await self._phase_barrier(agent_id, agent_name, phase, ctx)
+
+        return barrier
+
+    async def _phase_barrier(self, agent_id: str, agent_name: str, phase: str, ctx) -> None:
         if self._cancel.is_set():
             raise RuntimeError("模拟盘已取消")
-        self._last_ctx = ctx
+        self._last_contexts[agent_id] = ctx
         cutoff = datetime.combine(self.config.session_date, PHASE_CUTOFFS[phase]).astimezone()
         self.feed.push(
             "paper_clock",
+            agent_id=agent_id,
+            agent_name=agent_name,
             state="waiting" if self.config.mode == "live" else "advancing",
             phase=phase,
             cutoff=cutoff.isoformat(),
@@ -270,27 +453,37 @@ class PaperTradingRunner:
             mode=self.config.mode,
         )
         if self.config.mode == "live":
-            await self._collect_until(ctx, cutoff)
+            await self._collect_until(agent_id, agent_name, ctx, cutoff)
         else:
-            await self._refresh_quotes(ctx, cutoff)
+            await self._refresh_quotes(agent_id, ctx, cutoff)
         self._publish_market(ctx, cutoff)
-        self._emit_snapshot(ctx, phase)
+        self._emit_market_pulse(agent_id, agent_name, ctx, cutoff)
+        await self._emit_news(agent_id, agent_name, ctx, phase, cutoff)
+        self._emit_snapshot(agent_id, ctx, phase)
 
-    async def _collect_until(self, ctx, cutoff: datetime) -> None:
+    async def _collect_until(
+        self,
+        agent_id: str,
+        agent_name: str,
+        ctx,
+        cutoff: datetime,
+    ) -> None:
         last_poll: datetime | None = None
         while True:
             if self._cancel.is_set():
                 raise RuntimeError("模拟盘已取消")
             now = datetime.now().astimezone()
             if now >= cutoff:
-                await self._refresh_quotes(ctx, cutoff)
+                await self._refresh_quotes(agent_id, ctx, cutoff)
                 return
             market_open = datetime.combine(self.config.session_date, time(9, 30)).astimezone()
             if now >= market_open and self._market_is_collecting(now):
                 if last_poll is None or (now - last_poll).total_seconds() >= self.config.poll_seconds:
-                    await self._refresh_quotes(ctx, now)
+                    await self._refresh_quotes(agent_id, ctx, now)
                     self._publish_market(ctx, now)
-                    self._emit_snapshot(ctx, "collecting")
+                    self._emit_market_pulse(agent_id, agent_name, ctx, now)
+                    await self._emit_news(agent_id, agent_name, ctx, "collecting", now)
+                    self._emit_snapshot(agent_id, ctx, "collecting")
                     last_poll = now
             remaining = max(0.1, min(1.0, (cutoff - now).total_seconds()))
             await asyncio.sleep(remaining)
@@ -321,7 +514,7 @@ class PaperTradingRunner:
             codes.update(code for _, code in sorted(candidates, reverse=True)[:4])
         return sorted(codes)[: self.config.max_attention_codes]
 
-    async def _refresh_quotes(self, ctx, cutoff: datetime) -> None:
+    async def _refresh_quotes(self, agent_id: str, ctx, cutoff: datetime) -> None:
         codes = self._attention_codes(ctx)
         if not codes:
             raise RuntimeError("模拟盘关注池为空，无法取得可撮合行情")
@@ -359,6 +552,7 @@ class PaperTradingRunner:
             self._raw_minutes = self._merge_minutes(self._raw_minutes, frame)
         returned = set(frame.get("stock_code", pd.Series(dtype=str)).astype(str))
         self._last_missing = sorted(set(codes) - returned)
+        self._last_missing_by_agent[agent_id] = self._last_missing
         held_missing = self._last_missing and set(self._last_missing) & set(ctx.portfolio.positions)
         if held_missing:
             raise RuntimeError(
@@ -369,6 +563,7 @@ class PaperTradingRunner:
         provider_metrics = getattr(self._quote_provider, "metrics", None)
         self.feed.push(
             "paper_quote",
+            agent_id=agent_id,
             phase=getattr(ctx, "_current_sub_window", "pre_market"),
             source=self._last_source,
             attention_codes=codes,
@@ -381,6 +576,101 @@ class PaperTradingRunner:
                 else (dict(gate.stats) if gate is not None else {})
             ),
             as_of=cutoff.isoformat(),
+        )
+
+    def _emit_market_pulse(
+        self,
+        agent_id: str,
+        agent_name: str,
+        ctx,
+        cutoff: datetime,
+    ) -> None:
+        codes = self._attention_codes(ctx)
+        source = self._historical_five if self._last_source == "canonical_5m" else self._raw_minutes
+        try:
+            from traderharness.data.stock_registry_loader import get_stock_registry
+
+            registry = get_stock_registry()
+            names = {code: str(registry.get(code, {}).get("name") or code) for code in codes}
+        except Exception:  # noqa: BLE001 - names are presentation metadata only
+            names = {code: code for code in codes}
+        pulse = build_market_pulse(
+            source,
+            cutoff=cutoff.replace(tzinfo=None),
+            codes=codes,
+            names=names,
+        )
+        if not pulse["items"]:
+            return
+        self.feed.push(
+            "paper_market_pulse",
+            agent_id=agent_id,
+            agent_name=agent_name,
+            source=self._last_source,
+            phase=getattr(ctx, "_current_sub_window", "pre_market"),
+            as_of=cutoff.isoformat(),
+            **pulse,
+        )
+
+    async def _emit_news(
+        self,
+        agent_id: str,
+        agent_name: str,
+        ctx,
+        phase: str,
+        cutoff: datetime,
+    ) -> None:
+        start_clock = PHASE_WINDOWS.get(phase, (time(9, 30), cutoff.time()))[0]
+        window_start = datetime.combine(self.config.session_date, start_clock)
+        window_end = cutoff.replace(tzinfo=None)
+        manager = getattr(ctx._bus, "_news_manager", None)
+        if manager is None:
+            return
+        news = manager.news
+        if self.config.mode == "live":
+            now = datetime.now().astimezone()
+            should_poll = (
+                self._last_news_poll is None
+                or (now - self._last_news_poll).total_seconds() >= self.config.poll_seconds
+            )
+            if should_poll:
+                from traderharness.data.update_providers import ClsNewsProvider
+
+                self._news_provider = self._news_provider or ClsNewsProvider()
+                try:
+                    latest = await asyncio.to_thread(
+                        self._news_provider.fetch_latest,
+                        window_start,
+                        window_end,
+                    )
+                except Exception as exc:  # noqa: BLE001 - local point-in-time cache remains available
+                    logger.warning("Live flash refresh failed; retaining local news cache: %s", exc)
+                else:
+                    if not latest.empty:
+                        self._raw_live_news = pd.concat(
+                            [self._raw_live_news, latest], ignore_index=True
+                        ).drop_duplicates("id", keep="last")
+                self._last_news_poll = now
+            if not self._raw_live_news.empty:
+                news = pd.concat([news, self._raw_live_news], ignore_index=True)
+        items = select_news_broadcasts(
+            news,
+            manager.announcements,
+            target_codes=set(self._attention_codes(ctx)),
+            window_start=window_start,
+            window_end=window_end + timedelta(microseconds=1),
+        )
+        fresh = [item for item in items if item["source_id"] not in self._seen_news]
+        if not fresh:
+            return
+        self._seen_news.update(item["source_id"] for item in fresh)
+        self.feed.push(
+            "paper_news",
+            agent_id=agent_id,
+            agent_name=agent_name,
+            phase=phase,
+            as_of=cutoff.isoformat(),
+            items=fresh,
         )
 
     async def _accelerated_snapshot(self, codes: list[str]) -> pd.DataFrame:
@@ -445,7 +735,7 @@ class PaperTradingRunner:
             normalized["datetime"] = pd.to_datetime(normalized["datetime"])
             ctx._bus.market.load_5min(str(code), normalized.reset_index(drop=True))
 
-    def _emit_snapshot(self, ctx, phase: str) -> None:
+    def _emit_snapshot(self, agent_id: str, ctx, phase: str) -> None:
         prices: dict[str, Decimal] = {}
         positions = []
         for code, position in ctx.portfolio.positions.items():
@@ -474,6 +764,7 @@ class PaperTradingRunner:
         initial = float(self.config.initial_cash)
         self.feed.push(
             "paper_snapshot",
+            agent_id=agent_id,
             phase=phase,
             account={
                 "cash": float(ctx.portfolio.cash),
@@ -484,7 +775,7 @@ class PaperTradingRunner:
             trades=list(ctx._bus.trade_history),
             quote_health={
                 "source": self._last_source,
-                "missing_codes": self._last_missing,
+                "missing_codes": self._last_missing_by_agent.get(agent_id, self._last_missing),
                 "granularity": "1m"
                 if ("1m" in self._last_source.lower() or "1min" in self._last_source.lower())
                 else "5m",

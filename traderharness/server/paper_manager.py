@@ -25,6 +25,8 @@ class _ManagedPaper:
     created_at: str
     agent_id: str
     agent_name: str
+    agent_ids: list[str]
+    agent_names: dict[str, str]
     session_date: str
     mode: str
     initial_cash: float
@@ -39,14 +41,19 @@ class _ManagedPaper:
     equity_curve: list[list[Any]] = field(default_factory=list)
     quote_health: dict[str, Any] = field(default_factory=dict)
     last_event: dict[str, Any] | None = None
+    agent_states: dict[str, dict[str, Any]] = field(default_factory=dict)
+    broadcasts: list[dict[str, Any]] = field(default_factory=list)
 
     def public(self) -> dict[str, Any]:
+        primary = self.agent_states.get(self.agent_id, {})
         return {
             "id": self.id,
             "status": self.status,
             "created_at": self.created_at,
             "agent_id": self.agent_id,
             "agent_name": self.agent_name,
+            "agent_ids": self.agent_ids,
+            "agents": [self.agent_states[agent_id] for agent_id in self.agent_ids],
             "session_date": self.session_date,
             "mode": self.mode,
             "initial_cash": self.initial_cash,
@@ -54,16 +61,17 @@ class _ManagedPaper:
             "phase": self.phase,
             "error": self.error,
             "event_count": len(self.events),
-            "account": self.account,
-            "positions": self.positions,
-            "trades": self.trades,
-            "equity_curve": self.equity_curve,
+            "account": primary.get("account", self.account),
+            "positions": primary.get("positions", self.positions),
+            "trades": primary.get("trades", self.trades),
+            "equity_curve": primary.get("equity_curve", self.equity_curve),
             "quote_health": self.quote_health,
+            "broadcasts": self.broadcasts[-100:],
             "last_event": self.last_event,
         }
 
 
-PaperRunnerFactory = Callable[[Any, str, dict[str, Any]], Any]
+PaperRunnerFactory = Callable[[Any, str, list[dict[str, Any]]], Any]
 
 
 class PaperSessionManager:
@@ -87,20 +95,44 @@ class PaperSessionManager:
         self._load_existing()
 
     def start(self, request: Any) -> dict[str, Any]:
-        card = load_card(request.agent_id, storage_dir=self._agent_root) or load_card(
-            request.agent_id
-        )
-        if card is None:
-            raise ValueError(f"未找到智能体卡片：{request.agent_id}")
+        cards = []
+        for agent_id in request.agent_ids:
+            card = load_card(agent_id, storage_dir=self._agent_root) or load_card(agent_id)
+            if card is None:
+                raise ValueError(f"未找到智能体卡片：{agent_id}")
+            cards.append(card)
         session_id = uuid.uuid4().hex
-        card_payload = card.to_dict()
-        runner = self._runner_factory(request, session_id, card_payload)
+        card_payloads = [card.to_dict() for card in cards]
+        runner = self._runner_factory(request, session_id, card_payloads)
+        agent_states = {
+            card.id: {
+                "agent_id": card.id,
+                "agent_name": card.name,
+                "model": card.model,
+                "status": "queued",
+                "phase": "pre_market",
+                "account": {
+                    "cash": float(request.initial_cash),
+                    "equity": float(request.initial_cash),
+                    "return_pct": 0.0,
+                },
+                "positions": [],
+                "trades": [],
+                "equity_curve": [],
+                "last_event": None,
+                "error": None,
+            }
+            for card in cards
+        }
+        primary = cards[0]
         managed = _ManagedPaper(
             id=session_id,
             runner=runner,
             created_at=datetime.now(timezone.utc).isoformat(),
-            agent_id=card.id,
-            agent_name=card.name,
+            agent_id=primary.id,
+            agent_name=primary.name,
+            agent_ids=[card.id for card in cards],
+            agent_names={card.id: card.name for card in cards},
             session_date=request.session_date,
             mode=request.mode,
             initial_cash=float(request.initial_cash),
@@ -109,6 +141,7 @@ class PaperSessionManager:
                 "equity": float(request.initial_cash),
                 "return_pct": 0.0,
             },
+            agent_states=agent_states,
         )
         with self._lock:
             self._sessions[session_id] = managed
@@ -188,6 +221,9 @@ class PaperSessionManager:
                 managed.status = "cancelled"
             else:
                 managed.status = "done"
+            for state in managed.agent_states.values():
+                if state.get("status") not in {"failed", "cancelled"}:
+                    state["status"] = managed.status
             managed.clock_state = managed.status
             self._persist_state(managed)
 
@@ -202,12 +238,27 @@ class PaperSessionManager:
             managed.events.append(document)
             managed.last_event = document
             data = event.data
+            agent_id = str(data.get("agent_id") or managed.agent_id)
+            agent_state = managed.agent_states.get(agent_id)
+            if agent_state is not None:
+                agent_state["last_event"] = document
             if event.type == "phase_change":
                 managed.phase = str(data.get("phase", managed.phase))
                 managed.clock_state = "agent_working"
+                if agent_state is not None:
+                    agent_state["phase"] = managed.phase
+                    agent_state["status"] = "running"
             elif event.type == "paper_clock":
                 managed.phase = str(data.get("phase", managed.phase))
                 managed.clock_state = str(data.get("state", managed.clock_state))
+                if agent_state is not None:
+                    current_index = managed.agent_ids.index(agent_id)
+                    for completed_id in managed.agent_ids[:current_index]:
+                        completed = managed.agent_states[completed_id]
+                        if completed.get("status") == "running":
+                            completed["status"] = "done"
+                    agent_state["phase"] = managed.phase
+                    agent_state["status"] = "running"
             elif event.type == "paper_quote":
                 managed.quote_health = {
                     "source": data.get("source"),
@@ -217,19 +268,38 @@ class PaperSessionManager:
                     "attention_codes": data.get("attention_codes", []),
                     "one_minute_bars": data.get("one_minute_bars", 0),
                 }
+                if agent_state is not None:
+                    agent_state["quote_health"] = dict(managed.quote_health)
             elif event.type == "paper_snapshot":
-                managed.account = dict(data.get("account") or {})
-                managed.positions = list(data.get("positions") or [])
-                managed.trades = list(data.get("trades") or [])
+                account = dict(data.get("account") or {})
+                positions = list(data.get("positions") or [])
+                trades = list(data.get("trades") or [])
+                managed.account = account
+                managed.positions = positions
+                managed.trades = trades
                 managed.quote_health.update(data.get("quote_health") or {})
                 observed_at = str(data.get("observed_at") or event.ts)
-                equity = managed.account.get("equity")
+                equity = account.get("equity")
                 if equity is not None:
                     point = [observed_at, float(equity)]
                     if not managed.equity_curve or managed.equity_curve[-1] != point:
                         managed.equity_curve.append(point)
+                    if agent_state is not None:
+                        curve = agent_state.setdefault("equity_curve", [])
+                        if not curve or curve[-1] != point:
+                            curve.append(point)
+                if agent_state is not None:
+                    agent_state["account"] = account
+                    agent_state["positions"] = positions
+                    agent_state["trades"] = trades
+                    agent_state["phase"] = str(data.get("phase", agent_state["phase"]))
+            elif event.type in {"paper_market_pulse", "paper_news"}:
+                managed.broadcasts.append(document)
             elif event.type == "error":
                 managed.error = str(data.get("message") or data.get("error") or "模拟盘错误")
+                if agent_state is not None:
+                    agent_state["status"] = "failed"
+                    agent_state["error"] = managed.error
             self._append_journal(managed, document)
             self._persist_state(managed)
 
@@ -268,12 +338,48 @@ class PaperSessionManager:
                 if status in {"running", "cancelling"}:
                     status = "failed"
                     error = "服务重启中断了模拟盘；审计日志已保留，请新建交易日继续运行"
+                primary_id = str(state["agent_id"])
+                stored_agents = list(state.get("agents") or [])
+                agent_ids = [str(value) for value in state.get("agent_ids") or []]
+                if not agent_ids:
+                    agent_ids = [str(item.get("agent_id")) for item in stored_agents if item.get("agent_id")]
+                if not agent_ids:
+                    agent_ids = [primary_id]
+                agent_states = {
+                    str(item["agent_id"]): dict(item)
+                    for item in stored_agents
+                    if item.get("agent_id")
+                }
+                if primary_id not in agent_states:
+                    agent_states[primary_id] = {
+                        "agent_id": primary_id,
+                        "agent_name": str(state.get("agent_name", primary_id)),
+                        "model": "",
+                        "status": status,
+                        "phase": str(state.get("phase", "pre_market")),
+                        "account": dict(state.get("account") or {}),
+                        "positions": list(state.get("positions") or []),
+                        "trades": list(state.get("trades") or []),
+                        "equity_curve": list(state.get("equity_curve") or []),
+                        "last_event": state.get("last_event"),
+                        "error": error,
+                    }
+                if status == "failed" and state.get("status") in {"running", "cancelling"}:
+                    for item in agent_states.values():
+                        if item.get("status") not in {"done", "cancelled"}:
+                            item["status"] = "failed"
+                            item["error"] = error
                 managed = _ManagedPaper(
                     id=str(state["id"]),
                     runner=None,
                     created_at=str(state["created_at"]),
-                    agent_id=str(state["agent_id"]),
-                    agent_name=str(state.get("agent_name", state["agent_id"])),
+                    agent_id=primary_id,
+                    agent_name=str(state.get("agent_name", primary_id)),
+                    agent_ids=agent_ids,
+                    agent_names={
+                        agent_id: str(agent_states[agent_id].get("agent_name", agent_id))
+                        for agent_id in agent_ids
+                    },
                     session_date=str(state["session_date"]),
                     mode=str(state.get("mode", "live")),
                     initial_cash=float(state.get("initial_cash", 1_000_000)),
@@ -288,6 +394,8 @@ class PaperSessionManager:
                     equity_curve=list(state.get("equity_curve") or []),
                     quote_health=dict(state.get("quote_health") or {}),
                     last_event=state.get("last_event"),
+                    agent_states=agent_states,
+                    broadcasts=list(state.get("broadcasts") or []),
                 )
                 self._sessions[managed.id] = managed
                 if status == "failed" and state.get("status") in {"running", "cancelling"}:
@@ -295,11 +403,16 @@ class PaperSessionManager:
             except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
                 continue
 
-    def _build_runner(self, request: Any, session_id: str, agent: dict[str, Any]):
+    def _build_runner(
+        self,
+        request: Any,
+        session_id: str,
+        agents: list[dict[str, Any]],
+    ):
         return PaperTradingRunner(
             PaperRunConfig(
                 session_id=session_id,
-                agent=agent,
+                agents=agents,
                 session_date=datetime.fromisoformat(request.session_date).date(),
                 initial_cash=float(request.initial_cash),
                 mode=request.mode,

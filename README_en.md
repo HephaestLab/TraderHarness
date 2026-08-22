@@ -100,6 +100,8 @@ floor streams the replay live, while performance, per-trade dossiers, and cross-
 same window. It is a local research tool — keep it bound to localhost and never expose it to the public
 internet.
 
+Daily paper sessions now host one to four Agents in the same arena: isolated accounts share an overlaid equity chart and live ranking, while material minute price/volume moves, related announcements, and important policy flashes enter a unified broadcast desk. The audit workbench turns model decisions, tool arguments/results, Python code, and orders into a filterable timeline while preserving downloadable JSONL evidence. See [daily paper trading](docs/en/paper-trading.md).
+
 <p align="center">
   <img src="docs/assets/live-control-room.png" alt="TraderHarness live control room streaming a historical replay" width="920">
 </p>
@@ -399,7 +401,7 @@ A short version — see [`docs/roadmap.md`](docs/roadmap.md) for the full pictur
 | Status | Item |
 |---|---|
 | ✅ Delivered in v1.0 | Backtest engine, masking, replay/trajectory export, comparison, committees, research console |
-| ✅ Delivered in v1.1 | Daily paper trading (live one-minute attention set, shared execution path, persistent audit journal) |
+| ✅ Delivered in v1.1 | Multi-Agent daily paper trading (minute attention set, important broadcasts, shared execution path, structured audit journal) |
 | 📋 Planned | Live broker adapter |
 | 📋 Planned | A hardened sandbox for untrusted or third-party agent cards |
 | ❌ Non-goal | A public leaderboard, hosted multi-tenant service, or market-impact modeling |

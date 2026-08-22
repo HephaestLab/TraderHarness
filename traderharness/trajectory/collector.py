@@ -35,7 +35,13 @@ class DayRecord:
 class TrajectoryCollector:
     """Collects both day-level and step-level trajectory data."""
 
-    def __init__(self, agent_id: str, live_file: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        agent_id: str,
+        live_file: str | Path | None = None,
+        *,
+        reset_live_file: bool = True,
+    ) -> None:
         self.agent_id = agent_id
         self._day_records: list[DayRecord] = []
         self._step_records: list[StepRecord] = []
@@ -43,7 +49,8 @@ class TrajectoryCollector:
         self._live_file = Path(live_file) if live_file else None
         if self._live_file:
             self._live_file.parent.mkdir(parents=True, exist_ok=True)
-            self._live_file.write_text("", encoding="utf-8")
+            if reset_live_file:
+                self._live_file.write_text("", encoding="utf-8")
 
     def start_day(self, trade_date: date, observation: dict) -> None:
         self._current_step = 0
@@ -65,6 +72,7 @@ class TrajectoryCollector:
         if not self._live_file:
             return
         record = {
+            "agent_id": self.agent_id,
             "date": str(trade_date),
             "step": self._current_step - 1,
             "type": step_type,

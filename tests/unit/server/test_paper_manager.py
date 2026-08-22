@@ -16,9 +16,15 @@ class FakePaperRunner:
 
     def start(self):
         self.running = True
-        self.feed.push("paper_clock", state="advancing", phase="open_1")
+        self.feed.push(
+            "paper_clock",
+            agent_id="momentum-dragon",
+            state="advancing",
+            phase="open_1",
+        )
         self.feed.push(
             "paper_quote",
+            agent_id="momentum-dragon",
             source="eastmoney_1m",
             attention_codes=["600519"],
             missing_codes=[],
@@ -28,10 +34,27 @@ class FakePaperRunner:
         )
         self.feed.push(
             "paper_snapshot",
+            agent_id="momentum-dragon",
             phase="open_1",
             account={"cash": 900000, "equity": 1001000, "return_pct": 0.1},
             positions=[{"stock_code": "600519", "quantity": 100}],
             trades=[{"stock_code": "600519", "action": "buy"}],
+            quote_health={"granularity": "1m"},
+            observed_at="2026-08-21T09:50:00+08:00",
+        )
+        self.feed.push(
+            "paper_clock",
+            agent_id="value-sage",
+            state="advancing",
+            phase="open_1",
+        )
+        self.feed.push(
+            "paper_snapshot",
+            agent_id="value-sage",
+            phase="open_1",
+            account={"cash": 1000000, "equity": 999000, "return_pct": -0.1},
+            positions=[],
+            trades=[],
             quote_health={"granularity": "1m"},
             observed_at="2026-08-21T09:50:00+08:00",
         )
@@ -48,7 +71,7 @@ class FakePaperRunner:
 
 def _request():
     return SimpleNamespace(
-        agent_id="momentum-dragon",
+        agent_ids=["momentum-dragon", "value-sage"],
         session_date="2026-08-21",
         initial_cash=1_000_000,
         mode="accelerated",
@@ -60,7 +83,7 @@ def _request():
 def test_paper_manager_persists_account_quotes_and_replayable_events(tmp_path):
     runner = FakePaperRunner()
     manager = PaperSessionManager(
-        runner_factory=lambda request, session_id, agent: runner,
+        runner_factory=lambda request, session_id, agents: runner,
         storage_root=tmp_path / "paper",
         dataset_root=tmp_path / "dataset",
         agent_root=tmp_path / "agents",
@@ -73,6 +96,10 @@ def test_paper_manager_persists_account_quotes_and_replayable_events(tmp_path):
 
     state = manager.get(started["id"])
     assert state["status"] == "done"
+    assert state["agent_ids"] == ["momentum-dragon", "value-sage"]
+    assert len(state["agents"]) == 2
+    assert state["agents"][0]["account"]["equity"] == 1001000
+    assert state["agents"][1]["account"]["equity"] == 999000
     assert state["account"]["equity"] == 1001000
     assert state["quote_health"]["granularity"] == "1m"
     assert state["quote_health"]["request_metrics"]["rate_limited"] == 0
@@ -84,7 +111,7 @@ def test_paper_manager_persists_account_quotes_and_replayable_events(tmp_path):
         return [event async for event in manager.events(started["id"])]
 
     events = asyncio.run(collect())
-    assert [event["sequence"] for event in events] == [1, 2, 3, 4]
+    assert [event["sequence"] for event in events] == [1, 2, 3, 4, 5, 6]
 
     restored = PaperSessionManager(
         storage_root=tmp_path / "paper",
@@ -97,7 +124,7 @@ def test_paper_manager_persists_account_quotes_and_replayable_events(tmp_path):
 def test_paper_manager_cancels_cooperatively(tmp_path):
     runner = FakePaperRunner(complete=False)
     manager = PaperSessionManager(
-        runner_factory=lambda request, session_id, agent: runner,
+        runner_factory=lambda request, session_id, agents: runner,
         storage_root=tmp_path / "paper",
         dataset_root=tmp_path / "dataset",
         agent_root=tmp_path / "agents",
